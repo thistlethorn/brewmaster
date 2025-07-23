@@ -1,0 +1,4303 @@
+// commands/utility/guild.js
+const {
+	SlashCommandBuilder,
+	ActionRowBuilder,
+	ButtonBuilder,
+	ButtonStyle,
+	EmbedBuilder,
+	PermissionFlagsBits,
+	ModalBuilder,
+	TextInputBuilder,
+	Collection,
+	MessageFlags,
+} = require('discord.js');
+const db = require('../../database');
+const RESERVED_TERMS = [
+	'admin', 'mod', 'staff', 'bot', 'everyone', 'here',
+	'discord', 'guild', 'system', 'owner', 'official',
+];
+const {
+	arrayTierEmoji,
+	ONLY_CRESTS,
+} = require('../../utils/emoji');
+
+const { getTierBenefits, getTierData } = require('../../utils/getTierBenefits');
+
+const TIER_DATA = getTierData();
+const tierEmojis = arrayTierEmoji();
+const GUILD_CREATION_WITHDRAWAL_LIMIT = 5000;
+const delay = ms => new Promise(res => setTimeout(res, ms));
+
+async function replaceKeywords(text, attackerData, defenderData, client) {
+	if (!text) return 'An epic struggle is unfolding...';
+
+	// Fetch Guildmaster and Vice GM user objects
+	const fetchMember = async (userId) => {
+		if (!userId) return 'an unknown leader';
+		try {
+			const member = await client.users.fetch(userId);
+			return member.toString();
+		}
+		catch {
+			return 'a mysterious figure';
+		}
+	};
+
+	const [
+		raidingGuildmaster, raidingViceGuildmaster,
+		defendingGuildmaster, defendingViceGuildmaster,
+	] = await Promise.all([
+		fetchMember(attackerData.guildmaster_id),
+		fetchMember(attackerData.vice_gm_id),
+		fetchMember(defenderData.guildmaster_id),
+		fetchMember(defenderData.vice_gm_id),
+	]);
+
+	return text
+		.replace(/{raidingGuild}/g, `**${attackerData.guild_name}**`)
+		.replace(/{defendingGuild}/g, `**${defenderData.guild_name}**`)
+		.replace(/{raidingGuildmaster}/g, raidingGuildmaster)
+		.replace(/{defendingGuildmaster}/g, defendingGuildmaster)
+		.replace(/{raidingViceGuildmaster}/g, raidingViceGuildmaster || 'no Vice GM')
+		.replace(/{defendingViceGuildmaster}/g, defendingViceGuildmaster || 'no Vice GM');
+}
+
+/**
+ * Splits a long log into multiple embed fields to avoid character limits.
+ * @param {EmbedBuilder} embed The embed to add fields to.
+ * @param {string[]} log The array of log strings.
+ * @param {string} title The title for the log field(s).
+ */
+function addLogFields(embed, log, title) {
+	const MAX_LENGTH = 1024;
+	let currentField = '';
+	let part = 1;
+
+	// Handle the initial empty state
+	if (log.length === 0) {
+		embed.addFields({ name: `🧾 ${title}`, value: 'Initializing collection...', inline: false });
+		return;
+	}
+
+	for (const line of log) {
+		// If adding the next line would exceed the limit...
+		if (currentField.length + line.length + 2 > MAX_LENGTH) {
+			// +2 for '\n'
+			// ...add the current field to the embed...
+			embed.addFields({
+				name: part === 1 ? `🧾 ${title}` : `🧾 ${title} (cont.)`,
+				value: currentField,
+				inline: false,
+			});
+			// ...and start a new field with the current line.
+			currentField = line + '\n';
+			part++;
+		}
+		else {
+			// Otherwise, just append the line.
+			currentField += line + '\n';
+		}
+	}
+
+	// Add the last remaining field if it has content
+	if (currentField) {
+		embed.addFields({
+			name: part === 1 ? `🧾 ${title}` : `🧾 ${title} (cont.)`,
+			value: currentField.trimEnd(),
+			inline: false,
+		});
+	}
+}
+
+/**
+ * Sends a standardized embed to the global guild announcements channel.
+ * @param {import('discord.js').Client} client The Discord client instance.
+ * @param {EmbedBuilder} embed The embed to send.
+ */
+async function sendGuildAnnouncement(client, embed) {
+	const ANNOUNCEMENT_CHANNEL_ID = '1395191465206091888';
+	try {
+		const channel = await client.channels.fetch(ANNOUNCEMENT_CHANNEL_ID);
+		if (channel && channel.isTextBased()) {
+			await channel.send({ embeds: [embed] });
+		}
+		else {
+			console.error(`[Guild Announcement] Channel ${ANNOUNCEMENT_CHANNEL_ID} not found or is not a text channel.`);
+		}
+	}
+	catch (error) {
+		console.error('[Guild Announcement] Failed to send announcement:', error);
+	}
+}
+
+async function checkAndDestroyGuildOnRaid(guildTag, attackerTag, interaction) {
+	const guildEconomy = db.prepare('SELECT balance FROM guild_economy WHERE guild_tag = ?').get(guildTag);
+
+	if (guildEconomy && guildEconomy.balance <= 0) {
+		const guildInfo = db.prepare('SELECT * FROM guild_list WHERE guild_tag = ?').get(guildTag);
+		if (!guildInfo) return;
+
+		console.log(`[GUILD DESTRUCTION] Guild ${guildInfo.guild_name} (${guildTag}) is being destroyed by a raid from ${attackerTag}.`);
+
+		try {
+			const privateChannel = await interaction.guild.channels.fetch(guildInfo.channel_id).catch(() => null);
+			if (privateChannel) await privateChannel.delete(`Guild destroyed by raid from ${attackerTag}.`);
+
+			const publicChannel = await interaction.guild.channels.fetch(guildInfo.public_channel_id).catch(() => null);
+			if (publicChannel) await publicChannel.delete(`Guild destroyed by raid from ${attackerTag}.`);
+
+			const role = await interaction.guild.roles.fetch(guildInfo.role_id).catch(() => null);
+			if (role) await role.delete(`Guild destroyed by raid from ${attackerTag}.`);
+
+			// Use a transaction to ensure all parts are deleted
+			db.transaction(() => {
+				db.prepare('DELETE FROM guild_list WHERE guild_tag = ?').run(guildTag);
+				// ON DELETE CASCADE handles the rest
+			})();
+
+			// Credit the attacker
+			db.prepare(`
+                INSERT INTO raid_leaderboard (guild_tag, guilds_destroyed)
+                VALUES (?, 1)
+                ON CONFLICT(guild_tag) DO UPDATE SET guilds_destroyed = guilds_destroyed + 1
+            `).run(attackerTag);
+
+		}
+		catch (error) {
+			console.error(`[GUILD DESTRUCTION] Failed to fully destroy guild ${guildTag}:`, error);
+		}
+	}
+}
+// Inside guild.js
+async function handleLeave(interaction) {
+	const userId = interaction.user.id;
+
+	// Check if user is in a guild
+	const userGuild = db.prepare(`
+        SELECT gmt.*, gl.guild_name 
+        FROM guildmember_tracking gmt
+        JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
+        WHERE gmt.user_id = ?
+    `).get(userId);
+
+	if (!userGuild) {
+		const errorEmbed = new EmbedBuilder()
+			.setColor(0xE74C3C)
+			.setTitle('❌ Not in a Guild')
+			.setDescription('You must be a member of a guild to leave one.');
+		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+	}
+
+	// Check if user is owner
+	if (userGuild.owner === 1) {
+		const ownerEmbed = new EmbedBuilder()
+			.setColor(0xE74C3C)
+			.setTitle('👑 Ownership Duty')
+			.setDescription(`You are the owner of **${userGuild.guild_name} [${userGuild.guild_tag}]**!\nYou must transfer ownership or delete the guild before you can leave.`);
+		return interaction.reply({ embeds: [ownerEmbed], flags: [MessageFlags.Ephemeral] });
+	}
+
+	// Remove guild role
+	try {
+		const guildData = db.prepare('SELECT role_id FROM guild_list WHERE guild_tag = ?').get(userGuild.guild_tag);
+		if (guildData?.role_id) {
+			const role = await interaction.guild.roles.fetch(guildData.role_id);
+			if (role) await interaction.member.roles.remove(role);
+		}
+
+		// Remove from database
+		db.prepare('DELETE FROM guildmember_tracking WHERE user_id = ?').run(userId);
+
+		const leaveEmbed = new EmbedBuilder()
+			.setColor(0xE67E22)
+			.setTitle('👋 A Member has Departed')
+			.setDescription(`${interaction.user} has left the **${userGuild.guild_name} [${userGuild.guild_tag}]** guild.`)
+			.setTimestamp();
+		await sendGuildAnnouncement(interaction.client, leaveEmbed);
+
+		const successEmbed = new EmbedBuilder()
+			.setColor(0x2ECC71)
+			.setTitle('✅ Left Guild')
+			.setDescription(`You have successfully left **${userGuild.guild_name} [${userGuild.guild_tag}]**.`);
+		return interaction.reply({ embeds: [successEmbed], flags: [MessageFlags.Ephemeral] });
+	}
+	catch (error) {
+		console.error('Leave guild error:', error);
+		const errorEmbed = new EmbedBuilder()
+			.setColor(0xE74C3C)
+			.setTitle('❌ Error Leaving Guild')
+			.setDescription('An unexpected error occurred while trying to leave the guild. The Innkeepers have been notified.');
+		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+	}
+}
+async function handleInvite(interaction) {
+	const userId = interaction.user.id;
+	const targetUser = interaction.options.getUser('user');
+
+	// Check if inviter is in a guild and get detailed info
+	const inviterGuild = db.prepare(`
+        SELECT 
+            gl.guild_name,
+            gl.guild_tag,
+            gl.motto,
+            gl.about_text,
+            COALESCE(gt.tier, 1) AS tier
+        FROM guildmember_tracking gmt
+        JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
+        LEFT JOIN guild_tiers gt ON gmt.guild_tag = gt.guild_tag
+        WHERE gmt.user_id = ?
+    `).get(userId);
+
+	if (!inviterGuild) {
+		const errorEmbed = new EmbedBuilder()
+			.setColor(0xE74C3C)
+			.setTitle('❌ Not in a Guild')
+			.setDescription('You must be in a guild to be able to invite someone!');
+		return interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+
+	// Check if target is already in a guild
+	const targetInGuild = db.prepare('SELECT 1 FROM guildmember_tracking WHERE user_id = ?').get(targetUser.id);
+	if (targetInGuild) {
+		const errorEmbed = new EmbedBuilder()
+			.setColor(0xE74C3C)
+			.setTitle('❌ Already in a Guild')
+			.setDescription(`${targetUser} is already in a guild! They must leave their current guild first before accepting a new invitation.`);
+		return interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+
+	const memberCount = getGuildMemberCount(inviterGuild.guild_tag);
+	const tierInfo = TIER_DATA[inviterGuild.tier - 1];
+
+	// Create enhanced invite embed
+	const embed = new EmbedBuilder()
+		.setColor(0x3498db)
+		.setTitle(`⚔️ Guild Invitation: ${inviterGuild.guild_name} [${inviterGuild.guild_tag}]`)
+		.setDescription(inviterGuild.about_text || 'A promising guild is seeking new allies!')
+		.setThumbnail('https://i.ibb.co/2YqsK07D/guild.jpg')
+		.addFields(
+			{ name: 'Motto', value: inviterGuild.motto ? `*${inviterGuild.motto}*` : 'No motto set.' },
+			{ name: 'Tier', value: `${tierEmojis[inviterGuild.tier - 1]} (${tierInfo.name})`, inline: true },
+			{ name: 'Members', value: memberCount.toString(), inline: true },
+			{ name: 'Invited by', value: interaction.user.toString(), inline: true },
+		)
+		.setFooter({ text: `Use "/guild info ${inviterGuild.guild_tag}" for more details!` })
+		.setTimestamp();
+
+
+	// Create buttons
+	const row = new ActionRowBuilder().addComponents(
+		new ButtonBuilder()
+			.setCustomId(`guild_invite_accept_${targetUser.id}_${inviterGuild.guild_tag}`)
+			.setLabel('Accept')
+			.setStyle(ButtonStyle.Success)
+			.setEmoji('✅'),
+		new ButtonBuilder()
+			.setCustomId(`guild_invite_decline_${targetUser.id}_${inviterGuild.guild_tag}`)
+			.setLabel('Decline')
+			.setStyle(ButtonStyle.Danger)
+			.setEmoji('❌'),
+	);
+
+	// Send invite
+	await interaction.reply({
+		content: `${targetUser}`,
+		embeds: [embed],
+		components: [row],
+	});
+}
+async function announceNewMember(client, newMember, guildData) {
+	try {
+		// --- Guild-Specific Welcome (Now in Public Channel) ---
+		const channel = await client.channels.fetch(guildData.public_channel_id);
+		if (channel && channel.isTextBased()) {
+			await channel.send(`<@&${guildData.role_id}>`);
+
+			const welcomeEmbed = new EmbedBuilder()
+				.setColor(0x2ECC71)
+				.setTitle('🎉 A New Hero Arrives! 🎉')
+				.setDescription(`Let's all give a warm welcome to our newest member, ${newMember.toString()}!`)
+				.setThumbnail(newMember.displayAvatarURL({ dynamic: true, size: 256 }))
+				.addFields({
+					name: `Welcome to ${guildData.guild_name}!`,
+					value: 'We\'re thrilled to have you with us in our public square!',
+				})
+				.setTimestamp();
+			await channel.send({ embeds: [welcomeEmbed] });
+		}
+
+		// --- Global Announcement (Unchanged) ---
+		const globalJoinEmbed = new EmbedBuilder()
+			.setColor(0x57F287)
+			.setTitle('✅ New Guild Member')
+			.setDescription(`${newMember.toString()} has joined the **${guildData.guild_name} [${guildData.guild_tag}]** guild!`)
+			.setTimestamp();
+		await sendGuildAnnouncement(client, globalJoinEmbed);
+
+	}
+	catch (error) {
+		console.error(`[announceNewMember] Failed to send welcome message for ${newMember.tag} in guild ${guildData.guild_tag}:`, error);
+	}
+}
+async function handleCreate(interaction) {
+	const name = interaction.options.getString('name');
+	const tag = interaction.options.getString('tag').toUpperCase();
+	const userId = interaction.user.id;
+	const guildCategoryId = '1369829304053006346';
+	const staffRoleId = '1354145856345083914';
+	const botsRoleId = '1362247491101262106';
+
+	const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Guild Creation Failed');
+
+	// Validate guild tag
+	if (!/^[A-Z]{3}$/.test(tag)) {
+		errorEmbed.setDescription('Guild tag must be exactly 3 uppercase letters!');
+		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+	}
+
+	// Validate guild name (alphanumeric + spaces only)
+	if (!/^[a-zA-Z0-9 ]+$/.test(name)) {
+		errorEmbed.setDescription('Guild name can only contain letters, numbers, and spaces!');
+		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+	}
+	if (name.length < 3 || name.length > 35) {
+		errorEmbed.setDescription('Guild name must be between 3 and 35 characters!');
+		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+	}
+
+	// Validate against reserved terms
+	const lowerName = name.toLowerCase();
+	const hasReservedTerm = RESERVED_TERMS.some(term =>
+		lowerName.includes(term),
+	);
+
+	if (hasReservedTerm) {
+		errorEmbed.setDescription(`That guild name contains restricted terms. Please choose another name.\nAvoid terms like: ${RESERVED_TERMS.join(', ')}`);
+		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+	}
+	// Check if user is already in a guild
+	const tagOfGuild = db.prepare('SELECT * FROM guildmember_tracking WHERE user_id = ?').get(userId);
+	if (tagOfGuild) {
+		const userGuild = db.prepare('SELECT * FROM guild_list WHERE guild_tag = ?').get(tagOfGuild.guild_tag);
+		errorEmbed.setDescription(`You're already in a guild, **${userGuild.guild_name} [${tagOfGuild.guild_tag}]**! Leave it first before creating a new one.`);
+		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+	}
+
+	// Check if tag is already taken
+	const existingGuild = db.prepare('SELECT * FROM guild_list WHERE guild_tag = ?').get(tag);
+	if (existingGuild) {
+		errorEmbed.setDescription(`The tag **[${tag}]** is already taken! Please choose a different one.`);
+		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+	}
+
+	const startingBalance = 5000;
+
+	// Create channel and role
+	try {
+		// Create role
+		const role = await interaction.guild.roles.create({
+			name: 'Guild: ' + name,
+			color: '#3498db',
+			reason: `Guild creation for ${interaction.user.tag}`,
+		});
+
+		// --- Create PUBLIC Channel ---
+		const publicChannelName = 'guild-' + name
+			.replace(/[^a-zA-Z0-9 ]/g, '')
+			.replace(/\s+/g, '-')
+			.toLowerCase();
+
+		const publicChannel = await interaction.guild.channels.create({
+			name: publicChannelName,
+			type: 0,
+			parent: guildCategoryId,
+			topic: `Public square for ${name} (${tag})! All are welcome.`,
+			// Permissions for public channel (everyone can view and send)
+			permissionOverwrites: [
+				{
+					id: interaction.guild.id,
+					allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
+				},
+				// Staff override
+				{
+					id: staffRoleId,
+					allow: [PermissionFlagsBits.ManageMessages],
+				},
+			],
+		});
+
+
+		// --- Create PRIVATE (Hidden) Channel ---
+		const privateChannelName = `guild-${tag.toLowerCase()}-hidden`;
+
+		const privateChannel = await interaction.guild.channels.create({
+			name: privateChannelName,
+			type: 0,
+			parent: guildCategoryId,
+			topic: `Private guildhall for ${name} (${tag}) - Created by ${interaction.user.tag}`,
+			// Permissions for private channel (deny everyone, allow members/staff/bots)
+			permissionOverwrites: [
+				{
+					id: interaction.guild.id,
+					deny: [PermissionFlagsBits.ViewChannel],
+				},
+				{
+					id: role.id,
+					allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
+				},
+				{
+					id: staffRoleId,
+					allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages, PermissionFlagsBits.ReadMessageHistory],
+				},
+				{
+					id: botsRoleId,
+					allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
+				},
+			],
+		});
+
+		const motto = interaction.options.getString('motto') || '';
+
+		// Verify all resources were created
+		if (!role || !publicChannel || !privateChannel) {
+			if (role) await role.delete().catch(console.error);
+			if (publicChannel) await publicChannel.delete().catch(console.error);
+			if (privateChannel) await privateChannel.delete().catch(console.error);
+			throw new Error('Failed to create all guild resources');
+		}
+
+		// Assign role to user
+		await interaction.member.roles.add(role);
+
+		const creationTimestamp = new Date().toISOString();
+
+		// Update databases within a transaction
+		db.transaction(() => {
+			db.prepare(`
+				INSERT INTO guild_list (guild_name, guild_tag, channel_id, public_channel_id, role_id, motto, created_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?)
+			`).run(name, tag, privateChannel.id, publicChannel.id, role.id, motto, creationTimestamp);
+
+			db.prepare(`
+				INSERT INTO guild_tiers (guild_tag, tier, last_upgrade_time)
+				VALUES (?, 1, ?)
+			`).run(tag, creationTimestamp);
+
+			db.prepare(`
+				INSERT INTO guild_economy (guild_tag, balance)
+				VALUES (?, ?)
+			`).run(tag, startingBalance);
+
+			db.prepare(`
+				INSERT INTO guild_raid_messages (guild_tag)
+				VALUES (?)
+			`).run(tag);
+
+			db.prepare(`
+				INSERT INTO guildmember_tracking (user_id, guild_tag, owner)
+				VALUES (?, ?, ?)
+			`).run(userId, tag, 1);
+		})();
+
+		const replyEmbed = new EmbedBuilder()
+			.setColor(0x2ECC71)
+			.setTitle(`🏰 Guild "${name}" [${tag}] Created!`)
+			.setDescription('Your new guild has been successfully established!')
+			.addFields(
+				{ name: 'Public Channel', value: `${publicChannel}`, inline: true },
+				{ name: 'Private Guildhall', value: `${privateChannel}`, inline: true },
+				{ name: 'Your New Role', value: `${role}`, inline: true },
+				{ name: 'Founding Bonus', value: `Your guild has been founded with a **${startingBalance.toLocaleString()} Crown** treasury bonus!` },
+			);
+
+		const creationEmbed = new EmbedBuilder()
+			.setColor(0x2ECC71)
+			.setTitle('🏰 A New Guild has been Founded!')
+			.setDescription(`**${name} [${tag}]** has been established by the guildmaster ${interaction.user}! May their renown grow!`)
+			.setTimestamp();
+
+		await sendGuildAnnouncement(interaction.client, creationEmbed);
+
+		// Welcome message in the new public channel
+		await publicChannel.send({ content: `Welcome, citizens, to the public square of **${name} [${tag}]**! This guild was founded by ${interaction.user}.` });
+
+
+		return interaction.reply({ embeds: [replyEmbed], flags: [MessageFlags.Ephemeral] });
+
+
+	}
+	catch (error) {
+		console.error('Guild creation error:', error);
+		// Clean up any partially created resources
+		const role = await interaction.guild.roles.cache.find(r => r.name === `Guild: ${name}`);
+		if (role) await role.delete().catch(console.error);
+
+		const finalErrorEmbed = new EmbedBuilder()
+			.setColor(0xE74C3C)
+			.setTitle('❌ Guild Creation Error')
+			.setDescription('An unexpected error occurred while creating your guild. Any partial resources have been cleaned up. Please try again later.');
+		return interaction.reply({ embeds: [finalErrorEmbed], flags: [MessageFlags.Ephemeral] });
+	}
+}
+
+// Inside guild.js
+async function handleDelete(interaction) {
+	const userId = interaction.user.id;
+
+	// Check if user is a guild owner
+	const userGuild = db.prepare(`
+        SELECT gl.* 
+        FROM guildmember_tracking gmt
+        JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
+        WHERE gmt.user_id = ? AND gmt.owner = 1
+    `).get(userId);
+
+	if (!userGuild) {
+		const errorEmbed = new EmbedBuilder()
+			.setColor(0xE74C3C)
+			.setTitle('❌ Action Not Allowed')
+			.setDescription('You must be the owner of a guild to delete it!');
+		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+	}
+	const confirmationEmbed = new EmbedBuilder()
+		.setColor(0xFEE75C)
+		.setTitle('⚠️ Confirm Deletion')
+		.setDescription(`Are you sure you want to permanently delete **${userGuild.guild_name} [${userGuild.guild_tag}]**?\n\nThis action will erase the guild's channels, role, and all associated data. **This cannot be undone.**`);
+
+	// Create confirmation buttons
+	const row = new ActionRowBuilder().addComponents(
+		new ButtonBuilder()
+			.setCustomId('guild_delete_confirm')
+			.setLabel('Confirm Deletion')
+			.setStyle(ButtonStyle.Danger)
+			.setEmoji('🗑️'),
+		new ButtonBuilder()
+			.setCustomId('guild_delete_cancel')
+			.setLabel('Cancel')
+			.setStyle(ButtonStyle.Secondary)
+			.setEmoji('❌'),
+	);
+
+	// Send confirmation message
+	await interaction.reply({
+		embeds: [confirmationEmbed],
+		components: [row], flags: [MessageFlags.Ephemeral] });
+
+	// Collect button responses
+	const collector = interaction.channel.createMessageComponentCollector({
+		time: 30000,
+	});
+
+	collector.on('collect', async (buttonInteraction) => {
+		if (buttonInteraction.user.id !== userId) {
+			const notOwnerEmbed = new EmbedBuilder()
+				.setColor(0xE74C3C)
+				.setTitle('❌ Not for You')
+				.setDescription('Only the guild owner can confirm this action.');
+			return buttonInteraction.reply({ embeds: [notOwnerEmbed], flags: [MessageFlags.Ephemeral] });
+		}
+
+		if (buttonInteraction.customId === 'guild_delete_confirm') {
+			try {
+				// Fetch both channels and the role
+				const publicChannel = await interaction.guild.channels.fetch(userGuild.public_channel_id).catch(() => null);
+				const privateChannel = await interaction.guild.channels.fetch(userGuild.channel_id).catch(() => null);
+				const role = await interaction.guild.roles.fetch(userGuild.role_id).catch(() => null);
+
+				if (publicChannel) await publicChannel.delete(`Guild ${userGuild.guild_tag} deleted by owner.`);
+				if (privateChannel) await privateChannel.delete(`Guild ${userGuild.guild_tag} deleted by owner.`);
+				if (role) await role.delete(`Guild ${userGuild.guild_tag} deleted by owner.`);
+
+				// Update databases (ON DELETE CASCADE will handle related tables)
+				db.prepare('DELETE FROM guild_list WHERE guild_tag = ?').run(userGuild.guild_tag);
+
+				const deletionEmbed = new EmbedBuilder()
+					.setColor(0xE74C3C)
+					.setTitle('🗑️ A Guild has Disbanded')
+					.setDescription(`The guild **${userGuild.guild_name} [${userGuild.guild_tag}]** has been deleted by its owner. Its banners have been lowered for the last time.`)
+					.setTimestamp();
+				await sendGuildAnnouncement(interaction.client, deletionEmbed);
+
+				const successEmbed = new EmbedBuilder()
+					.setColor(0x2ECC71)
+					.setTitle('🗑️ Guild Deleted')
+					.setDescription(`The guild **${userGuild.guild_name} [${userGuild.guild_tag}]** has been successfully deleted.`);
+				await buttonInteraction.update({
+					embeds: [successEmbed],
+					components: [],
+				});
+			}
+			catch (error) {
+				console.error('Guild deletion error:', error);
+				const errorEmbed = new EmbedBuilder()
+					.setColor(0xE74C3C)
+					.setTitle('❌ Deletion Error')
+					.setDescription('An unexpected error occurred while deleting your guild. Please try again later.');
+				await buttonInteraction.update({
+					embeds: [errorEmbed],
+					components: [],
+				});
+			}
+		}
+		else if (buttonInteraction.customId === 'guild_delete_cancel') {
+			const cancelEmbed = new EmbedBuilder()
+				.setColor(0x3498DB)
+				.setTitle('🚫 Deletion Cancelled')
+				.setDescription('The guild deletion process has been cancelled.');
+			await buttonInteraction.update({
+				embeds: [cancelEmbed],
+				components: [],
+			});
+		}
+
+		collector.stop();
+	});
+
+	collector.on('end', collected => {
+		if (collected.size === 0) {
+			const timeoutEmbed = new EmbedBuilder()
+				.setColor(0xFEE75C)
+				.setTitle('⏱️ Timed Out')
+				.setDescription('Confirmation timed out. The guild was not deleted.');
+			interaction.editReply({
+				embeds: [timeoutEmbed],
+				components: [],
+			});
+		}
+	});
+}
+
+// Default raid messages for reference and restoration
+const DEFAULT_RAID_MESSAGES = {
+	raiding_description: 'The war horns of {raidingGuild} sound across the plains, their banners held high as they march towards their target.',
+	defending_description: 'The stronghold of {defendingGuild} stands defiantly, its gates barred and sentries on the walls, awaiting the coming storm.',
+	raiding_attack: '{raidingGuild}\'s forces, led by {raidingGuildmaster}, begin their assault, crashing against the defenses of {defendingGuild}!',
+	defending_success: 'The defenders of {defendingGuild}, under the command of {defendingGuildmaster}, have repelled the invaders! The attackers are routed!',
+	defending_failure: 'The defenses of {defendingGuild} have been breached! The attackers pour into the stronghold, overwhelming the defenders led by {defendingGuildmaster}.',
+	raiding_victory: 'Victory for {raidingGuild}! They have plundered the enemy and stand triumphant on the battlefield.',
+	raiding_retreat: 'The attack has failed! The forces of {raidingGuild} are forced to retreat, their assault broken by the stalwart defenders.',
+};
+
+const MESSAGE_TITLES = {
+	raiding_description: 'Raiding: The Approach',
+	defending_description: 'Defending: The Stronghold',
+	raiding_attack: 'Raiding: The Assault',
+	defending_success: 'Defending: Successful Defense',
+	defending_failure: 'Defending: Defenses Breached',
+	raiding_victory: 'Raiding: Victory Cry',
+	raiding_retreat: 'Raiding: Forced Retreat',
+};
+
+async function handleRaidMessagesSettings(interaction, guildData) {
+	const mainEmbed = new EmbedBuilder()
+		.setColor(0x3498DB)
+		.setTitle('✒️ Raid Message Customization')
+		.setDescription('How would you like to edit your guild\'s raid messages?');
+
+	const mainRow = new ActionRowBuilder().addComponents(
+		new ButtonBuilder()
+			.setCustomId(`raidmsg_guided_${guildData.guild_tag}`)
+			.setLabel('Guided Setup')
+			.setStyle(ButtonStyle.Primary)
+			.setEmoji('🗺️'),
+		new ButtonBuilder()
+			.setCustomId(`raidmsg_viewall_${guildData.guild_tag}`)
+			.setLabel('View & Manage All')
+			.setStyle(ButtonStyle.Secondary)
+			.setEmoji('📖'),
+	);
+
+	await interaction.reply({ embeds: [mainEmbed], components: [mainRow], flags: [MessageFlags.Ephemeral] });
+}
+
+async function showAllRaidMessages(interaction, guildData) {
+	const payload = buildAllRaidMessagesPayload(guildData);
+	await interaction.update({ embeds: payload.embeds, components: payload.components });
+}
+
+function buildAllRaidMessagesPayload(guildData) {
+	let currentMessages = db.prepare('SELECT * FROM guild_raid_messages WHERE guild_tag = ?').get(guildData.guild_tag);
+	if (!currentMessages) {
+		db.prepare('INSERT INTO guild_raid_messages (guild_tag) VALUES (?)').run(guildData.guild_tag);
+		currentMessages = db.prepare('SELECT * FROM guild_raid_messages WHERE guild_tag = ?').get(guildData.guild_tag);
+	}
+
+	const embed = new EmbedBuilder()
+		.setColor(0x57F287)
+		.setTitle(`📖 Current Raid Messages for ${guildData.guild_name}`)
+		.setDescription('Here are all your current raid messages. Click a button to edit a specific one.');
+
+	const messageKeys = Object.keys(DEFAULT_RAID_MESSAGES);
+	const numberEmojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣'];
+	let fieldText = '';
+
+	const componentRows = [];
+	let currentRow = new ActionRowBuilder();
+
+	messageKeys.forEach((key, index) => {
+		const title = MESSAGE_TITLES[key];
+		const message = currentMessages[key] || DEFAULT_RAID_MESSAGES[key];
+		fieldText += `${numberEmojis[index]} **${title}**\n*_"${message}"_*\n\n`;
+
+		if (currentRow.components.length === 5) {
+			componentRows.push(currentRow);
+			currentRow = new ActionRowBuilder();
+		}
+
+		currentRow.addComponents(
+			new ButtonBuilder()
+				.setCustomId(`raidmsg_edit_${guildData.guild_tag}_${key}`)
+				.setLabel(`${index + 1}`)
+				.setStyle(ButtonStyle.Primary),
+		);
+	});
+	embed.setDescription(fieldText);
+
+	if (currentRow.components.length > 0) {
+		componentRows.push(currentRow);
+	}
+
+
+	const managementButtons = new ActionRowBuilder().addComponents(
+		new ButtonBuilder()
+			.setCustomId(`raidmsg_restore_${guildData.guild_tag}`)
+			.setLabel('Restore to Defaults')
+			.setStyle(ButtonStyle.Danger)
+			.setEmoji('🔄'),
+		new ButtonBuilder()
+			.setCustomId('raidmsg_close_editor')
+			.setLabel('Close')
+			.setStyle(ButtonStyle.Secondary),
+	);
+
+	componentRows.push(managementButtons);
+
+	return { embeds: [embed], components: componentRows };
+}
+
+async function processSingleMessage(interaction, guildData, keyToEdit) {
+	const currentMessages = db.prepare('SELECT * FROM guild_raid_messages WHERE guild_tag = ?').get(guildData.guild_tag);
+
+	const title = MESSAGE_TITLES[keyToEdit];
+	const currentMessage = currentMessages[keyToEdit] || DEFAULT_RAID_MESSAGES[keyToEdit];
+
+	const embed = new EmbedBuilder()
+		.setColor(0x3498DB)
+		.setTitle(`✒️ Set Raid Message: ${title}`)
+		.setDescription(`Please send the new message for this phase in the chat. It must be under 1000 characters.\n\n**Current:** *"${currentMessage}"*`)
+		.addFields({
+			name: 'Keyword Glossary',
+			value: '`{raidingGuild}` `{defendingGuild}` `{raidingGuildmaster}` `{defendingGuildmaster}` `{raidingViceGuildmaster}` `{defendingViceGuildmaster}`',
+		})
+		.setFooter({ text: 'You have 3 minutes to reply.' });
+
+	const row = new ActionRowBuilder().addComponents(
+		new ButtonBuilder().setCustomId(`raidmsg_back_${guildData.guild_tag}`).setLabel('Back to List').setStyle(ButtonStyle.Secondary),
+		new ButtonBuilder().setCustomId('raidmsg_close_editor').setLabel('Exit Editor').setStyle(ButtonStyle.Danger),
+	);
+
+	// Update the message from the button press to show the prompt
+	await interaction.update({ embeds: [embed], components: [row], flags: [MessageFlags.Ephemeral] });
+
+	const filter = (i) => i.user.id === interaction.user.id;
+	const msgFilter = (m) => m.author.id === interaction.user.id;
+
+	try {
+		// Use Promise.race to wait for EITHER a button click OR a message.
+		const collected = await Promise.race([
+			interaction.channel.awaitMessageComponent({ filter, time: 180000 }),
+			interaction.channel.awaitMessages({ filter: msgFilter, max: 1, time: 180000, errors: ['time'] }),
+		]);
+
+		if (collected instanceof Collection) {
+			// A TEXT MESSAGE was sent.
+			const message = collected.first();
+			const newText = message.content.slice(0, 1000);
+
+			db.prepare(`UPDATE guild_raid_messages SET ${keyToEdit} = ? WHERE guild_tag = ?`).run(newText, guildData.guild_tag);
+			await message.delete().catch(console.error);
+
+			// CORRECT: Edit the reply of the original interaction to show the full list again.
+			const payload = buildAllRaidMessagesPayload(guildData);
+			await interaction.editReply({ embeds: payload.embeds, components: payload.components });
+
+		}
+		else {
+			// A BUTTON was clicked. `collected` is a new interaction.
+			const buttonInteraction = collected;
+			if (buttonInteraction.customId.startsWith('raidmsg_back')) {
+				// Show the list again by updating the NEW button interaction.
+				await showAllRaidMessages(buttonInteraction, guildData);
+			}
+			else if (buttonInteraction.customId === 'raidmsg_close_editor') {
+				const closedEmbed = new EmbedBuilder().setColor(0x3498DB).setDescription('Raid message editor closed.');
+				await buttonInteraction.update({ embeds: [closedEmbed], components: [] });
+			}
+		}
+	}
+	catch (error) {
+		// If it times out, we must edit the reply of the original interaction.
+		const timeoutEmbed = new EmbedBuilder().setColor(0xFEE75C).setDescription('⏱️ Timed out. Editor closed.');
+		await interaction.editReply({ embeds: [timeoutEmbed], components: [] });
+		console.log(error);
+	}
+}
+
+
+async function processGuidedSetup(interaction, guildData) {
+	let currentMessages = db.prepare('SELECT * FROM guild_raid_messages WHERE guild_tag = ?').get(guildData.guild_tag);
+	if (!currentMessages) {
+		console.log(`[Raid Messages] No record found for ${guildData.guild_tag}. Creating a default entry.`);
+		db.prepare('INSERT INTO guild_raid_messages (guild_tag) VALUES (?)').run(guildData.guild_tag);
+		currentMessages = db.prepare('SELECT * FROM guild_raid_messages WHERE guild_tag = ?').get(guildData.guild_tag);
+	}
+
+	const messageKeys = Object.keys(DEFAULT_RAID_MESSAGES);
+	const promptsQueue = messageKeys.filter(key => currentMessages[key] === DEFAULT_RAID_MESSAGES[key]);
+
+	if (promptsQueue.length === 0) {
+		const finishedEmbed = new EmbedBuilder()
+			.setColor(0x2ECC71)
+			.setTitle('✅ All Set!')
+			.setDescription('All your raid messages are already customized! You can manage them with the "View & Manage All" option.');
+		return interaction.update({ embeds: [finishedEmbed], components: [] });
+	}
+
+	const startEmbed = new EmbedBuilder()
+		.setColor(0x3498DB)
+		.setDescription('Starting the guided raid message configuration...');
+	await interaction.update({ embeds: [startEmbed], components: [] });
+
+	const processQueue = async (index) => {
+		if (index >= promptsQueue.length) {
+			const completeEmbed = new EmbedBuilder()
+				.setColor(0x2ECC71)
+				.setTitle('✅ Configuration Complete!')
+				.setDescription('All default messages have been reviewed.');
+			await interaction.followUp({ embeds: [completeEmbed], flags: [MessageFlags.Ephemeral] });
+			return;
+		}
+
+		const key = promptsQueue[index];
+		const title = MESSAGE_TITLES[key];
+
+		const embed = new EmbedBuilder()
+			.setColor(0x3498DB)
+			.setTitle(`✒️ Set Raid Message: ${title}`)
+			.setDescription(`Please send the new message for this phase in the chat. It must be under 1000 characters.\n\n**Default:** *"${DEFAULT_RAID_MESSAGES[key]}"*`)
+			.addFields({
+				name: 'Keyword Glossary',
+				value: '`{raidingGuild}` `{defendingGuild}` `{raidingGuildmaster}` `{defendingGuildmaster}` `{raidingViceGuildmaster}` `{defendingViceGuildmaster}`',
+			})
+			.setFooter({ text: `Setting ${index + 1} of ${promptsQueue.length} (default messages only)` });
+
+		const row = new ActionRowBuilder().addComponents(
+			new ButtonBuilder().setCustomId(`skip_${key}`).setLabel('Skip for Now').setStyle(ButtonStyle.Secondary),
+			new ButtonBuilder().setCustomId('exit_editor').setLabel('Exit Editor').setStyle(ButtonStyle.Danger),
+		);
+
+		const promptMessage = await interaction.followUp({ embeds: [embed], components: [row], flags: [MessageFlags.Ephemeral], fetchReply: true });
+
+		const filter = (i) => i.user.id === interaction.user.id;
+		const msgFilter = (m) => m.author.id === interaction.user.id;
+
+		try {
+			const collected = await Promise.race([
+				promptMessage.awaitMessageComponent({ filter, time: 180000 }),
+				interaction.channel.awaitMessages({ filter: msgFilter, max: 1, time: 180000, errors: ['time'] }),
+			]);
+
+			if (collected instanceof Collection) {
+				const message = collected.first();
+				const newText = message.content.slice(0, 1000);
+
+				db.prepare(`UPDATE guild_raid_messages SET ${key} = ? WHERE guild_tag = ?`).run(newText, guildData.guild_tag);
+				await message.delete().catch(console.error);
+
+				const updatedEmbed = new EmbedBuilder().setColor(0x2ECC71).setDescription(`✅ **${title}** updated!`);
+				await interaction.editReply({ embeds: [updatedEmbed], components: [] });
+			}
+			else {
+				if (collected.customId === 'exit_editor') {
+					const exitEmbed = new EmbedBuilder().setColor(0x3498DB).setDescription('Exiting the editor.');
+					await collected.update({ embeds: [exitEmbed], components: [] });
+					return;
+				}
+				const skippedEmbed = new EmbedBuilder().setColor(0x3498DB).setDescription('Skipped. Moving to the next message.');
+				await collected.update({ embeds: [skippedEmbed], components: [] });
+			}
+		}
+		catch (error) {
+			const timeoutEmbed = new EmbedBuilder().setColor(0xFEE75C).setDescription('⏱️ Timed out. Please start the command again.');
+			await interaction.editReply({ embeds: [timeoutEmbed], components: [] });
+			console.log(error);
+			return;
+		}
+
+		await processQueue(index + 1);
+	};
+
+	await processQueue(0);
+}
+
+
+async function handleGuildFund(interaction) {
+	const userId = interaction.user.id;
+	const guildTag = interaction.options.getString('guild_tag').toUpperCase();
+	const amount = interaction.options.getInteger('amount');
+	const OWNER_ID = '1126419078140153946';
+
+	// Owner bypass for guild membership check
+	if (userId !== OWNER_ID) {
+		// Check if user is in the guild they're trying to fund
+		const userGuild = db.prepare('SELECT guild_tag FROM guildmember_tracking WHERE user_id = ?').get(userId);
+		if (!userGuild) {
+			const embed = new EmbedBuilder()
+				.setColor(0xed4245)
+				.setTitle('❌ Failed to Fund Guild!')
+				.addFields(
+					{
+						name: '🏛️ You aren\'t in a guild!',
+						value: 'Join a guild first!',
+						inline: false,
+					},
+				);
+			return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+		}
+		if (userGuild.guild_tag !== guildTag) {
+			const embed = new EmbedBuilder()
+				.setColor(0xed4245)
+				.setTitle('❌ Failed to Fund Guild!')
+				.addFields(
+					{
+						name: '🏛️ You can only contribute to the guild you are in!',
+						value: `The guild tag you are trying to fund, \`[${guildTag}]\`, does not match the guild tag you are in, \`[${userGuild.guild_tag}]\`!`,
+						inline: false,
+					},
+				);
+			return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+		}
+	}
+
+
+	// Get user's balance
+	const userEcon = db.prepare('SELECT crowns FROM user_economy WHERE user_id = ?').get(userId);
+	const userBalance = userEcon?.crowns || 0;
+
+	if (userBalance < amount) {
+		const embed = new EmbedBuilder()
+			.setColor(0xed4245)
+			.setTitle('❌ Failed to Fund Guild!')
+			.addFields(
+				{
+					name: '💸 You can only fund your guild with Crowns than you own!',
+					value: `To fund ${amount} Crowns, you'd need **${(amount - userBalance)}** more Crowns!`,
+					inline: false,
+				},
+				{
+					name: '👑 Current Crown Balance:',
+					value: `${(userEcon?.crowns || 0)} Crowns`,
+					inline: false,
+				},
+			);
+		return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+	}
+
+	// Perform the transaction
+	db.prepare('BEGIN TRANSACTION').run();
+	try {
+		// Deduct from user
+		db.prepare('UPDATE user_economy SET crowns = crowns - ? WHERE user_id = ?').run(amount, userId);
+
+		// Add to guild
+		db.prepare(`
+            INSERT INTO guild_economy (guild_tag, balance)
+            VALUES (?, ?)
+            ON CONFLICT(guild_tag) DO UPDATE SET balance = balance + ?
+        `).run(guildTag, amount, amount);
+
+		db.prepare('COMMIT').run();
+
+		// Get guild name for response
+		const guildInfo = db.prepare('SELECT guild_name FROM guild_list WHERE guild_tag = ?').get(guildTag);
+		const embed = new EmbedBuilder()
+			.setColor(0xF1C40F)
+			.setTitle('💰 Westwind Royal Treasury 💰')
+			.addFields(
+				{
+					name: '🏛️ Funding Guild Success!',
+					value: `✅ You've contributed ${amount} Crowns to ${guildInfo.guild_name} (${guildTag})`,
+					inline: false,
+				},
+				{
+					name: '👑 **NEW** Crown Balance:',
+					value: `${userBalance - amount} Crowns`,
+					inline: false,
+				},
+			);
+		await interaction.reply({ embeds: [embed] });
+	}
+	catch (error) {
+		db.prepare('ROLLBACK').run();
+		console.error('Guild funding error:', error);
+		const embed = new EmbedBuilder()
+			.setColor(0xed4245)
+			.setTitle('❌ Brewmaster Error!')
+			.addFields(
+				{
+					name: 'Guild Funding Error - Database Rolled Back.',
+					value: '❌ An error occurred while processing the guild funding transaction. Please try again later.',
+					inline: false,
+				},
+				{
+					name: 'Error:',
+					value: String(error),
+					inline: false,
+				},
+			);
+		await interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+	}
+}
+async function handlePayout(interaction, targetUser = null) {
+	const userId = interaction.user.id;
+	const amount = interaction.options.getInteger('amount');
+	const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Payout Failed');
+	const successEmbed = new EmbedBuilder().setColor(0x2ECC71).setTitle('✅ Payout Successful');
+
+	// Verify user is guild owner or vice gm
+	const guildData = db.prepare(`
+        SELECT gl.guild_tag, gl.guild_name, ge.balance
+        FROM guildmember_tracking gmt
+        JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
+        LEFT JOIN guild_economy ge ON gl.guild_tag = ge.guild_tag
+        WHERE gmt.user_id = ? AND (gmt.owner = 1 OR gmt.vice_gm = 1)
+    `).get(userId);
+
+	if (!guildData) {
+		errorEmbed.setDescription('You must be the owner or vice-guildmaster of a guild to make payouts!');
+		return interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+
+	const currentBalance = guildData.balance || 0;
+
+	if (targetUser) {
+		// Single user payout
+		if (currentBalance < amount) {
+			errorEmbed.setDescription(`Your guild only has **${currentBalance.toLocaleString()}** crowns - not enough for this payout!`);
+			return interaction.reply({
+				embeds: [errorEmbed],
+				flags: [MessageFlags.Ephemeral],
+			});
+		}
+		// Check withdrawal limit
+		if (currentBalance - amount < GUILD_CREATION_WITHDRAWAL_LIMIT) {
+			errorEmbed.setDescription(`You cannot withdraw funds if it would drop the guild balance below **${GUILD_CREATION_WITHDRAWAL_LIMIT.toLocaleString()}** Crowns. This is to protect the guild's founding bonus.`);
+			return interaction.reply({
+				embeds: [errorEmbed],
+				flags: [MessageFlags.Ephemeral],
+			});
+		}
+
+		try {
+			// Verify target is in the guild
+			const isMember = db.prepare(`
+                SELECT 1 FROM guildmember_tracking 
+                WHERE user_id = ? AND guild_tag = ?
+            `).get(targetUser.id, guildData.guild_tag);
+
+			if (!isMember) {
+				errorEmbed.setDescription(`${targetUser} is not a member of your guild!`);
+				return interaction.reply({
+					embeds: [errorEmbed],
+					flags: [MessageFlags.Ephemeral],
+				});
+			}
+
+			// Perform payout in transaction
+			db.transaction(() => {
+				db.prepare('UPDATE guild_economy SET balance = balance - ? WHERE guild_tag = ?')
+					.run(amount, guildData.guild_tag);
+				db.prepare(`
+                    INSERT INTO user_economy (user_id, crowns)
+                    VALUES (?, ?)
+                    ON CONFLICT(user_id) DO UPDATE SET crowns = crowns + ?
+                `).run(targetUser.id, amount, amount);
+			})();
+			successEmbed.setDescription(`Paid out **${amount.toLocaleString()}** crowns from guild funds to ${targetUser}!`);
+			return interaction.reply({
+				embeds: [successEmbed],
+			});
+		}
+		catch (error) {
+			console.error('Payout error:', error);
+			errorEmbed.setTitle('❌ Payout Error').setDescription('An unexpected error occurred during the payout. The transaction was rolled back.');
+			return interaction.reply({
+				embeds: [errorEmbed],
+				flags: [MessageFlags.Ephemeral],
+			});
+		}
+	}
+	else {
+		// Payout to all members
+		const members = db.prepare(`
+            SELECT user_id FROM guildmember_tracking 
+            WHERE guild_tag = ? AND user_id != ?
+        `).all(guildData.guild_tag, userId);
+
+		if (members.length === 0) {
+			errorEmbed.setDescription('Your guild has no other members to pay out to!');
+			return interaction.reply({
+				embeds: [errorEmbed],
+				flags: [MessageFlags.Ephemeral],
+			});
+		}
+
+		const totalPayout = amount * members.length;
+
+		if (currentBalance < totalPayout) {
+			errorEmbed.setDescription(`Your guild needs **${totalPayout.toLocaleString()}** crowns to pay **${amount.toLocaleString()}** to each of the ${members.length} members, but only has **${currentBalance.toLocaleString()}**!`);
+			return interaction.reply({
+				embeds: [errorEmbed],
+				flags: [MessageFlags.Ephemeral],
+			});
+		}
+		// Check withdrawal limit
+		if (currentBalance - totalPayout < GUILD_CREATION_WITHDRAWAL_LIMIT) {
+			errorEmbed.setDescription(`You cannot withdraw funds if it would drop the guild balance below **${GUILD_CREATION_WITHDRAWAL_LIMIT.toLocaleString()}** Crowns. This payout requires **${totalPayout.toLocaleString()}** Crowns.`);
+			return interaction.reply({
+				embeds: [errorEmbed],
+				flags: [MessageFlags.Ephemeral],
+			});
+		}
+
+		try {
+			// Perform payout in transaction
+			db.transaction(() => {
+				db.prepare('UPDATE guild_economy SET balance = balance - ? WHERE guild_tag = ?')
+					.run(totalPayout, guildData.guild_tag);
+				members.forEach(member => {
+					db.prepare(`
+                        INSERT INTO user_economy (user_id, crowns)
+                        VALUES (?, ?)
+                        ON CONFLICT(user_id) DO UPDATE SET crowns = crowns + ?
+                    `).run(member.user_id, amount, amount);
+				});
+			})();
+			successEmbed.setDescription(`Paid out **${amount.toLocaleString()}** crowns to each of the **${members.length}** guild members (**${totalPayout.toLocaleString()}** crowns total)!`);
+			return interaction.reply({
+				embeds: [successEmbed],
+			});
+		}
+		catch (error) {
+			console.error('Payout all error:', error);
+			errorEmbed.setTitle('❌ Payout Error').setDescription('An unexpected error occurred during the mass payout. The transaction was rolled back.');
+			return interaction.reply({
+				embeds: [errorEmbed],
+				flags: [MessageFlags.Ephemeral],
+			});
+		}
+	}
+}
+
+const DUES_SCENARIOS = [
+	{ base: 'The guild used **{amount}** from **{user}** to purchase new equipment.', success: '✅ **Success!** The blacksmith, impressed by your guild\'s reputation, gave a discount!', failure: '❌ **Failure!** The blacksmith didn\'t care for discounts and charged a premium.' },
+	{ base: '**{user}**\'s **{amount}** was used to restock the guild\'s potion supplies.', success: '✅ **Success!** A traveling alchemist offered a rare deal on healing potions!', failure: '❌ **Failure!** Potion prices were higher than expected due to a local griffin flu.' },
+	{ base: 'With **{user}**\'s **{amount}**, the guild invested in a local merchant caravan.', success: '✅ **Success!** The caravan returned with handsome profits after finding a new trade route!', failure: '❌ **Failure!** Bandits attacked the caravan, and half the goods were lost.' },
+	{ base: '**{user}**\'s dues of **{amount}** went towards guild feast preparations.', success: '✅ **Success!** The tavern keeper, in a good mood, threw in extra ale for free!', failure: '❌ **Failure!** The butcher\'s prices had mysteriously gone up since last week.' },
+	{ base: 'The guild used **{amount}** from **{user}** to pay for repairs to the training grounds.', success: '✅ **Success!** A master carpenter, a guild ally, offered to work at half price!', failure: '❌ **Failure!** The damage was worse than initially thought, requiring costly materials.' },
+	{ base: '**{amount}** from **{user}** was spent on new maps for the guild library.', success: '✅ **Success!** An old explorer sold a rare, treasure-filled map collection for cheap!', failure: '❌ **Failure!** The cartographer charged extra for "premium, tear-proof vellum".' },
+	{ base: '**{user}**\'s contribution of **{amount}** funded a scouting mission.', success: '✅ **Success!** The scouts returned with valuable information AND unexpected loot!', failure: '❌ **Failure!** The scouts got hopelessly lost and had to use funds to bribe their way back.' },
+	{ base: 'The guild used **{amount}** from **{user}** to bribe a city official for... "favors".', success: '✅ **Success!** The official was surprisingly honest and returned some of the coin!', failure: '❌ **Failure!** The greedy official demanded double the initial bribe!' },
+];
+
+// 4% Chance
+const RARE_DUES_SCENARIOS = [
+	{ base: '**{user}**\'s **{amount}** was invested in a promising mining expedition.', success: '💎 **RARE SUCCESS!** The expedition struck a vein of pure mythril! The profits are enormous!' },
+	{ base: 'A portion of **{user}**\'s **{amount}** was used to enter a high-stakes card game.', success: '🃏 **RARE SUCCESS!** The guild\'s champion bluffed their way to a massive victory, winning the entire pot!' },
+	{ base: 'The guild used **{amount}** from **{user}** to purchase a mysterious, locked chest from a shady dealer.', success: '🗝️ **RARE SUCCESS!** The chest contained a stash of forgotten royal jewels, worth a fortune!' },
+	{ base: '**{user}**\'s **{amount}** was used to fund an archaeological dig at some ancient ruins.', success: '🏺 **RARE SUCCESS!** The dig uncovered a priceless artifact that was immediately sold to a wealthy collector!' },
+];
+
+// 1% Chance
+const ULTRA_RARE_DUES_SCENARIOS = [
+	{ base: '**{user}**\'s humble **{amount}** was used to buy a lottery ticket from a passing fay.', success: '✨ **ULTRA-RARE!!!** The ticket was a winner! The fay blessed the guild with a river of gold from the faewild!' },
+	{ base: 'With **{user}**\'s **{amount}**, the guild funded a voyage to an uncharted island.', success: '🐲 **ULTRA-RARE!!!** The island was the hoard of an ancient dragon who, amused by your audacity, gifted you a mountain of treasure!' },
+];
+
+
+// Helper function to shuffle an array
+function shuffleArray(array) {
+	const newArr = [...array];
+	for (let i = newArr.length - 1; i > 0; i--) {
+		const j = Math.floor(Math.random() * (i + 1));
+		[newArr[i], newArr[j]] = [newArr[j], newArr[i]];
+	}
+	return newArr;
+}
+
+
+async function handleDues(interaction) {
+	const userId = interaction.user.id;
+
+	// Verify user is guild owner or vice gm
+	const guildData = db.prepare(`
+        SELECT gl.guild_tag, gl.guild_name, gl.channel_id, gl.public_channel_id, gl.role_id
+        FROM guildmember_tracking gmt
+        JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
+        WHERE gmt.user_id = ? AND (gmt.owner = 1 OR gmt.vice_gm = 1)
+    `).get(userId);
+
+	if (!guildData) {
+		const errorEmbed = new EmbedBuilder()
+			.setColor(0xE74C3C)
+			.setTitle('❌ Not Authorized')
+			.setDescription('Only the guild owner or vice-guildmaster can collect dues!');
+		return interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+
+	// Fetch the guild's dedicated public channel
+	let guildChannel;
+	try {
+		guildChannel = await interaction.guild.channels.fetch(guildData.public_channel_id);
+		if (!guildChannel || !guildChannel.isTextBased()) {
+			throw new Error('Public channel is not a text channel or does not exist.');
+		}
+	}
+	catch (error) {
+		console.error('Failed to fetch guild public channel:', error);
+		const errorEmbed = new EmbedBuilder()
+			.setColor(0xE74C3C)
+			.setTitle('❌ Channel Not Found')
+			.setDescription(`Could not find the guild's public channel (<#${guildData.public_channel_id}>). It may have been deleted.`);
+		return interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+
+	// Acknowledge the command
+	const ackEmbed = new EmbedBuilder()
+		.setColor(0x3498DB)
+		.setDescription(`Starting the dues collection process in ${guildChannel}.`);
+	await interaction.reply({
+		embeds: [ackEmbed],
+		flags: [MessageFlags.Ephemeral],
+	});
+
+	// Send announcement
+	await guildChannel.send({ content: `<@&${guildData.role_id}>` });
+	const announcementEmbed = new EmbedBuilder()
+		.setColor(0x3498DB)
+		.setTitle('📢 Guild Announcement!')
+		.setDescription(`The Guildmaster, ${interaction.user}, has begun the weekly dues collection!`);
+	await guildChannel.send({ embeds: [announcementEmbed] });
+
+	// Get all guild members
+	const members = db.prepare(`
+        SELECT gmt.user_id, ue.crowns
+        FROM guildmember_tracking gmt
+        LEFT JOIN user_economy ue ON gmt.user_id = ue.user_id
+        WHERE gmt.guild_tag = ?
+        ORDER BY RANDOM()
+    `).all(guildData.guild_tag);
+
+	if (members.length === 0) {
+		const noMembersEmbed = new EmbedBuilder()
+			.setColor(0xFEE75C)
+			.setDescription('The guild has no members to collect dues from!');
+		return guildChannel.send({ embeds: [noMembersEmbed] });
+	}
+
+	let totalCollected = 0;
+	let investmentResults = 0;
+	let baseContributions = 0;
+	const resultsLog = [];
+
+	// Shuffle scenarios
+	let shuffledCommon = shuffleArray(DUES_SCENARIOS);
+	let shuffledRare = shuffleArray(RARE_DUES_SCENARIOS);
+	let shuffledUltra = shuffleArray(ULTRA_RARE_DUES_SCENARIOS);
+
+	const baseEmbed = new EmbedBuilder()
+		.setColor(0xF1C40F)
+		.setTitle(`🏦 Collecting Dues for ${guildData.guild_name}...`)
+		.setDescription('Each member contributes 1% of their Crowns. These funds are then invested, with a chance for a bonus or a loss!')
+		.setThumbnail('https://i.ibb.co/2YqsK07D/guild.jpg');
+
+	addLogFields(baseEmbed, resultsLog, 'Contribution Log');
+	const duesMessage = await guildChannel.send({ embeds: [baseEmbed] });
+
+	for (const member of members) {
+		const memberUser = await interaction.client.users.fetch(member.user_id).catch(() => null);
+		if (!memberUser) continue;
+
+		const contribution = Math.floor((member.crowns || 0) * 0.01);
+
+		if (contribution < 1) {
+			resultsLog.push(`- 🤷 ${memberUser} had insufficient funds to contribute.`);
+			const updatedEmbed = new EmbedBuilder(baseEmbed.data);
+			addLogFields(updatedEmbed, resultsLog, 'Contribution Log');
+			await duesMessage.edit({ embeds: [updatedEmbed] });
+			await new Promise(resolve => setTimeout(resolve, 1500));
+			continue;
+		}
+
+		// --- Tiered Luck System ---
+		const luckRoll = Math.random();
+		let scenario;
+		let investmentChange;
+
+		if (luckRoll < 0.01) {
+			if (shuffledUltra.length === 0) shuffledUltra = shuffleArray(ULTRA_RARE_DUES_SCENARIOS);
+			scenario = shuffledUltra.pop();
+			investmentChange = Math.floor(contribution * (5 + Math.random() * 5));
+		}
+		else if (luckRoll < 0.05) {
+			if (shuffledRare.length === 0) shuffledRare = shuffleArray(RARE_DUES_SCENARIOS);
+			scenario = shuffledRare.pop();
+			investmentChange = Math.floor(contribution * (1.5 + Math.random() * 1.5));
+		}
+		else {
+			if (shuffledCommon.length === 0) shuffledCommon = shuffleArray(DUES_SCENARIOS);
+			scenario = shuffledCommon.pop();
+			const isSuccess = Math.random() < 0.6;
+			if (isSuccess) {
+				investmentChange = Math.floor(contribution * (0.2 + Math.random() * 0.6));
+			}
+			else {
+				investmentChange = -Math.floor(contribution * (0.1 + Math.random() * 0.4));
+				scenario.success = scenario.failure;
+			}
+		}
+
+		const baseMessage = scenario.base
+			.replace('{user}', memberUser)
+			.replace('{amount}', `${contribution.toLocaleString()} Crowns`);
+
+		// STAGE 1 & 2: Animation
+		for (let i = 0; i <= 3; i++) {
+			const animationEmbed = new EmbedBuilder(baseEmbed.data);
+			// Clear fields first
+			animationEmbed.spliceFields(0, animationEmbed.data.fields?.length || 0);
+			addLogFields(animationEmbed, resultsLog, 'Contribution Log');
+			animationEmbed.addFields({
+				name: '🎲 Current Investment',
+				value: `${baseMessage}\n***Processing${'.'.repeat(i)}***`,
+				inline: false,
+			});
+			await duesMessage.edit({ embeds: [animationEmbed] });
+			await new Promise(resolve => setTimeout(resolve, 1500));
+		}
+
+		// STAGE 3: Reveal outcome
+		const resultAmount = Math.max(0, contribution + investmentChange);
+		const resultMessage = scenario.success;
+
+		try {
+			db.transaction(() => {
+				db.prepare('UPDATE user_economy SET crowns = crowns - ? WHERE user_id = ?').run(contribution, member.user_id);
+				db.prepare('INSERT INTO guild_economy (guild_tag, balance) VALUES (?, ?) ON CONFLICT(guild_tag) DO UPDATE SET balance = balance + ?').run(guildData.guild_tag, resultAmount, resultAmount);
+			})();
+
+			baseContributions += contribution;
+			investmentResults += investmentChange;
+			totalCollected += resultAmount;
+
+			resultsLog.push(`- ${baseMessage}\n${resultMessage}  **(👑 ${contribution.toLocaleString()} ➔ 👑 ${resultAmount.toLocaleString()})**`);
+		}
+		catch (err) {
+			console.error(`Dues DB transaction failed for ${memberUser.username}:`, err);
+			resultsLog.push(`- ❌ An error occurred for ${memberUser}.`);
+		}
+
+		// Update embed with the final result for this member
+		const finalMemberEmbed = new EmbedBuilder(baseEmbed.data);
+		addLogFields(finalMemberEmbed, resultsLog, 'Contribution Log');
+		await duesMessage.edit({ embeds: [finalMemberEmbed] });
+	}
+
+	// Final summary update
+	const finalEmbed = new EmbedBuilder()
+		.setColor(0x2ECC71)
+		.setTitle(`✅ Dues Collection Complete! - ${guildData.guild_name}`)
+		.setThumbnail('https://i.ibb.co/2YqsK07D/guild.jpg')
+		.setDescription('Each member contributes 1% of their Crowns. These funds are then invested, with a chance for a bonus or a loss!')
+		.addFields(
+			{ name: '🏛️ Base Contributions', value: `**${baseContributions.toLocaleString()}** crowns`, inline: true },
+			{ name: '📈 Investment Gain/Loss', value: `**${investmentResults.toLocaleString()}** crowns`, inline: true },
+			{ name: '💰 Total Collected', value: `**${totalCollected.toLocaleString()}** crowns`, inline: true },
+		);
+	addLogFields(finalEmbed, resultsLog, 'Final Contribution Log');
+	finalEmbed.setFooter({ text: 'Dues collected by the Guildmaster at 1% of __each__ member\'s balance.' });
+	await duesMessage.edit({ embeds: [finalEmbed] });
+}
+
+async function handleInfo(interaction) {
+	try {
+		const guildTag = interaction.options.getString('guild_tag').toUpperCase();
+
+		// Get comprehensive guild info
+		const guildInfo = db.prepare(`
+            SELECT 
+                gl.*,
+                COALESCE(ge.balance, 0) AS balance,
+                COALESCE(gt.tier, 1) AS tier,
+                rc.shield_expiry,
+                rc.last_raid_time,
+                rl.successful_raids,
+				rl.guilds_destroyed,
+                rl.crowns_stolen
+            FROM guild_list gl
+            LEFT JOIN guild_economy ge ON gl.guild_tag = ge.guild_tag
+            LEFT JOIN guild_tiers gt ON gl.guild_tag = gt.guild_tag
+            LEFT JOIN raid_cooldowns rc ON gl.guild_tag = rc.guild_tag
+            LEFT JOIN raid_leaderboard rl ON gl.guild_tag = rl.guild_tag
+            WHERE gl.guild_tag = ?
+        `).get(guildTag);
+
+		if (!guildInfo) {
+			const errorEmbed = new EmbedBuilder()
+				.setColor(0xE74C3C)
+				.setTitle('❌ Not Found')
+				.setDescription('No guild found with that tag!');
+			return interaction.reply({
+				embeds: [errorEmbed],
+				flags: [MessageFlags.Ephemeral],
+			});
+		}
+		// Check if the user is a member of the guild
+		const memberData = db.prepare('SELECT owner, vice_gm FROM guildmember_tracking WHERE user_id = ? AND guild_tag = ?').get(interaction.user.id, guildTag);
+		const isMember = !!memberData;
+		const isOwner = memberData?.owner === 1;
+
+
+		// Check if guild is in vulnerable state
+		const isVulnerable = guildInfo.balance < 200;
+		const vulnerableStatus = isVulnerable
+			? '🚨 **VULNERABLE STATE** 🚨\n__Your guild treasury has less than **200 Crowns**!__\n' +
+              '• Raiders will steal **25% from each member** (uncapped) instead of the usual capped 5% (100 per member MAX)\n' +
+              '• Your vault will be targeted for a flat **25%** of its balance, ignoring your tier\'s normal damage reduction.\n' +
+			  '• If your treasury is successfully raided and drops to __0 or less__ crowns, it will be **PERMANENTLY DESTROYED**.\n' +
+			  '• __**Consider funding your guild**__ with `/guild fund`, `/guild fundraise`, or `/guild dues` to exit this vulnerable state!'
+			: '✅ **Safe Treasury**\nYour guild has sufficient funds to withstand a raid without being destroyed.';
+
+		// Get all members with their balances
+		const members = db.prepare(`
+            SELECT 
+                gmt.user_id, 
+                gmt.owner,
+                gmt.vice_gm,
+                COALESCE(ue.crowns, 0) AS crowns
+            FROM guildmember_tracking gmt
+            LEFT JOIN user_economy ue ON gmt.user_id = ue.user_id
+            WHERE gmt.guild_tag = ?
+            ORDER BY gmt.owner DESC, gmt.vice_gm DESC, ue.crowns DESC
+        `).all(guildInfo.guild_tag);
+
+		// Calculate total guild wealth (vault + member balances)
+		const totalWealth = members.reduce((sum, member) => sum + member.crowns, guildInfo.balance);
+
+		const now = new Date();
+		const creationDate = new Date(guildInfo.created_at);
+		const daysSinceCreation = (now - creationDate) / (1000 * 60 * 60 * 24);
+
+		const shieldExpiry = guildInfo.shield_expiry ? new Date(guildInfo.shield_expiry) : null;
+		const rawShieldStatus = shieldExpiry && shieldExpiry > now
+			? `🛡️ Active (expires <t:${Math.floor(shieldExpiry.getTime() / 1000)}:R>)`
+			: (daysSinceCreation < 7 ? `🆕 New Guild Protection (expires <t:${Math.floor((creationDate.getTime() + (7 * 24 * 60 * 60 * 1000)) / 1000)}:R>)` : '❌ No active shield');
+		const shieldStatus = (isMember || isOwner) ? rawShieldStatus : '🛡️ ❓ (Hidden)';
+
+		const defaultEmojiRecord = db.prepare(`
+            SELECT emoji_name, emoji_id FROM guild_emojis 
+            WHERE guild_tag = ? AND is_default = 1
+        `).get(guildTag);
+
+		// Step 3: Construct the final emoji string, with a fallback
+		const guildEmoji = defaultEmojiRecord
+			? `<:${defaultEmojiRecord.emoji_name}:${defaultEmojiRecord.emoji_id}>`
+			: '🗡️';
+			// Default fallback emoji is dagger
+
+		// Fetch member details and format member list
+		const memberList = [];
+		let titleNameTicker = 0;
+		let leader = 'the Guildmaster';
+
+		let raidCooldownStatus = '❓ (Hidden)';
+		if (isMember) {
+			if (guildInfo.last_raid_time) {
+				const lastRaid = new Date(guildInfo.last_raid_time);
+				const nextRaidTime = new Date(lastRaid.getTime() + 24 * 60 * 60 * 1000);
+				if (now < nextRaidTime) {
+					raidCooldownStatus = `🕰️ Can raid <t:${Math.floor(nextRaidTime.getTime() / 1000)}:R>`;
+				}
+				else {
+					raidCooldownStatus = '✅ Ready to raid';
+				}
+			}
+			else {
+				raidCooldownStatus = '✅ Ready to raid';
+			}
+		}
+
+		for (const member of members) {
+			try {
+				const discordMember = await interaction.guild.members.fetch(member.user_id);
+				// Use the fetched variables
+				const memberText = member.owner === 1
+					? `👑 __**GUILDMASTER**__\n• ${discordMember.toString()}`
+					: member.vice_gm === 1
+						? `🛡️ __**VICE GUILDMASTER**__\n• ${discordMember.toString()}`
+					// Use the new guildEmoji variable and the title from guildInfo
+						: `${titleNameTicker < 3 ? `\n**${guildEmoji} __${guildInfo.guildmember_title}__**\n` : ''}• ${discordMember.toString()}`;
+
+				if (member.owner === 1) leader = discordMember.displayName;
+				titleNameTicker++;
+				memberList.push(`${memberText}/${discordMember.displayName}\n\`[🪙 ${member.crowns.toLocaleString()}]\` Crowns`);
+			}
+			catch (error) {
+				if (error.code === 10007 || !interaction.guild.members.cache.has(member.user_id)) {
+					// Clean up left members
+					db.transaction(() => {
+						db.prepare('DELETE FROM guildmember_tracking WHERE user_id = ?').run(member.user_id);
+					})();
+				}
+				else {
+					memberList.push(`• <@${member.user_id}> (🪙 ${member.crowns.toLocaleString()}) (error fetching)`);
+				}
+			}
+		}
+
+		// Build embed
+		const embed = new EmbedBuilder()
+			.setTitle(`${guildInfo.guild_name} [${guildInfo.guild_tag}]`)
+			.setDescription(guildInfo.about_text || 'No description set. Use `/guild settings about` to add one.')
+			.setColor(0x3498db)
+			.addFields(
+				{
+					name: ((guildInfo.is_open || 0) === 1) ? `🔓 Open to join, use command \`/guild join ${guildInfo.guild_tag}\`` : `🔒 Invite only, inquire with ${leader ? '__' + leader + '__, ' : ''}the Guildmaster`,
+					value: '\u200B',
+					inline: false,
+				},
+				{
+					name: 'Motto',
+					value: guildInfo.motto ? '*' + guildInfo.motto + '*' : 'Use `/guild settings motto` to add one.',
+					inline: true,
+				},
+				{
+					name: 'Shield Status',
+					value: shieldStatus,
+					inline: true,
+				},
+				{
+					name: 'Raid Stats',
+					value: [
+						`⚔️ Successful Raids: ${guildInfo.successful_raids || 0}`,
+						`☠️ Guilds Destroyed: ${guildInfo.guilds_destroyed || 0}`,
+						`👑 Crowns Stolen: ${guildInfo.crowns_stolen?.toLocaleString() || '0'}`,
+						`⌛ **Raid Cooldown:** ${raidCooldownStatus}`,
+					].join('\n'),
+					inline: true,
+				},
+				{
+					name: `Members (${members.length})`,
+					value: memberList.length > 0 ? memberList.slice(0, 15).join('\n') : 'No members found',
+					inline: false,
+				},
+				{
+					name: 'Stats & Defences',
+					value: [
+
+						`• Tier: ${tierEmojis[guildInfo.tier - 1]}`,
+						getTierBenefits(guildInfo.tier),
+					].join('\n'),
+					inline: true,
+				},
+				{
+					name: 'Wealth',
+					value: [
+						`🏦 Guild Vault: ${(isMember || isOwner) ? (guildInfo.balance.toLocaleString() + ' Crowns') : '❓ (Hidden)'}`,
+						`👥 Member Total: ${(totalWealth - guildInfo.balance).toLocaleString() || 0} Crowns`,
+						`💰 Combined Wealth: ${(isMember || isOwner) ? totalWealth.toLocaleString() + ' Crowns' : '❓ (Hidden)'}`,
+					].join('\n'),
+					inline: true,
+				},
+			);
+		if (isMember || isOwner) {
+			embed.addFields({
+				name: '⚠️ Treasury Status and Raid Vulnerability',
+				value: vulnerableStatus,
+				inline: false,
+			});
+		}
+
+		embed.setFooter({ text: `Guild Tag: ${guildInfo.guild_tag} • Created on ${new Date(guildInfo.created_at).toLocaleDateString()}` })
+			.setTimestamp();
+
+		await interaction.reply({ embeds: [embed] });
+	}
+	catch (error) {
+		console.error('Error in handleInfo:', error);
+		const errorEmbed = new EmbedBuilder()
+			.setColor(0xE74C3C)
+			.setTitle('❌ Error')
+			.setDescription('An error occurred while fetching guild info.');
+		await interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+}
+async function handleBequeath(interaction) {
+	const userId = interaction.user.id;
+	const newOwnerUser = interaction.options.getUser('new_owner');
+	const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Ownership Transfer Failed');
+
+	// Check if current user is guild owner
+	const currentGuild = db.prepare(`
+        SELECT gmt.*, gl.guild_name 
+        FROM guildmember_tracking gmt
+        JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
+        WHERE gmt.user_id = ? AND gmt.owner = 1
+    `).get(userId);
+
+	if (!currentGuild) {
+		errorEmbed.setDescription('You must be the owner of a guild to transfer ownership!');
+		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+	}
+
+	// Check if new owner is in the same guild
+	const newOwnerInGuild = db.prepare(`
+        SELECT * FROM guildmember_tracking 
+        WHERE user_id = ? AND guild_tag = ?
+    `).get(newOwnerUser.id, currentGuild.guild_tag);
+
+	if (!newOwnerInGuild) {
+		errorEmbed.setDescription(`${newOwnerUser} is not a member of your guild!`);
+		return interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+
+	// Transfer ownership
+	try {
+		db.transaction(() => {
+			db.prepare(`
+				UPDATE guildmember_tracking
+				SET owner = 0
+				WHERE user_id = ? AND guild_tag = ?
+			`).run(userId, currentGuild.guild_tag);
+
+			db.prepare(`
+				UPDATE guildmember_tracking
+				SET owner = 1
+				WHERE user_id = ? AND guild_tag = ?
+			`).run(1, newOwnerUser.id, currentGuild.guild_tag);
+		})();
+
+		const bequeathEmbed = new EmbedBuilder()
+			.setColor(0x9B59B6)
+			.setTitle('👑 Change of Leadership')
+			.setDescription(`Ownership of **${currentGuild.guild_name} [${currentGuild.guild_tag}]** has been transferred from ${interaction.user} to ${newOwnerUser}. All hail the new Guildmaster!`)
+			.setTimestamp();
+		await sendGuildAnnouncement(interaction.client, bequeathEmbed);
+
+		const successEmbed = new EmbedBuilder()
+			.setColor(0x2ECC71)
+			.setTitle('✅ Ownership Transferred')
+			.setDescription(`You have successfully transferred ownership of **${currentGuild.guild_name} [${currentGuild.guild_tag}]** to ${newOwnerUser}.`);
+		return interaction.reply({
+			embeds: [successEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+	catch (error) {
+		console.error('Transfer ownership error:', error);
+		errorEmbed.setTitle('❌ Transaction Error').setDescription('An unexpected error occurred while transferring ownership. The operation has been rolled back.');
+		return interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+}
+async function handleSettings(interaction, settingType) {
+	const userId = interaction.user.id;
+	const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Setting Update Failed');
+	const successEmbed = new EmbedBuilder().setColor(0x2ECC71).setTitle('✅ Setting Updated');
+
+	// Verify user is guild owner
+	const guildData = db.prepare(`
+        SELECT gl.* 
+        FROM guildmember_tracking gmt
+        JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
+        WHERE gmt.user_id = ? AND (gmt.owner = 1 OR gmt.vice_gm = 1)
+    `).get(userId);
+
+	if (!guildData) {
+		errorEmbed.setDescription('You must be the owner or vice-guildmaster of a guild to change its settings!');
+		return interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+	if (settingType === 'raid_messages') {
+		return handleRaidMessagesSettings(interaction, guildData);
+	}
+	try {
+		switch (settingType) {
+		case 'name': {
+			const newName = interaction.options.getString('new_name');
+			// Validate new name
+			if (!/^[a-zA-Z0-9 ]+$/.test(newName)) {
+				errorEmbed.setDescription('Guild name can only contain letters, numbers, and spaces!');
+				return interaction.reply({
+					embeds: [errorEmbed],
+					flags: [MessageFlags.Ephemeral],
+				});
+			}
+			if (newName.length < 3 || newName.length > 35) {
+				errorEmbed.setDescription('Guild name must be between 3 and 35 characters!');
+				return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+			}
+
+			// Validate against reserved terms
+			const lowerName = newName.toLowerCase();
+			const hasReservedTerm = RESERVED_TERMS.some(term =>
+				lowerName.includes(term),
+			);
+
+			if (hasReservedTerm) {
+				errorEmbed.setDescription(`That guild name contains restricted terms. Please choose another name.\nAvoid terms like: ${RESERVED_TERMS.join(', ')}`);
+				return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+			}
+
+
+			db.prepare('UPDATE guild_list SET guild_name = ? WHERE guild_tag = ?')
+				.run(newName, guildData.guild_tag);
+
+			// Update role name to match
+			const role = await interaction.guild.roles.fetch(guildData.role_id);
+			if (role) await role.setName(`Guild: ${newName}`);
+
+			successEmbed.setDescription(`Guild name updated to **"${newName}"**`);
+			return interaction.reply({
+				embeds: [successEmbed],
+				flags: [MessageFlags.Ephemeral],
+			});
+		}
+
+		case 'tag': {
+			const newTag = interaction.options.getString('new_tag').toUpperCase();
+			const oldTag = guildData.guild_tag;
+
+			// Validate new tag
+			if (!/^[A-Z]{3}$/.test(newTag)) {
+				errorEmbed.setDescription('Guild tag must be exactly 3 uppercase letters!');
+				return interaction.reply({
+					embeds: [errorEmbed],
+					flags: [MessageFlags.Ephemeral],
+				});
+			}
+
+			// Check if tag is available
+			const existing = db.prepare('SELECT 1 FROM guild_list WHERE guild_tag = ? AND guild_tag != ?')
+				.get(newTag, oldTag);
+			if (existing) {
+				errorEmbed.setDescription('That tag is already taken by another guild!');
+				return interaction.reply({
+					embeds: [errorEmbed],
+					flags: [MessageFlags.Ephemeral],
+				});
+			}
+
+			try {
+				// IMPORTANT: disable foreign keys BEFORE transaction
+				db.pragma('foreign_keys = OFF');
+
+				const updateTagTransaction = db.transaction(() => {
+					console.log('[DEBUGGING INFORMATION FOR GUILD] Performing guild_tag update in transaction');
+
+					const allTables = [
+						'guildmember_tracking', 'guild_economy', 'guild_tiers',
+						'raid_cooldowns', 'raid_leaderboard', 'guild_raid_messages',
+						'guild_fundraisers', 'guild_emojis',
+					];
+
+					for (const table of allTables) {
+						db.prepare(`UPDATE ${table} SET guild_tag = ? WHERE guild_tag = ?`)
+							.run(newTag, oldTag);
+						console.log(`[DEBUGGING] Updated ${table}`);
+					}
+
+					// Handle attacker/defender references in raid_history
+					db.prepare('UPDATE raid_history SET attacker_tag = ? WHERE attacker_tag = ?').run(newTag, oldTag);
+					db.prepare('UPDATE raid_history SET defender_tag = ? WHERE defender_tag = ?').run(newTag, oldTag);
+					console.log('[DEBUGGING] Updated raid_history references');
+
+					// Update the main guild_list last
+					db.prepare('UPDATE guild_list SET guild_tag = ? WHERE guild_tag = ?')
+						.run(newTag, oldTag);
+					console.log('[DEBUGGING] Updated guild_list');
+				});
+
+				// Execute transaction
+				updateTagTransaction();
+
+				// Re-enable foreign key enforcement
+				db.pragma('foreign_keys = ON');
+
+				console.log('[DEBUGGING] Tag update complete');
+				successEmbed.setDescription(`Guild tag successfully updated from **[${oldTag}]** to **[${newTag}]**.`);
+				return interaction.reply({
+					embeds: [successEmbed],
+					flags: [MessageFlags.Ephemeral],
+				});
+			}
+			catch (error) {
+				console.error('Tag update error:', error);
+				// Ensure this is always re-enabled
+				db.pragma('foreign_keys = ON');
+				errorEmbed.setTitle('❌ Critical Error: Tag Update Failed').setDescription('A major error occurred while updating the guild tag. The database has been reverted. Please contact support.');
+				return interaction.reply({
+					embeds: [errorEmbed],
+					flags: [MessageFlags.Ephemeral],
+				});
+			}
+		}
+
+
+		case 'visibility': {
+			const status = interaction.options.getString('status');
+			const isOpen = status === 'open' ? 1 : 0;
+
+			db.prepare('UPDATE guild_list SET is_open = ? WHERE guild_tag = ?')
+				.run(isOpen, guildData.guild_tag);
+			successEmbed.setDescription(`Your guild is now **${status.toUpperCase()}** to new members.`);
+			return interaction.reply({
+				embeds: [successEmbed],
+				flags: [MessageFlags.Ephemeral],
+			});
+		}
+
+		case 'channel': {
+			const rawName = interaction.options.getString('new_name');
+			const newName = 'guild-' + rawName
+				.replace(/[^a-zA-Z0-9 -]/g, '')
+				.trim()
+				.replace(/\s+/g, '-')
+				.toLowerCase();
+
+			// Fetch and rename the PUBLIC channel
+			const channel = await interaction.guild.channels.fetch(guildData.public_channel_id);
+			if (channel) await channel.setName(newName);
+
+			successEmbed.setDescription(`Your guild's public channel has been renamed to ${channel}.`);
+			return interaction.reply({
+				embeds: [successEmbed],
+				flags: [MessageFlags.Ephemeral],
+			});
+		}
+		case 'about': {
+			const text = interaction.options.getString('text').slice(0, 1000);
+			db.prepare('UPDATE guild_list SET about_text = ? WHERE guild_tag = ?')
+				.run(text, guildData.guild_tag);
+			successEmbed.setTitle('✅ About Text Updated').setDescription('Your guild\'s "about" description has been changed.');
+			return interaction.reply({
+				embeds: [successEmbed],
+				flags: [MessageFlags.Ephemeral],
+			});
+		}
+		case 'motto': {
+			const text = interaction.options.getString('text').slice(0, 100);
+			db.prepare('UPDATE guild_list SET motto = ? WHERE guild_tag = ?')
+				.run(text, guildData.guild_tag);
+			successEmbed.setTitle('✅ Motto Updated').setDescription(`Your new guild motto is now: *"${text}"*`);
+			return interaction.reply({
+				embeds: [successEmbed],
+				flags: [MessageFlags.Ephemeral],
+			});
+		}
+		case 'role': {
+			const newName = 'Guild: ' + interaction.options.getString('new_name');
+			const role = await interaction.guild.roles.fetch(guildData.role_id);
+			if (role) await role.setName(newName);
+
+			successEmbed.setDescription(`Your guild role has been renamed to ${role}.`);
+			return interaction.reply({
+				embeds: [successEmbed],
+				flags: [MessageFlags.Ephemeral],
+			});
+		}
+		case 'promote': {
+			const targetUser = interaction.options.getUser('user');
+
+			const targetMember = db.prepare('SELECT * FROM guildmember_tracking WHERE user_id = ? AND guild_tag = ?').get(targetUser.id, guildData.guild_tag);
+			if (!targetMember) {
+				errorEmbed.setDescription(`${targetUser.username} is not in your guild.`);
+				return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+			}
+			if (targetMember.owner === 1 || targetMember.vice_gm === 1) {
+				errorEmbed.setDescription(`${targetUser.username} already holds a leadership position.`);
+				return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+			}
+			// Optional: Check if there is already a vice gm
+			const existingViceGm = db.prepare('SELECT 1 FROM guildmember_tracking WHERE guild_tag = ? AND vice_gm = 1').get(guildData.guild_tag);
+			if (existingViceGm) {
+				errorEmbed.setDescription('Your guild already has a Vice Guildmaster. Demote them first before promoting another.');
+				return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+			}
+
+			db.prepare('UPDATE guildmember_tracking SET vice_gm = 1 WHERE user_id = ? AND guild_tag = ?').run(targetUser.id, guildData.guild_tag);
+			successEmbed.setTitle('👑 Promotion!').setDescription(`${targetUser.username} has been promoted to **Vice Guildmaster**!`);
+			return interaction.reply({ embeds: [successEmbed], flags: [MessageFlags.Ephemeral] });
+		}
+		case 'demote': {
+			const targetUser = interaction.options.getUser('user');
+
+			const targetMember = db.prepare('SELECT * FROM guildmember_tracking WHERE user_id = ? AND guild_tag = ?').get(targetUser.id, guildData.guild_tag);
+			if (!targetMember) {
+				errorEmbed.setDescription(`${targetUser.username} is not in your guild.`);
+				return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+			}
+			if (targetMember.vice_gm !== 1) {
+				errorEmbed.setDescription(`${targetUser.username} is not a Vice Guildmaster.`);
+				return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+			}
+
+			db.prepare('UPDATE guildmember_tracking SET vice_gm = 0 WHERE user_id = ? AND guild_tag = ?').run(targetUser.id, guildData.guild_tag);
+			successEmbed.setDescription(`✅ ${targetUser.username} has been demoted to a regular member.`);
+			return interaction.reply({ embeds: [successEmbed], flags: [MessageFlags.Ephemeral] });
+		}
+		case 'member_title': {
+			const newTitle = interaction.options.getString('title');
+			db.prepare('UPDATE guild_list SET guildmember_title = ? WHERE guild_tag = ?')
+				.run(newTitle, guildData.guild_tag);
+			successEmbed.setDescription(`Your guild members will now be known as **${newTitle}**!`);
+			return interaction.reply({
+				embeds: [successEmbed],
+				flags: [MessageFlags.Ephemeral],
+			});
+		}
+
+		case 'emoji': {
+			if (!interaction.guild.members.me.permissions.has('ManageEmojisAndStickers')) {
+				errorEmbed.setDescription('❌ I need the "Manage Emojis and Stickers" permission to do this!');
+				return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+			}
+
+			const existingDefault = db.prepare('SELECT * FROM guild_emojis WHERE guild_tag = ? AND is_default = 1').get(guildData.guild_tag);
+			await processEmojiUpdate(interaction, guildData, existingDefault);
+			break;
+		}
+		case 'sticker': {
+			if (!interaction.guild.members.me.permissions.has('ManageEmojisAndStickers')) {
+				errorEmbed.setDescription('❌ I need the "Manage Emojis and Stickers" permission to do this!');
+				return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+			}
+
+			const existingSticker = db.prepare('SELECT * FROM guild_stickers WHERE guild_tag = ?').get(guildData.guild_tag);
+			await processStickerUpdate(interaction, guildData, existingSticker);
+			break;
+		}
+		}
+	}
+	catch (error) {
+		console.error('Guild settings error:', error);
+		const finalErrorEmbed = new EmbedBuilder()
+			.setColor(0xE74C3C)
+			.setTitle('❌ Error Updating Settings')
+			.setDescription('An unexpected error occurred. Please try again later.');
+		return interaction.reply({
+			embeds: [finalErrorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+}
+
+async function processStickerUpdate(interaction, guildData, existingSticker = null) {
+	if (existingSticker) {
+		// Fetch the sticker from Discord to show it
+		const sticker = await interaction.guild.stickers.fetch(existingSticker.sticker_id).catch(() => null);
+		const stickerName = sticker ? sticker.name : 'an old sticker';
+
+		const confirmEmbed = new EmbedBuilder()
+			.setColor(0xFEE75C)
+			.setTitle('⚠️ Replace Guild Sticker?')
+			.setDescription(`Your guild's sticker is currently **${stickerName}**.\n\nReplacing it will **permanently delete** the old sticker from the server. Are you sure?`)
+			.setFooter({ text: 'This action cannot be undone.' });
+
+		if (sticker) confirmEmbed.setThumbnail(sticker.url);
+
+		const row = new ActionRowBuilder().addComponents(
+			new ButtonBuilder().setCustomId('confirm_replace_sticker').setLabel('Yes, Replace It').setStyle(ButtonStyle.Danger),
+			new ButtonBuilder().setCustomId('cancel_replace').setLabel('Cancel').setStyle(ButtonStyle.Secondary),
+		);
+
+		await interaction.reply({ embeds: [confirmEmbed], components: [row], flags: [MessageFlags.Ephemeral] });
+
+		const filter = i => i.user.id === interaction.user.id;
+		const collector = interaction.channel.createMessageComponentCollector({ filter, time: 60000, max: 1 });
+
+		collector.on('collect', async i => {
+			if (i.customId === 'confirm_replace_sticker') {
+				await i.deferUpdate();
+				await collectAndCreateSticker(interaction, guildData, existingSticker);
+			}
+			else {
+				const cancelEmbed = new EmbedBuilder().setColor(0x3498DB).setDescription('Sticker replacement cancelled.');
+				await i.update({ embeds: [cancelEmbed], components: [], thumbnail: null });
+			}
+		});
+		return;
+	}
+
+	// If no sticker exists, proceed directly
+	await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
+	await collectAndCreateSticker(interaction, guildData, null);;
+}
+async function collectAndCreateSticker(interaction, guildData, existingSticker) {
+	const errorEmbed = new EmbedBuilder().setColor(0xE74C3C);
+	const successEmbed = new EmbedBuilder().setColor(0x2ECC71);
+	const promptEmbed = new EmbedBuilder().setColor(0x3498DB);
+	const userId = interaction.user.id;
+	const channel = interaction.channel;
+
+	const editOriginalReply = async (options) => {
+		try {
+			await interaction.editReply(options);
+		}
+		catch {
+			await interaction.followUp(options);
+		}
+	};
+
+	try {
+		promptEmbed
+			.setTitle('Step 1: Sticker Name')
+			.setDescription('Please send a name for your sticker in the chat.\n\nIt must be between 2 and 30 characters.')
+			.setFooter({ text: 'You have 2 minutes to reply. Type "cancel" to exit.' });
+
+		await editOriginalReply({ embeds: [promptEmbed], components: [] });
+
+		const nameFilter = m => m.author.id === userId;
+		const nameCollector = await channel.awaitMessages({ filter: nameFilter, max: 1, time: 120000, errors: ['time'] });
+		const nameMessage = nameCollector.first();
+		const stickerName = nameMessage.content.trim();
+		await nameMessage.delete().catch(console.error);
+
+		if (stickerName.toLowerCase() === 'cancel') {
+			promptEmbed.setDescription('Sticker creation cancelled.');
+			return editOriginalReply({ embeds: [promptEmbed] });
+		}
+		if (stickerName.length < 2 || stickerName.length > 30) {
+			errorEmbed.setTitle('❌ Invalid Name').setDescription('The name must be between 2 and 30 characters. Please start over.');
+			return editOriginalReply({ embeds: [errorEmbed] });
+		}
+
+		promptEmbed
+			.setTitle('Step 2: Related Emoji')
+			.setDescription('Great! Now, please send a **single, standard Unicode emoji** that relates to your sticker (e.g., 😄, ⚔️, 🛡️).\n\nThis helps users find your sticker.')
+			.setFooter({ text: 'You have 2 minutes to reply. Type "cancel" to exit.' });
+
+		await editOriginalReply({ embeds: [promptEmbed] });
+
+		const emojiFilter = m => m.author.id === userId;
+		const emojiCollector = await channel.awaitMessages({ filter: emojiFilter, max: 1, time: 120000, errors: ['time'] });
+		const emojiMessage = emojiCollector.first();
+		const emojiContent = emojiMessage.content.trim();
+		await emojiMessage.delete().catch(console.error);
+
+		if (emojiContent.toLowerCase() === 'cancel') {
+			promptEmbed.setDescription('Sticker creation cancelled.');
+			return editOriginalReply({ embeds: [promptEmbed] });
+		}
+
+		const emojiRegex = /(\p{Emoji_Presentation}|\p{Emoji}\uFE0F)/gu;
+		const emojiMatch = emojiContent.match(emojiRegex);
+		if (!emojiMatch || emojiMatch.length > 1) {
+			errorEmbed.setTitle('❌ Invalid Emoji').setDescription('You must provide a single, standard emoji. Custom server emojis are not allowed. Please start over.');
+			return editOriginalReply({ embeds: [errorEmbed] });
+		}
+		const relatedEmoji = emojiMatch[0];
+
+
+		promptEmbed
+			.setTitle('Step 3: Upload Image')
+			.setDescription('Perfect. Finally, please upload the image file for the sticker.')
+			.setFields({
+				name: '⚠️ Image Requirements',
+				value: '• **File Type:** PNG or APNG\n' +
+                       '• **Dimensions:** Exactly 320x320 pixels\n' +
+                       '• **File Size:** Under 512 KB',
+			})
+			.setFooter({ text: 'You have 3 minutes to reply. Type "cancel" to exit.' });
+
+		await editOriginalReply({ embeds: [promptEmbed] });
+
+		const fileFilter = m => m.author.id === userId && (m.attachments.size > 0 || m.content.toLowerCase() === 'cancel');
+		const fileCollector = await channel.awaitMessages({ filter: fileFilter, max: 1, time: 180000, errors: ['time'] });
+		const fileMessage = fileCollector.first();
+		if (fileMessage.content.toLowerCase() === 'cancel') {
+			await fileMessage.delete().catch(console.error);
+			promptEmbed.setDescription('Sticker creation cancelled.');
+			return editOriginalReply({ embeds: [promptEmbed.setFields([])] });
+		}
+		const attachment = fileMessage.attachments.first();
+
+
+		promptEmbed.setTitle('Processing...').setDescription('Creating your sticker. This may take a moment.').setFields([]);
+		await editOriginalReply({ embeds: [promptEmbed] });
+
+
+		// Delete old sticker from Discord *before* creating the new one to free up the slot
+		if (existingSticker) {
+			const oldSticker = await interaction.guild.stickers.fetch(existingSticker.sticker_id).catch(() => null);
+			if (oldSticker) await oldSticker.delete('Replacing with new guild sticker.');
+		}
+		console.log('url: ' + attachment.url + '\nName:' + stickerName + '\nEmoji:' + relatedEmoji);
+		const newSticker = await interaction.guild.stickers.create({
+			file: attachment.url,
+			name: stickerName,
+			tags: relatedEmoji,
+			reason: `Custom sticker for guild ${guildData.guild_name} [${guildData.guild_tag}]`,
+		});
+
+		// Update the database
+		db.transaction(() => {
+			if (existingSticker) {
+				db.prepare('DELETE FROM guild_stickers WHERE guild_tag = ?').run(guildData.guild_tag);
+			}
+			db.prepare('INSERT INTO guild_stickers (guild_tag, sticker_id, sticker_name) VALUES (?, ?, ?)')
+				.run(guildData.guild_tag, newSticker.id, newSticker.name);
+		})();
+
+		successEmbed
+			.setTitle('✅ Success!')
+			.setDescription(`Your new guild sticker, **${newSticker.name}**, has been created!`)
+			.setThumbnail(newSticker.url);
+		await editOriginalReply({ embeds: [successEmbed] });
+		await fileMessage.delete().catch(console.error);
+	}
+	catch (error) {
+		// This will catch timeouts from any of the collectors
+		console.error('Sticker creation error:', error);
+		errorEmbed
+			.setTitle('❌ Sticker Creation Failed')
+			.setDescription(
+				'The process timed out or an unexpected error occurred. Please ensure you meet all requirements and try again.\n\n' +
+                '• **Name:** 2-30 characters.\n' +
+                '• **Emoji:** A single standard emoji (no custom ones).\n' +
+                '• **Image:** 320x320px, <512KB, PNG/APNG format.\n' +
+                '• **Server Capacity:** The server may be full of stickers.',
+			);
+		await editOriginalReply({ embeds: [errorEmbed], components: [] });
+	}
+}
+async function processEmojiUpdate(interaction, guildData, existingDefault = null) {
+	if (existingDefault) {
+		const existingEmojiString = `<:${existingDefault.emoji_name}:${existingDefault.emoji_id}>`;
+		const confirmEmbed = new EmbedBuilder()
+			.setColor(0xFEE75C)
+			.setTitle('⚠️ Replace Default Emoji?')
+			.setDescription(`Your guild's default emoji is currently ${existingEmojiString}.\n\nReplacing it will **permanently delete** the old emoji from the server. Are you sure?`);
+
+		const row = new ActionRowBuilder().addComponents(
+			new ButtonBuilder().setCustomId('confirm_replace_emoji').setLabel('Yes, Replace It').setStyle(ButtonStyle.Danger),
+			new ButtonBuilder().setCustomId('cancel_replace').setLabel('Cancel').setStyle(ButtonStyle.Secondary),
+		);
+
+		await interaction.reply({ embeds: [confirmEmbed], components: [row], flags: [MessageFlags.Ephemeral] });
+
+		const filter = i => i.user.id === interaction.user.id;
+		const collector = interaction.channel.createMessageComponentCollector({ filter, time: 60000, max: 1 });
+
+		collector.on('collect', async i => {
+			if (i.customId === 'confirm_replace_emoji') {
+				// We defer the update to let Discord know we're working,
+				// then send a new follow-up message. This avoids the "Unknown Message" error.
+				await i.deferUpdate();
+				const followUpEmbed = new EmbedBuilder().setColor(0x3498DB).setDescription('Please reply to this message within 2 minutes with the new emoji name and image file.');
+				const followUpMessage = await interaction.followUp({ embeds: [followUpEmbed], fetchReply: true, flags: [MessageFlags.Ephemeral] });
+				await collectAndCreateEmoji(interaction, followUpMessage, guildData, existingDefault);
+			}
+			else {
+				const cancelEmbed = new EmbedBuilder().setColor(0x3498DB).setDescription('Replacement cancelled.');
+				await i.update({ embeds: [cancelEmbed], components: [] });
+			}
+		});
+		return;
+	}
+
+	// If no emoji exists, proceed directly with the initial reply.
+	const initialEmbed = new EmbedBuilder().setColor(0x3498DB).setDescription('Please reply to this message within 2 minutes with the emoji name and the image file you want to use.');
+	const initialMessage = await interaction.reply({ embeds: [initialEmbed], fetchReply: true, flags: [MessageFlags.Ephemeral] });
+	await collectAndCreateEmoji(interaction, initialMessage, guildData, null);
+}
+
+
+async function collectAndCreateEmoji(interaction, messageToEdit, guildData, existingDefault) {
+	const filter = m => m.author.id === interaction.user.id && m.attachments.size > 0;
+	const collector = interaction.channel.createMessageCollector({ filter, time: 120000, max: 1 });
+
+	collector.on('collect', async m => {
+		try {
+			const attachment = m.attachments.first();
+			let emojiName = m.content.trim().replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '');
+			if (!emojiName || emojiName.length < 2) emojiName = 'guild_emoji';
+
+			const finalEmojiName = `${guildData.guild_tag}_${emojiName}`.slice(0, 32);
+
+			const processingEmbed = new EmbedBuilder().setColor(0x3498DB).setDescription('Processing your emoji...');
+			await interaction.followUp({
+				embeds: [processingEmbed],
+				flags: [MessageFlags.Ephemeral],
+			});
+
+			let newEmoji;
+			try {
+				newEmoji = await interaction.guild.emojis.create({
+					attachment: attachment.url,
+					name: finalEmojiName,
+					reason: `Default emoji for guild ${guildData.guild_name}`,
+				});
+
+				db.transaction(() => {
+					if (existingDefault) {
+						db.prepare('DELETE FROM guild_emojis WHERE id = ?').run(existingDefault.id);
+					}
+					db.prepare('INSERT INTO guild_emojis (guild_tag, emoji_name, emoji_id, is_default) VALUES (?, ?, ?, 1)')
+						.run(guildData.guild_tag, newEmoji.name, newEmoji.id);
+				})();
+
+				if (existingDefault) {
+					const oldEmoji = await interaction.guild.emojis.fetch(existingDefault.emoji_id).catch(() => null);
+					if (oldEmoji) await oldEmoji.delete('Replaced by new default guild emoji.');
+				}
+
+				const successEmbed = new EmbedBuilder().setColor(0x2ECC71).setDescription(`✅ Success! Your new default guild emoji is ${newEmoji}.`);
+				await interaction.followUp({
+					embeds: [successEmbed],
+					flags: [MessageFlags.Ephemeral],
+				});
+				await m.delete().catch((error) => { console.log('Couldn\'t delete message: ' + error); });
+			}
+			catch (error) {
+				console.error('Emoji creation/DB transaction error:', error);
+				const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setDescription('❌ An error occurred. This could be because the server is full of emojis, the image was too large, or the name was invalid. Please try again.');
+				await interaction.followUp({
+					embeds: [errorEmbed],
+					flags: [MessageFlags.Ephemeral],
+				});
+			}
+		}
+		catch (error) {
+			console.error('Error processing emoji:', error);
+			const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setDescription('❌ An error occurred while processing your emoji.');
+			await interaction.followUp({
+				embeds: [errorEmbed],
+				flags: [MessageFlags.Ephemeral],
+			});
+		}
+	});
+
+	collector.on('end', (collected, reason) => {
+		if (reason === 'time') {
+			const timeoutEmbed = new EmbedBuilder().setColor(0xFEE75C).setDescription('You did not reply in time. The process has been cancelled.');
+			interaction.followUp({
+				embeds: [timeoutEmbed],
+				flags: [MessageFlags.Ephemeral],
+			}).catch((error) => { console.log('Failed to reply with cancelation message error: ' + error); });
+		}
+	});
+}
+
+async function handleList(interaction) {
+	try {
+		const guilds = db.prepare(`
+            SELECT 
+                gl.guild_name, 
+                gl.guild_tag, 
+                gl.is_open, 
+                gl.motto,
+                COALESCE(gt.tier, 1) AS tier,
+                (SELECT COUNT(*) FROM guildmember_tracking WHERE guild_tag = gl.guild_tag) as member_count,
+                (SELECT user_id FROM guildmember_tracking WHERE guild_tag = gl.guild_tag AND owner = 1 LIMIT 1) as owner_id
+            FROM guild_list gl
+            LEFT JOIN guild_tiers gt ON gl.guild_tag = gt.guild_tag
+            ORDER BY gl.guild_name
+        `).all();
+
+		// Helper to get the correct crest based on the 1-15 tier system
+		const getCrestForTier = (tier) => {
+			if (tier >= 13) return ONLY_CRESTS[4];
+			if (tier >= 10) return ONLY_CRESTS[3];
+			if (tier >= 7) return ONLY_CRESTS[2];
+			if (tier >= 4) return ONLY_CRESTS[1];
+			return ONLY_CRESTS[0];
+		};
+
+		const embed = new EmbedBuilder()
+			.setColor(0x5865F2)
+			.setTitle('🏰 Guild Directory')
+			.setDescription('Here are all registered guilds. Use `/guild info [tag]` for details.');
+
+		if (guilds.length === 0) {
+			embed.setDescription('There are no guilds to display yet!');
+		}
+		else {
+			const fields = await Promise.all(guilds.map(async (guild) => {
+				const owner = guild.owner_id ? `<@${guild.owner_id}>` : '*(Unknown)*';
+				const crest = getCrestForTier(guild.tier);
+				const statusIcon = guild.is_open ? '🔓' : '🔒';
+
+				return {
+					name: `${crest} ${statusIcon} ${guild.guild_name}`,
+					value: [
+						`**Tag:** \`${guild.guild_tag}\``,
+						guild.motto && `📜 *"${guild.motto}"*`,
+						`**Owner:** ${owner}`,
+						`**Members:** ${guild.member_count}`,
+						`**Status:** ${guild.is_open ? '🟢 Open to join' : '🔴 Invite only'}`,
+					].filter(Boolean).join('\n'),
+					inline: true,
+				};
+			}));
+			embed.setFields(fields);
+		}
+
+
+		embed.setTimestamp()
+			.setFooter({ text: `Total Guilds: ${guilds.length}` });
+
+		await interaction.reply({ embeds: [embed] });
+	}
+	catch (error) {
+		console.error('Guild list error:', error);
+		const errorEmbed = new EmbedBuilder()
+			.setColor(0xE74C3C)
+			.setTitle('❌ Error')
+			.setDescription('Failed to load the guild list.');
+		await interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+}
+
+async function handleFundraise(interaction) {
+	const amount = interaction.options.getInteger('amount');
+	const userId = interaction.user.id;
+	const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Fundraiser Failed');
+
+
+	const guildData = db.prepare(`
+        SELECT gmt.guild_tag, gl.guild_name, gl.role_id, gmt.owner, gmt.vice_gm
+        FROM guildmember_tracking gmt
+        JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
+        WHERE gmt.user_id = ?
+    `).get(userId);
+
+	if (!guildData) {
+		errorEmbed.setDescription('You must be in a guild to start a fundraiser!');
+		return interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+
+	if (!guildData.owner && !guildData.vice_gm) {
+		errorEmbed.setDescription('You must be the guildmaster or vice-guildmaster to start a fundraiser!');
+		return interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+
+	// Create fundraiser embed
+	const embed = new EmbedBuilder()
+		.setTitle(`🏦 ${guildData.guild_name} Fundraiser`)
+		.setDescription(`Goal: ${amount.toLocaleString()} Crowns\n\n` +
+                       `Progress: 0% (0/${amount.toLocaleString()} Crowns)\n` +
+                       getProgressBar(0, amount))
+		.addFields(
+			{ name: 'Started by', value: interaction.user.toString(), inline: true },
+			{ name: 'Members', value: getGuildMemberCount(guildData.guild_tag).toString(), inline: true },
+		)
+		.setColor(0x3498db)
+		.setFooter({ text: 'Contribute using the buttons below' });
+
+	// Send the message
+	const message = await interaction.reply({
+		embeds: [embed],
+		components: [],
+		fetchReply: true,
+	});
+
+	// Create buttons
+	const memberCount = getGuildMemberCount(guildData.guild_tag);
+	const shareAmount = Math.ceil(amount / memberCount);
+
+
+	const row = new ActionRowBuilder().addComponents(
+		new ButtonBuilder()
+			.setCustomId(`fundraise_paywhatyoucan_${message.id}`)
+			.setLabel('Pay What You Can')
+			.setStyle(ButtonStyle.Secondary),
+		new ButtonBuilder()
+			.setCustomId(`fundraise_share_${message.id}_${shareAmount}`)
+			.setLabel(`Pay Your Share (${shareAmount})`)
+			.setStyle(ButtonStyle.Primary),
+		new ButtonBuilder()
+			.setCustomId(`fundraise_max_${message.id}_${amount}`)
+			.setLabel('Pay Full Amount')
+			.setStyle(ButtonStyle.Success),
+		new ButtonBuilder()
+			.setCustomId(`fundraise_custom_${message.id}`)
+			.setLabel('Custom Amount')
+			.setStyle(ButtonStyle.Secondary),
+		new ButtonBuilder()
+			.setCustomId(`fundraise_cancel_${message.id}`)
+			.setLabel('Cancel')
+			.setStyle(ButtonStyle.Danger),
+	);
+
+	await message.edit({
+		components: [row],
+	});
+
+	// Store fundraiser in database
+	db.prepare(`
+        INSERT INTO guild_fundraisers (message_id, guild_tag, creator_id, target_amount)
+        VALUES (?, ?, ?, ?)
+    `).run(message.id, guildData.guild_tag, userId, amount);
+}
+
+function getProgressBar(current, target) {
+	const percent = Math.min(100, Math.floor((current / target) * 100));
+	const filledSquares = Math.floor(percent / 5);
+	const emptySquares = 20 - filledSquares;
+
+	return `[${'🟦'.repeat(filledSquares)}${'⬜'.repeat(emptySquares)}] ${percent}%`;
+}
+
+function getGuildMemberCount(guildTag) {
+	return db.prepare('SELECT COUNT(*) as count FROM guildmember_tracking WHERE guild_tag = ?')
+		.get(guildTag).count;
+}
+async function handleJoin(interaction) {
+	const guildTag = interaction.options.getString('guild_tag').toUpperCase();
+	const userId = interaction.user.id;
+	const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Join Failed');
+
+	// Check if user is already in a guild
+	const currentGuild = db.prepare('SELECT 1 FROM guildmember_tracking WHERE user_id = ?').get(userId);
+	if (currentGuild) {
+		errorEmbed.setDescription('You\'re already in a guild! Leave it first before joining another.');
+		return interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+
+	// Get guild info
+	const guildData = db.prepare('SELECT * FROM guild_list WHERE guild_tag = ?').get(guildTag);
+	if (!guildData) {
+		errorEmbed.setDescription('No guild found with that tag!');
+		return interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+
+	// Check if guild is open
+	if (!guildData.is_open) {
+		errorEmbed.setDescription('This guild is invite only! Ask the owner for an invitation.');
+		return interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+
+	try {
+		// Add role to user
+		const role = await interaction.guild.roles.fetch(guildData.role_id);
+		if (role) await interaction.member.roles.add(role);
+
+		// Add to database
+		db.prepare(`
+            INSERT INTO guildmember_tracking (user_id, guild_tag, owner)
+            VALUES (?, ?, 0)
+        `).run(userId, guildTag);
+
+		// Announce the new member in the guild's channel
+		await announceNewMember(interaction.client, interaction.user, guildData);
+
+		// Send a confirmation embed to the user, pointing to the PRIVATE channel
+		const joinEmbed = new EmbedBuilder()
+			.setColor(0x57F287)
+			.setTitle(`🎉 Welcome to ${guildData.guild_name} [${guildTag}]!`)
+			.setDescription('You have successfully joined the guild. Your new home awaits in the private guildhall!')
+			.addFields({
+				name: 'Your Private Guildhall',
+				value: `Head over to <#${guildData.channel_id}> to meet your new guildmates in private!`,
+			});
+
+		return interaction.reply({
+			embeds: [joinEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+	catch (error) {
+		console.error('Guild join error:', error);
+		errorEmbed.setTitle('❌ Join Error').setDescription('An unexpected error occurred while joining the guild.');
+		return interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+}
+
+// Autocomplete handler
+async function handleJoinAutocomplete(interaction) {
+	const focusedValue = interaction.options.getFocused();
+	const guilds = db.prepare(`
+        SELECT guild_tag, guild_name 
+        FROM guild_list 
+        WHERE is_open = 1
+        AND (guild_tag LIKE ? OR guild_name LIKE ?)
+        LIMIT 25
+    `).all(`%${focusedValue}%`, `%${focusedValue}%`);
+
+	await interaction.respond(
+		guilds.map(guild => ({
+			name: `${guild.guild_name} [${guild.guild_tag}]`,
+			value: guild.guild_tag,
+		})),
+	);
+}
+async function handleUpgrade(interaction) {
+	const userId = interaction.user.id;
+	const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Upgrade Failed');
+
+	// Check if user is guild owner or vice gm
+	const guildData = db.prepare(`
+		SELECT 
+			gl.guild_tag, 
+			gl.guild_name, 
+			COALESCE(gt.tier, 1) as tier, 
+			COALESCE(ge.balance, 0) as balance
+		FROM guildmember_tracking gmt
+		JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
+		LEFT JOIN guild_tiers gt ON gmt.guild_tag = gt.guild_tag
+		LEFT JOIN guild_economy ge ON gl.guild_tag = ge.guild_tag
+		WHERE gmt.user_id = ? AND (gmt.owner = 1 OR gmt.vice_gm = 1)
+	`).get(userId);
+
+
+	if (!guildData) {
+		errorEmbed.setDescription('You must be the owner or vice-guildmaster of a guild to upgrade it!');
+		return interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+
+	const currentTier = guildData.tier;
+	// Check max tier
+	if (currentTier >= 15) {
+		errorEmbed.setTitle('✅ Max Tier Reached').setDescription('Your guild is already at the maximum tier!').setColor(0x2ECC71);
+		return interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+	// Get upgrade cost for the *next* tier
+	const cost = TIER_DATA[currentTier].cost;
+	const name = TIER_DATA[currentTier].name;
+	// Check balance
+	if (guildData.balance < cost) {
+		errorEmbed.setDescription(`Your guild needs **${cost.toLocaleString()}** crowns in the vault to upgrade to **${name}**! Your current balance is **${guildData.balance.toLocaleString()}**.`);
+		return interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+
+	const nextTier = currentTier + 1;
+	const nextTierInfo = TIER_DATA[nextTier - 1];
+
+	// Confirm upgrade
+	const confirmEmbed = new EmbedBuilder()
+		.setTitle(`🏰 Guild Upgrade to ${nextTierInfo.name}`)
+		.setDescription(`Upgrading **${guildData.guild_name}** will increase your defences and boost your income!`)
+		.addFields(
+			{ name: 'Current Tier', value: `${tierEmojis[currentTier - 1]}`, inline: true },
+			{ name: '__NEW Tier__', value: `${tierEmojis[nextTier - 1]}`, inline: true },
+			{ name: 'Upgrade Cost', value: `👑 ${cost.toLocaleString()} Crowns`, inline: true },
+			{ name: 'Current Benefits 📊', value: getTierBenefits(currentTier), inline: true },
+			{ name: '__NEW Benefits__ 📈', value: getTierBenefits(nextTier), inline: true },
+		)
+		.setColor(0x3498DB);
+
+	const confirmRow = new ActionRowBuilder().addComponents(
+		new ButtonBuilder()
+			.setCustomId(`upgrade_confirm_${guildData.guild_tag}`)
+			.setLabel('Confirm Upgrade')
+			.setStyle(ButtonStyle.Primary),
+		new ButtonBuilder()
+			.setCustomId('upgrade_cancel')
+			.setLabel('Cancel')
+			.setStyle(ButtonStyle.Secondary),
+	);
+
+	await interaction.reply({
+		embeds: [confirmEmbed],
+		components: [confirmRow],
+		flags: [MessageFlags.Ephemeral],
+	});
+}
+async function handleRaidAutocomplete(interaction) {
+	try {
+		const focusedValue = interaction.options.getFocused();
+		const userId = interaction.user.id;
+
+		// Get the user's guild tag (if any)
+		const userGuild = db.prepare('SELECT guild_tag FROM guildmember_tracking WHERE user_id = ?').get(userId);
+
+		// Find potential raid targets
+		const guilds = db.prepare(`
+            SELECT gl.guild_tag, gl.guild_name 
+            FROM guild_list gl
+            LEFT JOIN raid_cooldowns rc ON gl.guild_tag = rc.guild_tag
+            WHERE (gl.guild_tag LIKE ? OR gl.guild_name LIKE ?)
+            ${userGuild ? 'AND gl.guild_tag != ?' : ''}
+            ORDER BY gl.guild_name
+            LIMIT 25
+        `).all(
+			`%${focusedValue}%`,
+			`%${focusedValue}%`,
+			...(userGuild ? [userGuild.guild_tag] : []),
+		);
+
+		await interaction.respond(
+			guilds.map(guild => ({
+				name: `${guild.guild_name} [${guild.guild_tag}]`,
+				value: guild.guild_tag,
+			})),
+		);
+	}
+	catch (error) {
+		console.error('Raid autocomplete error:', error);
+		await interaction.respond([]);
+	}
+}
+async function handleInfoAutocomplete(interaction) {
+	const focusedValue = interaction.options.getFocused();
+	const guilds = db.prepare(`
+        SELECT guild_tag, guild_name 
+        FROM guild_list 
+        WHERE guild_tag LIKE ? OR guild_name LIKE ?
+        LIMIT 25
+    `).all(`%${focusedValue}%`, `%${focusedValue}%`);
+
+	await interaction.respond(
+		guilds.map(guild => ({
+			name: `${guild.guild_name} [${guild.guild_tag}]`,
+			value: guild.guild_tag,
+		})),
+	);
+}
+async function handleRaidStats(interaction) {
+	try {
+		// Top raiders
+		const topRaiders = db.prepare(`
+            SELECT gl.guild_name, gl.guild_tag, rl.successful_raids, rl.crowns_stolen, rl.guilds_destroyed
+            FROM raid_leaderboard rl
+            JOIN guild_list gl ON rl.guild_tag = gl.guild_tag
+            ORDER BY rl.successful_raids DESC, rl.crowns_stolen DESC
+            LIMIT 5
+        `).all();
+
+		// Recent raids
+		const recentRaids = db.prepare(`
+            SELECT 
+                a.guild_name as attacker_name, 
+                d.guild_name as defender_name,
+                rh.timestamp,
+                rh.success,
+                rh.stolen_amount,
+                rh.lost_amount
+            FROM raid_history rh
+            JOIN guild_list a ON rh.attacker_tag = a.guild_tag
+            JOIN guild_list d ON rh.defender_tag = d.guild_tag
+            ORDER BY rh.timestamp DESC
+            LIMIT 5
+        `).all();
+
+		// Format leaderboard
+		let raiderBoard = 'No raids recorded yet';
+		if (topRaiders.length > 0) {
+			raiderBoard = topRaiders.map((guild, i) =>
+				`${i + 1}. ${guild.guild_name} [${guild.guild_tag}]\n` +
+                `⚔️ ${guild.successful_raids} raids | 👑 ${guild.crowns_stolen.toLocaleString()} stolen | ☠️ ${guild.guilds_destroyed || 0} destroyed`,
+			).join('\n\n');
+		}
+
+		// Format recent raids
+		let recentBoard = 'No recent raids';
+		if (recentRaids.length > 0) {
+			recentBoard = recentRaids.map(raid =>
+				`⚔️ ${raid.attacker_name} → ${raid.defender_name}\n` +
+                `${raid.success ? '✅ Success' : '❌ Failed'} | ${raid.stolen_amount || 0} stolen\n` +
+                `<t:${Math.floor(new Date(raid.timestamp).getTime() / 1000)}:R>`,
+			).join('\n\n');
+		}
+
+		const embed = new EmbedBuilder()
+			.setTitle('⚔️ Guild Raid Statistics ⚔️')
+			.setColor(0xE67E22)
+			.addFields(
+				{ name: 'Top Raiders', value: raiderBoard, inline: true },
+				{ name: 'Recent Raids', value: recentBoard, inline: true },
+			)
+			.setFooter({ text: 'Raid another guild with /guild raid' });
+
+		await interaction.reply({ embeds: [embed] });
+	}
+	catch (error) {
+		console.error('Raid stats error:', error);
+		const errorEmbed = new EmbedBuilder()
+			.setColor(0xE74C3C)
+			.setTitle('❌ Error')
+			.setDescription('An error occurred while fetching raid statistics.');
+		await interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+}
+async function handleRaid(interaction) {
+	const guildTag = interaction.options.getString('guild_tag').toUpperCase();
+	const userId = interaction.user.id;
+	const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Raid Cannot Proceed');
+
+	// Check if user is in a guild
+	const attackerGuild = db.prepare(`
+		SELECT gmt.guild_tag, gl.guild_name, COALESCE(gt.tier, 1) as tier, ge.balance
+		FROM guildmember_tracking gmt
+		JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
+		LEFT JOIN guild_tiers gt ON gmt.guild_tag = gt.guild_tag
+		LEFT JOIN guild_economy ge ON gl.guild_tag = ge.guild_tag
+		WHERE gmt.user_id = ?
+	`).get(userId);
+
+	if (!attackerGuild) {
+		errorEmbed.setDescription('You must be in a guild to raid!');
+		return interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+
+	// Check if target exists
+	const defenderGuild = db.prepare(`
+		SELECT 
+			gl.guild_name, 
+			gl.guild_tag, 
+			COALESCE(gt.tier, 1) as tier, 
+			COALESCE(ge.balance, 0) as balance,
+			gl.created_at, 
+			rc.shield_expiry, 
+			rc.last_raid_time
+		FROM guild_list gl
+		LEFT JOIN guild_tiers gt ON gl.guild_tag = gt.guild_tag
+		LEFT JOIN guild_economy ge ON gl.guild_tag = ge.guild_tag
+		LEFT JOIN raid_cooldowns rc ON gl.guild_tag = rc.guild_tag
+		WHERE gl.guild_tag = ?
+	`).get(guildTag);
+
+	if (!defenderGuild) {
+		errorEmbed.setDescription('No guild found with that tag!');
+		return interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+
+	// Check if raiding own guild
+	if (attackerGuild.guild_tag === defenderGuild.guild_tag) {
+		errorEmbed.setDescription('You cannot raid your own guild!');
+		return interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+
+	const defenderCooldowns = db.prepare('SELECT shield_expiry, is_under_raid FROM raid_cooldowns WHERE guild_tag = ?').get(guildTag);
+
+	// NEW: Check if the guild is already locked in a raid
+	if (defenderCooldowns?.is_under_raid === 1) {
+		errorEmbed.setDescription('This guild is currently in the middle of another raid! Try again in a few minutes.');
+		return interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+
+	// Check new guild protection (7 days)
+	const creationDate = new Date(defenderGuild.created_at);
+	const now = new Date();
+	const daysSinceCreation = (now - creationDate) / (1000 * 60 * 60 * 24);
+
+	if (daysSinceCreation < 7) {
+		errorEmbed.setDescription(`This guild is protected by New Guild Protection (7 days), which expires <t:${Math.floor((creationDate.getTime() + (7 * 24 * 60 * 60 * 1000)) / 1000)}:R>`);
+		return interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+
+	// Check shield cooldown
+	if (defenderGuild.shield_expiry) {
+		const shieldExpiry = new Date(defenderGuild.shield_expiry);
+		if (now < shieldExpiry) {
+			errorEmbed.setDescription(`This guild is protected by a raid shield until <t:${Math.floor(shieldExpiry.getTime() / 1000)}:R>!`);
+			return interaction.reply({
+				embeds: [errorEmbed],
+				flags: [MessageFlags.Ephemeral],
+			});
+		}
+	}
+
+	// Get member data for loot calculation later
+	const defenderMembers = db.prepare(`
+        SELECT ue.user_id, ue.crowns
+        FROM guildmember_tracking gmt
+        LEFT JOIN user_economy ue ON gmt.user_id = ue.user_id
+        WHERE gmt.guild_tag = ?
+    `).all(defenderGuild.guild_tag);
+
+	// Calculate raid cost (attacking guild tier * 200)
+	const raidCost = attackerGuild.tier * 200;
+
+	// Check attacker guild balance
+	if ((attackerGuild.balance || 0) < raidCost) {
+		errorEmbed.setDescription(`Your guild needs **${raidCost.toLocaleString()}** crowns in the guild vault to raid (Tier ${attackerGuild.tier} * 200)!`);
+		return interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+
+	// Check attacker cooldown (24h between raids)
+	const attackerCooldown = db.prepare(`
+        SELECT last_raid_time FROM raid_cooldowns WHERE guild_tag = ?
+    `).get(attackerGuild.guild_tag);
+
+	if (attackerCooldown?.last_raid_time) {
+		const lastRaid = new Date(attackerCooldown.last_raid_time);
+		const hoursSinceLastRaid = (now - lastRaid) / (1000 * 60 * 60);
+
+		if (hoursSinceLastRaid < 24) {
+			const nextRaid = new Date(lastRaid.getTime() + 24 * 60 * 60 * 1000);
+			errorEmbed.setDescription(`Your guild can raid again <t:${Math.floor(nextRaid.getTime() / 1000)}:R>!`);
+			return interaction.reply({
+				embeds: [errorEmbed],
+				flags: [MessageFlags.Ephemeral],
+			});
+		}
+	}
+
+	// Confirm raid with button
+	const confirmEmbed = new EmbedBuilder()
+		.setTitle(`⚔️ Raid Confirmation: ${defenderGuild.guild_name} [${defenderGuild.guild_tag}]`)
+		.setDescription(`You are about to raid **${defenderGuild.guild_name}** (${TIER_DATA[defenderGuild.tier - 1].name})`)
+		.addFields(
+			{ name: 'Raid Cost', value: `${raidCost} Crowns (Tier \`${attackerGuild.tier}\` * 200)`, inline: true },
+			{ name: 'Success Chance', value: calculateSuccessChance(attackerGuild.tier, defenderGuild.tier), inline: true },
+			{ name: 'Potential Loot', value: calculatePotentialLoot(defenderGuild, defenderMembers), inline: false },
+		)
+		.setColor(0xE67E22);
+
+	const confirmRow = new ActionRowBuilder().addComponents(
+		new ButtonBuilder()
+			.setCustomId(`raid_confirm_${attackerGuild.guild_tag}_${defenderGuild.guild_tag}`)
+			.setLabel('Confirm Raid')
+			.setStyle(ButtonStyle.Danger),
+		new ButtonBuilder()
+			.setCustomId('raid_cancel')
+			.setLabel('Cancel')
+			.setStyle(ButtonStyle.Secondary),
+	);
+
+	await interaction.reply({
+		embeds: [confirmEmbed],
+		components: [confirmRow],
+		flags: [MessageFlags.Ephemeral],
+	});
+}
+async function handleShield(interaction) {
+	const userId = interaction.user.id;
+	const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('🛡️ Shield Purchase Failed');
+
+	// Check if user is guild owner
+	const guildData = db.prepare(`
+        SELECT 
+            gl.guild_tag, 
+            gl.guild_name, 
+            gl.created_at,
+            COALESCE(gt.tier, 1) as tier, 
+            COALESCE(ge.balance, 0) as balance
+        FROM guildmember_tracking gmt
+        JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
+        LEFT JOIN guild_tiers gt ON gl.guild_tag = gt.guild_tag
+        LEFT JOIN guild_economy ge ON gl.guild_tag = ge.guild_tag
+        WHERE gmt.user_id = ? AND (gmt.owner = 1 OR gmt.vice_gm = 1)
+    `).get(userId);
+
+	if (!guildData) {
+		errorEmbed.setDescription('You must be the owner or vice-guildmaster of a guild to purchase a shield!');
+		return interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+
+	// Check current shield
+	const currentShield = db.prepare(`
+        SELECT shield_expiry FROM raid_cooldowns WHERE guild_tag = ?
+    `).get(guildData.guild_tag);
+
+	const now = new Date();
+	const creationDate = new Date(guildData.created_at);
+	const daysSinceCreation = (now - creationDate) / (1000 * 60 * 60 * 24);
+
+	// Check if guild is still under new guild protection (7 days)
+	if (daysSinceCreation < 7) {
+		const protectionEnd = new Date(creationDate.getTime() + 7 * 24 * 60 * 60 * 1000);
+		const protectionEmbed = new EmbedBuilder()
+			.setColor(0x3498DB)
+			.setTitle('🛡️ New Guild Protection Active')
+			.setDescription(`Since your guild is less than 7 days old, you have a __New Guild Protection__ shield, and don't need to buy one right now.\nThis ends <t:${Math.floor(protectionEnd.getTime() / 1000)}:R>!`);
+		return interaction.reply({
+			embeds: [protectionEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+
+	if (currentShield?.shield_expiry) {
+		const expiry = new Date(currentShield.shield_expiry);
+		if (now < expiry) {
+			const activeEmbed = new EmbedBuilder()
+				.setColor(0x3498DB)
+				.setTitle('🛡️ Shield Already Active')
+				.setDescription(`Your guild already has a shield active until <t:${Math.floor(expiry.getTime() / 1000)}:R>!`);
+			return interaction.reply({
+				embeds: [activeEmbed],
+				flags: [MessageFlags.Ephemeral],
+			});
+		}
+	}
+
+	// Calculate shield cost and duration based on tier
+	const shieldCosts = [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 12000, 14000, 16000, 18000, 20000];
+	const shieldDurations = [14, 12, 10, 8, 7, 6, 5, 4, 3, 3, 2, 2, 1, 1, 1];
+
+	const cost = shieldCosts[guildData.tier - 1];
+	const durationDays = shieldDurations[guildData.tier - 1];
+
+	// Check balance
+	if ((guildData.balance || 0) < cost) {
+		errorEmbed.setDescription(`Your guild needs **${cost.toLocaleString()}** crowns in the vault to purchase a shield!`);
+		return interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+
+	// Confirm purchase
+	const confirmEmbed = new EmbedBuilder()
+		.setTitle(`🛡️ Purchase Raid Shield for ${guildData.guild_name}`)
+		.setDescription('This will protect your guild from raids, keeping your loot safe and sound.')
+		.addFields(
+			{ name: 'Shield Cost', value: `👑 ${cost.toLocaleString()} Crowns`, inline: true },
+			{ name: 'Standard Duration', value: `${durationDays} days`, inline: true },
+			{ name: 'Current Tier', value: `${tierEmojis[guildData.tier - 1]}`, inline: true },
+		)
+		.setColor(0x3498DB);
+	const confirmRow = new ActionRowBuilder().addComponents(
+		new ButtonBuilder()
+			.setCustomId(`shield_confirm_${guildData.guild_tag}`)
+			.setLabel('Confirm Purchase')
+			.setStyle(ButtonStyle.Primary),
+		new ButtonBuilder()
+			.setCustomId('shield_cancel')
+			.setLabel('Cancel')
+			.setStyle(ButtonStyle.Secondary),
+	);
+
+	await interaction.reply({
+		embeds: [confirmEmbed],
+		components: [confirmRow],
+		flags: [MessageFlags.Ephemeral],
+	});
+}
+
+// Helper functions
+function calculateSuccessChance(attackerTier, defenderTier) {
+	let modifier = 0;
+
+	// Kingslayer bonus (+3 for attacking higher tier)
+	if (attackerTier < defenderTier) {
+		modifier += 3;
+	}
+	// Bully penalty (-4 for attacking lower tier)
+	else if (attackerTier > defenderTier) {
+		modifier -= 4;
+	}
+
+	const baseChance = 50 + ((attackerTier - defenderTier) * 2.5) + (modifier * 2);
+	return `${Math.max(5, Math.min(95, baseChance))}%`;
+}
+
+function calculatePotentialLoot(defenderGuild, members) {
+	// const tierInfo = TIER_DATA[defenderGuild.tier - 1];
+	const isVulnerable = defenderGuild.balance < 200;
+	// const maxStolenPercent = isVulnerable ? 25 : tierInfo.stolen;
+	const guildLoot = '❓ (Hidden)';
+	// const guildLoot = '👑 ' + Math.floor((defenderGuild.balance || 0) * (maxStolenPercent / 100));
+	// will uncomment these when /character system is set up and we actually can let certain character archetypes access beyond the hidden information
+	let memberLoot = 0;
+	if (isVulnerable) {
+		// 25% of each member's crowns with no cap
+		memberLoot = members.reduce((sum, member) => sum + Math.floor((member.crowns || 0) * 0.25), 0);
+	}
+	else {
+		// 5% of each member's crowns capped at 100 per member
+		memberLoot = members.reduce((sum, member) => sum + Math.min(100, Math.floor((member.crowns || 0) * 0.05)), 0);
+	}
+
+	return `Guild Vault: \`${guildLoot.toLocaleString()}\` Crowns\nMember Pockets: \`👑 ${memberLoot.toLocaleString()}\` Crowns`;
+}
+
+module.exports = {
+	category: 'utility',
+	// Add this to your module.exports in guild.js
+	buttons: {
+		async handleRaidMessageButton(interaction) {
+			const closedEmbed = new EmbedBuilder().setColor(0x3498DB).setDescription('Raid message editor closed.');
+			if (interaction.customId === 'raidmsg_close_editor') {
+				try {
+					return await interaction.update({
+						embeds: [closedEmbed],
+						components: [],
+					});
+				}
+				catch (error) {
+					console.log(error);
+					return await interaction.editReply({
+						embeds: [closedEmbed],
+						components: [],
+					});
+
+				}
+			}
+
+
+			const parts = interaction.customId.split('_');
+			const action = parts[1];
+			const guildTag = parts[2];
+			const userId = interaction.user.id;
+
+			// Verify user is owner/vice-gm of the guild
+			const guildData = db.prepare(`
+                SELECT gl.*
+                FROM guildmember_tracking gmt
+                JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
+                WHERE gmt.user_id = ? AND gl.guild_tag = ? AND (gmt.owner = 1 OR gmt.vice_gm = 1)
+            `).get(userId, guildTag);
+
+			if (!guildData) {
+				const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setDescription('This is not for you.');
+				return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+			}
+
+			switch (action) {
+			case 'guided':
+				await processGuidedSetup(interaction, guildData);
+				break;
+			case 'viewall':
+				await showAllRaidMessages(interaction, guildData);
+				break;
+			case 'edit': {
+				const keyToEdit = parts.slice(3).join('_');
+				await processSingleMessage(interaction, guildData, keyToEdit);
+				break;
+			}
+			case 'restore':
+			{ const confirmEmbed = new EmbedBuilder()
+				.setColor(0xFEE75C)
+				.setTitle('⚠️ Restore All Raid Messages?')
+				.setDescription('Are you sure you want to restore **all** raid messages to their original defaults? This action cannot be undone.');
+			const confirmRow = new ActionRowBuilder().addComponents(
+				new ButtonBuilder().setCustomId(`raidmsg_restore-confirm_${guildTag}`).setLabel('Yes, Restore Them').setStyle(ButtonStyle.Danger),
+				new ButtonBuilder().setCustomId(`raidmsg_back_${guildTag}`).setLabel('No, Go Back').setStyle(ButtonStyle.Secondary),
+			);
+			await interaction.update({ embeds: [confirmEmbed], components: [confirmRow] });
+			break; }
+			case 'restore-confirm':
+			// This simply deletes the row. The next time it's accessed, it will be auto-created with defaults.
+			{ db.prepare('DELETE FROM guild_raid_messages WHERE guild_tag = ?').run(guildTag);
+				const restoredEmbed = new EmbedBuilder().setColor(0x2ECC71).setDescription('✅ All raid messages have been restored to their defaults.');
+				await interaction.update({ embeds: [restoredEmbed], components: [] });
+				await new Promise(resolve => setTimeout(resolve, 3000));
+				await showAllRaidMessages(interaction, guildData);
+				break; }
+			case 'back':
+				await showAllRaidMessages(interaction, guildData);
+				break;
+			case 'close':
+				await interaction.update({ embeds: [closedEmbed], components: [] });
+				break;
+			}
+		},
+		async handleFundraiseButton(interaction) {
+			const parts = interaction.customId.split('_');
+			const action = parts[1];
+			const fundraiserId = parts[2];
+			const amount = parts[3] || 0;
+			const userId = interaction.user.id;
+			const errorEmbed = new EmbedBuilder().setColor(0xE74C3C);
+
+			// Handle cancellation logic first
+			if (action === 'cancel') {
+				// Get fundraiser info
+				const fundraiser = db.prepare('SELECT * FROM guild_fundraisers WHERE message_id = ?').get(fundraiserId);
+				if (!fundraiser) {
+					errorEmbed.setTitle('🚫 Fundraiser Not Found').setDescription('This fundraiser no longer exists!');
+					return interaction.update({
+						embeds: [errorEmbed],
+						components: [],
+					});
+				}
+
+				// Check if user is the creator
+				if (interaction.user.id !== fundraiser.creator_id) {
+					errorEmbed.setTitle('❌ Not Allowed').setDescription('Only the user who started the fundraiser can cancel it.');
+					return interaction.reply({
+						embeds: [errorEmbed],
+						flags: [MessageFlags.Ephemeral],
+					});
+				}
+
+				// Get all contributors
+				const contributors = db.prepare('SELECT * FROM fundraiser_contributions WHERE fundraiser_id = ?').all(fundraiserId);
+
+				try {
+					if (contributors.length > 0) {
+						// Refund all contributions in a transaction
+						const refundTx = db.transaction(() => {
+							for (const contribution of contributors) {
+								db.prepare(`
+									INSERT INTO user_economy (user_id, crowns)
+									VALUES (?, ?)
+									ON CONFLICT(user_id) DO UPDATE SET crowns = crowns + ?
+								`).run(contribution.user_id, contribution.amount, contribution.amount);
+							}
+							// Delete contributions and fundraiser records
+							db.prepare('DELETE FROM fundraiser_contributions WHERE fundraiser_id = ?').run(fundraiserId);
+							db.prepare('DELETE FROM guild_fundraisers WHERE message_id = ?').run(fundraiserId);
+						});
+						refundTx();
+					}
+					else {
+						// No contributions, just delete the fundraiser
+						db.prepare('DELETE FROM guild_fundraisers WHERE message_id = ?').run(fundraiserId);
+					}
+
+					// Update the original message to show cancellation
+					const originalEmbed = interaction.message.embeds[0];
+					const cancelledEmbed = new EmbedBuilder(originalEmbed.data)
+						.setTitle(`🚫 CANCELLED: ${originalEmbed.title}`)
+						.setDescription(`This fundraiser was cancelled by the creator. ${contributors.length > 0 ? `A total of ${fundraiser.current_amount.toLocaleString()} Crowns have been refunded to all contributors.` : 'No contributions were made.'}`)
+						.setColor(0xE74C3C)
+						.setFields([]);
+
+					const disabledRow = new ActionRowBuilder().addComponents(
+						new ButtonBuilder()
+							.setCustomId('fundraise_cancelled')
+							.setLabel('Fundraiser Cancelled')
+							.setStyle(ButtonStyle.Secondary)
+							.setDisabled(true),
+					);
+
+					await interaction.update({ embeds: [cancelledEmbed], components: [disabledRow] });
+
+				}
+				catch (error) {
+					console.error('Fundraiser cancellation error:', error);
+					errorEmbed.setTitle('❌ Cancellation Error').setDescription('An error occurred while cancelling the fundraiser.');
+					return interaction.reply({
+						embeds: [errorEmbed],
+						flags: [MessageFlags.Ephemeral],
+					});
+				}
+				return;
+			}
+
+			// Get fundraiser info
+			const fundraiser = db.prepare(`
+				SELECT gf.*, gl.guild_name 
+				FROM guild_fundraisers gf
+				JOIN guild_list gl ON gf.guild_tag = gl.guild_tag
+				WHERE gf.message_id = ?
+			`).get(fundraiserId);
+
+			if (!fundraiser) {
+				errorEmbed.setTitle('🚫 Fundraiser Not Found').setDescription('This fundraiser no longer exists!');
+				return interaction.update({
+					embeds: [errorEmbed],
+					components: [],
+				});
+			}
+
+			// Check if user is in the guild
+			const isMember = db.prepare(`
+				SELECT 1 FROM guildmember_tracking 
+				WHERE user_id = ? AND guild_tag = ?
+			`).get(userId, fundraiser.guild_tag);
+
+			if (!isMember) {
+				errorEmbed.setTitle('❌ Not a Member').setDescription('Only guild members can contribute to this fundraiser!');
+				return interaction.reply({
+					embeds: [errorEmbed],
+					flags: [MessageFlags.Ephemeral],
+				});
+			}
+
+			// Get user balance
+			const userBalance = db.prepare(`
+				SELECT crowns FROM user_economy WHERE user_id = ?
+			`).get(userId)?.crowns || 0;
+
+			try {
+				let contributionAmount = 0;
+
+				if (action === 'paywhatyoucan') {
+					contributionAmount = userBalance;
+				}
+				else if (action === 'share') {
+					contributionAmount = parseInt(amount);
+				}
+				else if (action === 'max') {
+					const remaining = fundraiser.target_amount - fundraiser.current_amount;
+					contributionAmount = Math.min(remaining, userBalance);
+				}
+				else if (action === 'custom') {
+					if (amount >= 1) {
+						contributionAmount = parseInt(amount);
+					}
+					else {
+						// Handle custom amount with a modal or follow-up message
+						await interaction.showModal(
+							new ModalBuilder()
+								.setCustomId(`fundraise_custommodal_${fundraiser.message_id}`)
+								.setTitle('Custom Contribution')
+								.addComponents(
+									new ActionRowBuilder().addComponents(
+										new TextInputBuilder()
+											.setCustomId('amount')
+											.setLabel(`Amount (You have ${userBalance} crowns)`)
+											.setStyle(1)
+											.setMinLength(1)
+											.setMaxLength(fundraiser.target_amount.toString().length + 2)
+											.setPlaceholder('Enter amount to contribute')
+											.setRequired(true),
+									),
+								),
+						);
+						return;
+					}
+
+				}
+
+				const upperLimit = fundraiser.target_amount - fundraiser.current_amount;
+
+				// Validate amount
+				if (contributionAmount <= 0) {
+					errorEmbed.setTitle('❌ Invalid Amount').setDescription('You cannot contribute 0 or negative crowns!');
+					return interaction.reply({
+						embeds: [errorEmbed],
+						flags: [MessageFlags.Ephemeral],
+					});
+				}
+
+				if (contributionAmount > userBalance) {
+					errorEmbed.setTitle('❌ Insufficient Funds').setDescription(`You only have **${userBalance.toLocaleString()}** crowns!`);
+					return interaction.reply({
+						embeds: [errorEmbed],
+						flags: [MessageFlags.Ephemeral],
+					});
+				}
+				if (contributionAmount > upperLimit) {
+					contributionAmount = upperLimit;
+				}
+				// Process contribution in transaction
+				db.transaction(() => {
+					// Deduct from user
+					db.prepare(`
+						INSERT INTO user_economy (user_id, crowns)
+						VALUES (?, ?)
+						ON CONFLICT(user_id) DO UPDATE SET crowns = crowns - ?
+					`).run(userId, -contributionAmount, contributionAmount);
+
+					// Add to fundraiser
+					db.prepare(`
+						UPDATE guild_fundraisers 
+						SET current_amount = current_amount + ?
+						WHERE message_id = ?
+					`).run(contributionAmount, fundraiserId);
+
+					// Record contribution
+					db.prepare(`
+						INSERT INTO fundraiser_contributions (fundraiser_id, user_id, amount)
+						VALUES (?, ?, ?)
+						ON CONFLICT(fundraiser_id, user_id) DO UPDATE SET amount = amount + ?
+					`).run(fundraiserId, userId, contributionAmount, contributionAmount);
+				})();
+
+				// Get updated fundraiser info
+				const updatedFundraiser = db.prepare(`
+					SELECT * FROM guild_fundraisers WHERE message_id = ?
+				`).get(fundraiserId);
+
+				// Update embed
+				const newEmbed = new EmbedBuilder()
+					.setTitle(`🏦 ${fundraiser.guild_name} Fundraiser`)
+					.setDescription(`Goal: ${fundraiser.target_amount.toLocaleString()} Crowns\n\n` +
+									`Progress: ${Math.floor((updatedFundraiser.current_amount / fundraiser.target_amount) * 100)}% ` +
+									`(${updatedFundraiser.current_amount.toLocaleString()}/${fundraiser.target_amount.toLocaleString()} Crowns)\n` +
+									getProgressBar(updatedFundraiser.current_amount, fundraiser.target_amount))
+					.addFields(
+						{ name: 'Started by', value: `<@${fundraiser.creator_id}>`, inline: true },
+						{ name: 'Members', value: getGuildMemberCount(fundraiser.guild_tag).toString(), inline: true },
+						{ name: 'Newest Contribution', value: `${contributionAmount.toLocaleString()} Crowns, by ${interaction.user}`, inline: true },
+					)
+					.setColor(0x3498db)
+					.setFooter({ text: 'Contribute using the buttons below' });
+
+				await interaction.update({ embeds: [newEmbed] });
+
+				// Check if goal reached
+				if (updatedFundraiser.current_amount >= fundraiser.target_amount && !fundraiser.completed) {
+					// Mark as completed
+					db.prepare(`
+						UPDATE guild_fundraisers SET completed = 1 WHERE message_id = ?
+					`).run(fundraiserId);
+
+					// Add funds to guild
+					db.prepare(`
+						INSERT INTO guild_economy (guild_tag, balance)
+						VALUES (?, ?)
+						ON CONFLICT(guild_tag) DO UPDATE SET balance = balance + ?
+					`).run(fundraiser.guild_tag, updatedFundraiser.current_amount, updatedFundraiser.current_amount);
+
+					// Send completion message
+					const completionEmbed = new EmbedBuilder()
+						.setTitle('🎉 Fundraiser Goal Reached! 🎉')
+						.setDescription(`**${fundraiser.guild_name}** has successfully raised **${updatedFundraiser.current_amount.toLocaleString()}** Crowns!`)
+						.setColor(0x2ECC71);
+
+					// Get top contributors
+					const topContributors = db.prepare(`
+						SELECT user_id, amount FROM fundraiser_contributions
+						WHERE fundraiser_id = ?
+						ORDER BY amount DESC
+						LIMIT 3
+					`).all(fundraiserId);
+
+					if (topContributors.length > 0) {
+						completionEmbed.addFields({
+							name: 'Top Contributors',
+							value: topContributors.map((c, i) =>
+								`${i + 1}. <@${c.user_id}> - ${c.amount.toLocaleString()} Crowns`,
+							).join('\n'),
+						});
+					}
+
+					await interaction.followUp({ embeds: [completionEmbed] });
+
+					// Disable buttons
+					const disabledRow = new ActionRowBuilder().addComponents(
+						new ButtonBuilder()
+							.setCustomId('fundraise_completed')
+							.setLabel('Goal Reached!')
+							.setStyle(ButtonStyle.Success)
+							.setDisabled(true),
+						new ButtonBuilder()
+							.setCustomId('fundraise_completed2')
+							.setLabel('Thank You!')
+							.setStyle(ButtonStyle.Success)
+							.setDisabled(true),
+					);
+
+					await interaction.editReply({ components: [disabledRow] });
+				}
+			}
+			catch (error) {
+				console.error('Fundraiser contribution error:', error);
+				errorEmbed.setTitle('❌ Contribution Error').setDescription('An error occurred while processing your contribution.');
+				await interaction.reply({
+					embeds: [errorEmbed],
+					flags: [MessageFlags.Ephemeral],
+				});
+			}
+		},
+
+		async handleFundraiseCustomModal(interaction) {
+			const [,, fundraiserId] = interaction.customId.split('_');
+			const amount = parseInt(interaction.fields.getTextInputValue('amount'));
+			const userId = interaction.user.id;
+			const errorEmbed = new EmbedBuilder().setColor(0xE74C3C);
+
+			if (isNaN(amount) || amount <= 0) {
+				errorEmbed.setTitle('❌ Invalid Amount').setDescription('Please enter a valid positive number!');
+				return interaction.reply({
+					embeds: [errorEmbed],
+					flags: [MessageFlags.Ephemeral],
+				});
+			}
+
+			// Get user balance
+			const userBalance = db.prepare(`
+            SELECT crowns FROM user_economy WHERE user_id = ?
+        `).get(userId)?.crowns || 0;
+
+			if (amount > userBalance) {
+				errorEmbed.setTitle('❌ Insufficient Funds').setDescription(`You only have **${userBalance.toLocaleString()}** crowns!`);
+				return interaction.reply({
+					embeds: [errorEmbed],
+					flags: [MessageFlags.Ephemeral],
+				});
+			}
+
+			// Process the custom amount using the same logic as other contributions
+			interaction.customId = `fundraise_custom_${fundraiserId}_${amount}`;
+			return this.handleFundraiseButton(interaction);
+		},
+		async handleShieldConfirmation(interaction) {
+			const [,, guildTag] = interaction.customId.split('_');
+			const userId = interaction.user.id;
+
+			// Verify user is still guild owner
+			const isOwner = db.prepare(`
+        SELECT 1 FROM guildmember_tracking 
+        WHERE user_id = ? AND guild_tag = ? AND (owner = 1 OR vice_gm = 1)
+    `).get(userId, guildTag);
+
+			if (!isOwner) {
+				const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setDescription('Only the guild owner or vice-gm can confirm shield purchases!');
+				return interaction.update({
+					embeds: [errorEmbed],
+					components: [],
+				});
+			}
+
+			// Get guild data
+			const guildData = db.prepare(`
+        SELECT COALESCE(gt.tier, 1) as tier, COALESCE(ge.balance, 0) as balance
+        FROM guild_list gl
+        LEFT JOIN guild_tiers gt ON gl.guild_tag = gt.guild_tag
+        LEFT JOIN guild_economy ge ON gl.guild_tag = ge.guild_tag
+        WHERE gl.guild_tag = ?
+    `).get(guildTag);
+
+			// Calculate shield cost and duration based on tier
+			const shieldCosts = [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 12000, 14000, 16000, 18000, 20000];
+			const shieldDurations = [14, 12, 10, 8, 7, 6, 5, 4, 3, 3, 2, 2, 1, 1, 1];
+
+
+			const cost = shieldCosts[guildData.tier - 1];
+			const durationDays = shieldDurations[guildData.tier - 1];
+
+			// Check balance again
+			if ((guildData.balance || 0) < cost) {
+				const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setDescription('Your guild no longer has enough crowns for this shield!');
+				return interaction.update({
+					embeds: [errorEmbed],
+					components: [],
+				});
+			}
+			try {
+
+				// Deduct cost and apply shield
+				const now = new Date();
+				const expiry = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
+
+				db.prepare('UPDATE guild_economy SET balance = balance - ? WHERE guild_tag = ?')
+					.run(cost, guildTag);
+
+				db.prepare(`
+			INSERT INTO raid_cooldowns (guild_tag, shield_expiry)
+			VALUES (?, ?)
+			ON CONFLICT(guild_tag) DO UPDATE SET shield_expiry = ?
+		`).run(guildTag, expiry.toISOString(), expiry.toISOString());
+
+				const resultEmbed = new EmbedBuilder()
+					.setTitle('🛡️ Raid Shield Purchased! 🛡️')
+					.setDescription(`Your guild is now protected from raids for ${durationDays} days`)
+					.addFields(
+						{ name: 'Cost', value: `👑 ${cost.toLocaleString()} Crowns`, inline: true },
+						{ name: 'Expires', value: `<t:${Math.floor(expiry.getTime() / 1000)}:R>`, inline: true },
+					)
+					.setColor(0x2ECC71);
+
+				await interaction.update({
+					embeds: [resultEmbed],
+					components: [],
+				});
+
+			}
+			catch (error) {
+				console.error('Shield purchase error:', error);
+				const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Error').setDescription('An error occurred during the shield purchase.');
+				await interaction.followUp({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+			}
+		},
+		async handleRaidConfirmation(interaction) {
+			const [,, attackerTag, defenderTag] = interaction.customId.split('_');
+			const userId = interaction.user.id;
+
+			try {
+				const userGuild = db.prepare('SELECT guild_tag FROM guildmember_tracking WHERE user_id = ?').get(userId);
+				if (!userGuild || userGuild.guild_tag !== attackerTag) {
+					const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setDescription('Only members of the attacking guild can confirm this raid!');
+					return interaction.update({ embeds: [errorEmbed], components: [] });
+				}
+				db.prepare('UPDATE raid_cooldowns SET is_under_raid = 1 WHERE guild_tag = ?').run(defenderTag);
+
+				// [FIXED] Fetch all required data in one go
+				const attackerData = db.prepare('SELECT gl.guild_name, gl.role_id, COALESCE(gt.tier, 1) as tier, ge.balance, (SELECT user_id FROM guildmember_tracking WHERE guild_tag = gl.guild_tag AND owner = 1) as guildmaster_id, (SELECT user_id FROM guildmember_tracking WHERE guild_tag = gl.guild_tag AND vice_gm = 1) as vice_gm_id FROM guild_list gl LEFT JOIN guild_tiers gt ON gl.guild_tag = gt.guild_tag LEFT JOIN guild_economy ge ON gl.guild_tag = ge.guild_tag WHERE gl.guild_tag = ?').get(attackerTag);
+				const defenderData = db.prepare('SELECT gl.guild_name, gl.public_channel_id, gl.role_id, COALESCE(gt.tier, 1) as tier, ge.balance, (SELECT user_id FROM guildmember_tracking WHERE guild_tag = gl.guild_tag AND owner = 1) as guildmaster_id, (SELECT user_id FROM guildmember_tracking WHERE guild_tag = gl.guild_tag AND vice_gm = 1) as vice_gm_id FROM guild_list gl LEFT JOIN guild_tiers gt ON gl.guild_tag = gt.guild_tag LEFT JOIN guild_economy ge ON gl.guild_tag = ge.guild_tag WHERE gl.guild_tag = ?').get(defenderTag);
+				const raidMessages = db.prepare('SELECT * FROM guild_raid_messages WHERE guild_tag IN (?, ?)').all(attackerTag, defenderTag);
+				const attackerMsgs = raidMessages.find(r => r.guild_tag === attackerTag) || DEFAULT_RAID_MESSAGES;
+				const defenderMsgs = raidMessages.find(r => r.guild_tag === defenderTag) || DEFAULT_RAID_MESSAGES;
+
+				const raidCost = defenderData.tier * 200;
+				if ((attackerData.balance || 0) < raidCost) {
+					const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setDescription('Your guild no longer has enough crowns to raid!');
+					return interaction.update({ embeds: [errorEmbed], components: [] });
+				}
+				db.prepare('UPDATE guild_economy SET balance = balance - ? WHERE guild_tag = ?').run(raidCost, attackerTag);
+
+				const defenderChannel = await interaction.client.channels.fetch(defenderData.public_channel_id).catch(() => null);
+				if (!defenderChannel || !defenderChannel.isTextBased()) {
+					// [FIXED] Fallback for missing channel
+					const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Channel Error').setDescription('The defending guild\'s public channel could not be found. The raid cannot proceed narratively.');
+					await interaction.update({ embeds: [errorEmbed], components: [] });
+					// NOTE: A non-narrative fallback could be implemented here if desired.
+					return;
+				}
+
+				// --- Start Narrative Raid ---
+				const startEmbed = new EmbedBuilder().setColor(0x3498DB).setDescription(`The raid is beginning! Head to <#${defenderData.public_channel_id}>!`);
+				await interaction.update({ embeds: [startEmbed], components: [] });
+
+				const participants = { attackers: new Set(), defenders: new Set() };
+				const collector = defenderChannel.createMessageCollector({ time: 65000 });
+				collector.on('collect', msg => {
+					const isAttacker = db.prepare('SELECT 1 FROM guildmember_tracking WHERE user_id = ? AND guild_tag = ?').get(msg.author.id, attackerTag);
+					if (isAttacker) participants.attackers.add(msg.author.id);
+					const isDefender = db.prepare('SELECT 1 FROM guildmember_tracking WHERE user_id = ? AND guild_tag = ?').get(msg.author.id, defenderTag);
+					if (isDefender) participants.defenders.add(msg.author.id);
+				});
+
+				// 1. Pings and Initial Announcement
+				await defenderChannel.send({ content: `<@&${attackerData.role_id}> and <@&${defenderData.role_id}>` });
+				const initialEmbed = new EmbedBuilder().setColor(0xE67E22).setTitle('⚔️ A RAID BEGINS! ⚔️').setDescription(`**${attackerData.guild_name}** has declared a raid on **${defenderData.guild_name}**! Prepare for battle!`);
+				await defenderChannel.send({ embeds: [initialEmbed] });
+				await delay(30000);
+
+				// 2. Narrative Sequence
+				const raidEmbed = new EmbedBuilder().setColor(0x3498DB);
+				await defenderChannel.send({ embeds: [raidEmbed.setTitle('The Approach').setDescription(await replaceKeywords(attackerMsgs.raiding_description, attackerData, defenderData, interaction.client))] });
+				await delay(10000);
+				await defenderChannel.send({ embeds: [raidEmbed.setTitle('The Stronghold').setDescription(await replaceKeywords(defenderMsgs.defending_description, attackerData, defenderData, interaction.client))] });
+				await delay(10000);
+				await defenderChannel.send({ embeds: [raidEmbed.setTitle('The Assault').setDescription(await replaceKeywords(attackerMsgs.raiding_attack, attackerData, defenderData, interaction.client))] });
+				await delay(10000);
+
+				// 3. Raid Logic & Resolution
+				collector.stop();
+				let attackerRoll = Math.floor(Math.random() * 20) + 1;
+				const defenderAC = TIER_DATA[defenderData.tier - 1].ac;
+				const attackingGuildSection = TIER_DATA[attackerData.tier - 1].tier;
+				const defendingGuildSection = TIER_DATA[defenderData.tier - 1].tier;
+				let modifierText = '';
+				if (attackingGuildSection < defendingGuildSection) {
+					attackerRoll += 3;
+					modifierText = ' (Kingslayer Bonus: +3 to roll)';
+				}
+				else if (attackingGuildSection > defendingGuildSection) {
+					attackerRoll -= 4;
+					modifierText = ' (Bully Penalty: -4 to roll)';
+				}
+
+				const success = attackerRoll >= defenderAC;
+				const now = new Date();
+				let resultEmbed, announceEmbed;
+
+				if (success) {
+					// [FIXED] All success logic is now in one place
+					const isVulnerable = defenderData.balance < 200;
+					const defenderTierInfo = TIER_DATA[defenderData.tier - 1];
+					const maxStolenPercent = isVulnerable ? 25 : defenderTierInfo.stolen;
+					const stolenFromGuild = Math.floor((defenderData.balance || 0) * (maxStolenPercent / 100));
+
+					const defenderMembers = db.prepare('SELECT ue.user_id, ue.crowns FROM guildmember_tracking gmt LEFT JOIN user_economy ue ON gmt.user_id = ue.user_id WHERE gmt.guild_tag = ?').all(defenderTag);
+					let stolenFromMembers = 0;
+					const stealFunc = (member, percent, cap) => Math.min(cap, Math.floor((member.crowns || 0) * percent));
+					defenderMembers.forEach(member => {
+						const stealAmount = isVulnerable ? Math.floor((member.crowns || 0) * 0.25) : stealFunc(member, 0.05, 100);
+						if (stealAmount > 0) {
+							db.prepare('UPDATE user_economy SET crowns = crowns - ? WHERE user_id = ?').run(stealAmount, member.user_id);
+							stolenFromMembers += stealAmount;
+						}
+					});
+
+					const escapeLossPercent = (Math.floor(Math.random() * 10) + 1) + (Math.floor(Math.random() * 10) + 1);
+					const totalLoot = stolenFromGuild + stolenFromMembers;
+					const lostDuringEscape = Math.floor(totalLoot * (escapeLossPercent / 100));
+					const netLoot = totalLoot - lostDuringEscape;
+
+					db.transaction(() => {
+						if (stolenFromGuild > 0) db.prepare('UPDATE guild_economy SET balance = balance - ? WHERE guild_tag = ?').run(stolenFromGuild, defenderTag);
+						if (netLoot > 0) db.prepare('INSERT INTO guild_economy (guild_tag, balance) VALUES (?, ?) ON CONFLICT(guild_tag) DO UPDATE SET balance = balance + ?').run(attackerTag, netLoot, netLoot);
+					})();
+					db.prepare('INSERT INTO raid_leaderboard (guild_tag, successful_raids, crowns_stolen) VALUES (?, 1, ?) ON CONFLICT(guild_tag) DO UPDATE SET successful_raids = successful_raids + 1, crowns_stolen = crowns_stolen + ?').run(attackerTag, netLoot, netLoot);
+
+					await checkAndDestroyGuildOnRaid(defenderTag, attackerTag, interaction);
+					const isDestroyed = db.prepare('SELECT 1 FROM guild_list WHERE guild_tag = ?').get(defenderTag) === undefined;
+					const climaxNarrative = `${await replaceKeywords(defenderMsgs.defending_failure, attackerData, defenderData, interaction.client)}\n\n${await replaceKeywords(attackerMsgs.raiding_victory, attackerData, defenderData, interaction.client)}`;
+					await defenderChannel.send({ embeds: [raidEmbed.setTitle('The Climax').setDescription(climaxNarrative)] });
+
+					const description = isDestroyed
+						? `The **${attackerData.guild_name}** forces have utterly destroyed **${defenderData.guild_name}**, plundering it into ruin!`
+						: `**${attackerData.guild_name}** has successfully raided **${defenderData.guild_name}**!`;
+
+					resultEmbed = new EmbedBuilder().setTitle('⚔️ RAID SUCCESSFUL! ⚔️').setColor(0x2ECC71).setDescription(description).addFields(
+						{ name: 'Attack Roll', value: `${attackerRoll}${modifierText} vs AC ${defenderAC}`, inline: true },
+						{ name: 'Loot Gained', value: `👑 ${totalLoot.toLocaleString()}`, inline: false },
+						{ name: 'Lost During Escape', value: `👑 ${lostDuringEscape.toLocaleString()} (${escapeLossPercent}%)`, inline: false },
+						{ name: 'Net Gain', value: `👑 ${netLoot.toLocaleString()}`, inline: false },
+					);
+					announceEmbed = new EmbedBuilder().setTitle('⚔️ Raid Report: Success! ⚔️').setColor(0x2ECC71).setDescription(description).addFields(
+						{ name: 'Attacker', value: `**${attackerData.guild_name} [${attackerTag}]**`, inline: true },
+						{ name: 'Defender', value: `**${defenderData.guild_name} [${defenderTag}]**`, inline: true },
+						{ name: 'Net Gain', value: `👑 ${netLoot.toLocaleString()}`, inline: true },
+					).setTimestamp();
+					if (isDestroyed) announceEmbed.setThumbnail('https://i.ibb.co/gMdJ8J4K/image.png');
+				}
+				else {
+					// [FIXED] All failure logic is now in one place
+					const defenderGain = Math.floor(raidCost * 0.5);
+					const refundPercent = Array(5).fill().reduce(sum => sum + Math.floor(Math.random() * 10) + 1, 0);
+					const attackerRefund = Math.floor(raidCost * (refundPercent / 100));
+
+					db.transaction(() => {
+						if (defenderGain > 0) db.prepare('INSERT INTO guild_economy (guild_tag, balance) VALUES (?, ?) ON CONFLICT(guild_tag) DO UPDATE SET balance = balance + ?').run(defenderTag, defenderGain, defenderGain);
+						if (attackerRefund > 0) db.prepare('INSERT INTO guild_economy (guild_tag, balance) VALUES (?, ?) ON CONFLICT(guild_tag) DO UPDATE SET balance = balance + ?').run(attackerTag, attackerRefund, attackerRefund);
+					})();
+
+					const climaxNarrative = `${await replaceKeywords(defenderMsgs.defending_success, attackerData, defenderData, interaction.client)}\n\n${await replaceKeywords(attackerMsgs.raiding_retreat, attackerData, defenderData, interaction.client)}`;
+					await defenderChannel.send({ embeds: [raidEmbed.setTitle('The Climax').setDescription(climaxNarrative)] });
+
+					const description = `**${attackerData.guild_name}** failed their raid against the staunch defenses of **${defenderData.guild_name}**!`;
+					resultEmbed = new EmbedBuilder().setTitle('🛡️ RAID FAILED! 🛡️').setColor(0xE74C3C).setDescription(description).addFields(
+						{ name: 'Attack Roll', value: `${attackerRoll}${modifierText} vs AC ${defenderAC}`, inline: true },
+						{ name: 'Defenders Gain', value: `👑 ${defenderGain.toLocaleString()}`, inline: false },
+						{ name: 'Attackers Refund', value: `👑 ${attackerRefund.toLocaleString()} (${refundPercent}%)`, inline: false },
+					);
+					announceEmbed = new EmbedBuilder().setTitle('🛡️ Raid Report: Defense! 🛡️').setColor(0xE74C3C).setDescription(description).addFields(
+						{ name: 'Attacker', value: `**${attackerData.guild_name} [${attackerTag}]**`, inline: true },
+						{ name: 'Defender', value: `**${defenderData.guild_name} [${defenderTag}]**`, inline: true },
+						{ name: 'Defender Gain', value: `👑 ${defenderGain.toLocaleString()}`, inline: true },
+					).setTimestamp();
+				}
+
+				// [FIXED] Send recap and apply cooldowns/history log at the very end
+				const formatParticipants = (idSet) => idSet.size > 0 ? Array.from(idSet).map(id => `<@${id}>`).join(' ') : 'No one';
+				resultEmbed.addFields(
+					{ name: 'Active Raiders', value: formatParticipants(participants.attackers), inline: true },
+					{ name: 'Active Defenders', value: formatParticipants(participants.defenders), inline: true },
+				);
+				await defenderChannel.send({ embeds: [resultEmbed] });
+				await sendGuildAnnouncement(interaction.client, announceEmbed);
+
+				db.prepare(`
+					INSERT INTO raid_cooldowns (guild_tag, shield_expiry) 
+					VALUES (?, ?) ON CONFLICT(guild_tag) DO UPDATE SET shield_expiry = ?
+				`).run(defenderTag, new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(), new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString());
+
+				db.prepare(`
+					INSERT INTO raid_cooldowns (guild_tag, last_raid_time) 
+					VALUES (?, ?) ON CONFLICT(guild_tag) DO UPDATE SET last_raid_time = ?
+				`).run(attackerTag, now.toISOString(), now.toISOString());
+
+				db.prepare('INSERT INTO raid_history (attacker_tag, defender_tag, timestamp, success, stolen_amount, lost_amount, attacker_roll, defender_roll) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+					.run(attackerTag, defenderTag, now.toISOString(), success ? 1 : 0, success ? resultEmbed.data.fields.find(f => f.name === 'Net Gain').value.match(/\d+/g).join('') : null, success ? resultEmbed.data.fields.find(f => f.name === 'Lost During Escape').value.match(/\d+/g).join('') : null, attackerRoll, defenderAC);
+
+			}
+			finally {
+				// [FIXED] Always unlock the defender guild after the raid concludes
+				db.prepare('UPDATE raid_cooldowns SET is_under_raid = 0 WHERE guild_tag = ?').run(defenderTag);
+			}
+		},
+		async handleInviteResponse(interaction) {
+			const [action, targetId, guildTag] = interaction.customId.split('_').slice(2);
+			const targetUser = interaction.user;
+			const errorEmbed = new EmbedBuilder().setColor(0xE74C3C);
+
+			// Verify this is the intended recipient
+			if (targetUser.id !== targetId) {
+				errorEmbed.setTitle('❌ Not for You').setDescription('This invitation is not for you!');
+				return interaction.reply({
+					embeds: [errorEmbed],
+					flags: [MessageFlags.Ephemeral],
+				});
+			}
+
+			if (action === 'accept') {
+				// Check if user is already in a guild now
+				const alreadyInGuild = db.prepare('SELECT * FROM guildmember_tracking WHERE user_id = ?').get(targetId);
+				if (alreadyInGuild) {
+					errorEmbed.setTitle('❌ Already in a Guild').setDescription('You are already in a guild!');
+					return interaction.update({
+						embeds: [errorEmbed],
+						components: [],
+					});
+				}
+
+				// Add to guild
+				try {
+					const guildData = db.prepare('SELECT * FROM guild_list WHERE guild_tag = ?').get(guildTag);
+					if (!guildData) {
+						errorEmbed.setTitle('❌ Guild Not Found').setDescription('This guild no longer exists!');
+						return interaction.update({
+							embeds: [errorEmbed],
+							components: [],
+						});
+					}
+
+					// Add role
+					const role = await interaction.guild.roles.fetch(guildData.role_id);
+					if (role) {
+						await interaction.member.roles.add(role);
+					}
+
+					// Add to database
+					db.prepare(`
+                    INSERT INTO guildmember_tracking (user_id, guild_tag, owner)
+                    VALUES (?, ?, 0)
+                `).run(targetId, guildTag);
+
+					await announceNewMember(interaction.client, targetUser, guildData);
+
+					// Disable buttons on original message
+					const originalMessage = interaction.message;
+					const disabledComponents = originalMessage.components.map(row => {
+						const newRow = new ActionRowBuilder();
+						row.components.forEach(button => {
+							newRow.addComponents(new ButtonBuilder(button.data).setDisabled(true));
+						});
+						return newRow;
+					});
+					const acceptedEmbed = new EmbedBuilder(originalMessage.embeds[0].data).setFooter({ text: 'This invitation has been accepted.' });
+					await originalMessage.edit({ embeds: [acceptedEmbed], components: disabledComponents });
+
+
+					const joinEmbed = new EmbedBuilder()
+						.setColor(0x57F287)
+						.setTitle(`🎉 Welcome to ${guildData.guild_name} [${guildTag}]!`)
+						.setDescription('You have successfully joined the guild. Your new home awaits!')
+						.addFields({
+							name: 'Your Guild Channel',
+							value: `Head over to <#${guildData.channel_id}> to meet your new guildmates!`,
+						});
+					return interaction.reply({
+						embeds: [joinEmbed],
+						flags: [MessageFlags.Ephemeral],
+					});
+				}
+				catch (error) {
+					console.error('Guild join error:', error);
+					errorEmbed.setTitle('❌ Join Error').setDescription('An unexpected error occurred while joining the guild.');
+					return interaction.update({
+						embeds: [errorEmbed],
+						components: [],
+					});
+				}
+			}
+			else if (action === 'decline') {
+				const declinedEmbed = new EmbedBuilder().setColor(0xE74C3C).setDescription('You have declined the guild invitation.');
+				// Disable buttons on original message
+				const originalMessage = interaction.message;
+				const disabledComponents = originalMessage.components.map(row => {
+					const newRow = new ActionRowBuilder();
+					row.components.forEach(button => {
+						newRow.addComponents(new ButtonBuilder(button.data).setDisabled(true));
+					});
+					return newRow;
+				});
+				const inviteDeclinedEmbed = new EmbedBuilder(originalMessage.embeds[0].data).setFooter({ text: 'This invitation has been declined.' });
+				await originalMessage.edit({ embeds: [inviteDeclinedEmbed], components: disabledComponents });
+
+				return interaction.update({
+					embeds: [declinedEmbed],
+					components: [],
+				});
+			}
+		},
+		async handleUpgradeConfirmation(interaction) {
+			const [,, guildTag] = interaction.customId.split('_');
+			const userId = interaction.user.id;
+			const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Upgrade Failed');
+
+			// Verify user is still guild owner
+			const isOwner = db.prepare(`
+        SELECT 1 FROM guildmember_tracking 
+        WHERE user_id = ? AND guild_tag = ? AND (owner = 1 OR vice_gm = 1)
+    `).get(userId, guildTag);
+
+			if (!isOwner) {
+				errorEmbed.setDescription('Only the guild owner or vice-gm can confirm upgrades!');
+				return interaction.update({
+					embeds: [errorEmbed],
+					components: [],
+				});
+			}
+
+			// Get current tier and balance with proper defaults
+			const guildData = db.prepare(`
+        SELECT 
+            gl.guild_name,
+            COALESCE(gt.tier, 1) AS tier, 
+            COALESCE(ge.balance, 0) AS balance
+        FROM guild_list gl
+        LEFT JOIN guild_tiers gt ON gl.guild_tag = gt.guild_tag
+        LEFT JOIN guild_economy ge ON gl.guild_tag = ge.guild_tag
+        WHERE gl.guild_tag = ?
+    `).get(guildTag);
+
+			if (!guildData) {
+				errorEmbed.setDescription('Guild data could not be loaded!');
+				return interaction.update({
+					embeds: [errorEmbed],
+					components: [],
+				});
+			}
+
+			const currentTier = guildData.tier;
+
+			if (currentTier >= 15) {
+				errorEmbed.setTitle('✅ Max Tier').setDescription('Your guild is already at maximum tier!');
+				return interaction.update({
+					embeds: [errorEmbed],
+					components: [],
+				});
+			}
+
+			const cost = TIER_DATA[currentTier].cost;
+
+			if (guildData.balance < cost) {
+				errorEmbed.setDescription('Your guild no longer has enough crowns to upgrade!');
+				return interaction.update({
+					embeds: [errorEmbed],
+					components: [],
+				});
+			}
+
+			// Perform upgrade
+			try {
+				db.transaction(() => {
+					db.prepare('UPDATE guild_economy SET balance = balance - ? WHERE guild_tag = ?')
+						.run(cost, guildTag);
+
+					const newTier = currentTier + 1;
+					db.prepare(`
+				INSERT INTO guild_tiers (guild_tag, tier, last_upgrade_time)
+				VALUES (?, ?, ?)
+				ON CONFLICT(guild_tag) DO UPDATE SET
+				tier = excluded.tier,
+				last_upgrade_time = excluded.last_upgrade_time
+			`).run(guildTag, newTier, new Date().toISOString());
+				})();
+
+				const newTierInfo = TIER_DATA[newTier - 1];
+
+				const resultEmbed = new EmbedBuilder()
+					.setTitle(`🎉🏰 Guild Upgraded to ${newTierInfo.name}! 🎉🏰`)
+					.setDescription('Your guild has been successfully upgraded!')
+					.addFields(
+						{ name: 'Total Upgrade Cost', value: `👑 ${cost.toLocaleString()} Crowns`, inline: true },
+						{ name: '__NEW Tier__', value: `${tierEmojis[newTier - 1]}`, inline: true },
+						{ name: '__NEW Benefits__ 📈', value: getTierBenefits(newTier), inline: false },
+					)
+					.setColor(0x2ECC71);
+
+				await interaction.update({
+					embeds: [resultEmbed],
+					components: [],
+				});
+				const upgradeAnnounceEmbed = new EmbedBuilder()
+					.setColor(0xF1C40F)
+					.setTitle('⬆️ A Guild Grows Stronger!')
+					.addFields(
+						{ name: 'Guild', value: `**${guildData.guild_name} [${guildTag}]**`, inline: true },
+						{ name: 'New Tier', value: `${tierEmojis[newTier - 1]}`, inline: true },
+					)
+					.setTimestamp();
+				await sendGuildAnnouncement(interaction.client, upgradeAnnounceEmbed);
+			}
+			catch (error) {
+				console.error('Guild upgrade error:', error);
+				errorEmbed.setTitle('❌ Upgrade Error').setDescription('An unexpected error occurred during the upgrade process. The transaction was rolled back.');
+				await interaction.followUp({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+			}
+		},
+	},
+	data: new SlashCommandBuilder()
+		.setName('guild')
+		.setDescription('Manage your guild')
+		.addSubcommand(subcommand =>
+			subcommand
+				.setName('create')
+				.setDescription('Create a new guild')
+				.addStringOption(option =>
+					option.setName('name')
+						.setDescription('Guild name')
+						.setRequired(true))
+				.addStringOption(option =>
+					option.setName('tag')
+						.setDescription('3-letter guild tag')
+						.setRequired(true)))
+		.addSubcommand(subcommand =>
+			subcommand
+				.setName('delete')
+				.setDescription('Delete your guild'))
+		.addSubcommand(subcommand =>
+			subcommand
+				.setName('fund')
+				.setDescription('Contribute Crowns to your guild!')
+				.addStringOption(option =>
+					option.setName('guild_tag')
+						.setDescription('Your guild tag')
+						.setRequired(true))
+				.addIntegerOption(option =>
+					option.setName('amount')
+						.setDescription('Amount of Crowns to contribute')
+						.setRequired(true)
+						.setMinValue(1)))
+		.addSubcommand(subcommand =>
+			subcommand
+				.setName('leave')
+				.setDescription('Leave your current guild'))
+		.addSubcommand(subcommand =>
+			subcommand
+				.setName('invite')
+				.setDescription('Invite someone to your guild')
+				.addUserOption(option =>
+					option.setName('user')
+						.setDescription('User to invite')
+						.setRequired(true)))
+		.addSubcommand(subcommand =>
+			subcommand
+				.setName('info')
+				.setDescription('Get info about a guild')
+				.addStringOption(option =>
+					option.setName('guild_tag')
+						.setDescription('Tag of the guild to look up')
+						.setRequired(true)
+						.setAutocomplete(true)))
+		.addSubcommand(subcommand =>
+			subcommand
+				.setName('join')
+				.setDescription('Join an open guild')
+				.addStringOption(option =>
+					option.setName('guild_tag')
+						.setDescription('Tag of the guild to join')
+						.setRequired(true)
+						.setAutocomplete(true)),
+		)
+		.addSubcommand(subcommand =>
+			subcommand
+				.setName('raid')
+				.setDescription('Raid another guild to steal Crowns!')
+				.addStringOption(option =>
+					option.setName('guild_tag')
+						.setDescription('Tag of the guild to raid')
+						.setRequired(true)
+						.setAutocomplete(true)))
+		.addSubcommand(subcommand =>
+			subcommand
+				.setName('upgrade')
+				.setDescription('Upgrade your guild tier for better defenses and rewards'))
+		.addSubcommand(subcommand =>
+			subcommand
+				.setName('list')
+				.setDescription('List all available guilds'),
+		)
+		.addSubcommand(subcommand =>
+			subcommand
+				.setName('fundraise')
+				.setDescription('Start a fundraiser for your guild')
+				.addIntegerOption(option =>
+					option.setName('amount')
+						.setDescription('Amount to raise')
+						.setRequired(true)
+						.setMinValue(100)))
+		.addSubcommand(subcommand =>
+			subcommand
+				.setName('raidstats')
+				.setDescription('View raid statistics and leaderboard'))
+		.addSubcommand(subcommand =>
+			subcommand
+				.setName('dues')
+				.setDescription('Collect 1% dues from all members with a chance to invest for bonus funds'))
+		.addSubcommand(subcommand =>
+			subcommand
+				.setName('shield')
+				.setDescription('Purchase temporary raid immunity'))
+		.addSubcommand(subcommand =>
+			subcommand
+				.setName('bequeath')
+				.setDescription('Transfer guild ownership')
+				.addUserOption(option =>
+					option.setName('new_owner')
+						.setDescription('New guild owner')
+						.setRequired(true)))
+		.addSubcommandGroup(subcommandGroup =>
+			subcommandGroup
+				.setName('payout')
+				.setDescription('Distribute crowns from guild vault to members')
+				.addSubcommand(subcommand =>
+					subcommand
+						.setName('member')
+						.setDescription('Pay crowns to a specific guild member')
+						.addUserOption(option =>
+							option.setName('user')
+								.setDescription('Guild member to pay')
+								.setRequired(true))
+						.addIntegerOption(option =>
+							option.setName('amount')
+								.setDescription('Amount of crowns to pay')
+								.setRequired(true)
+								.setMinValue(1)))
+				.addSubcommand(subcommand =>
+					subcommand
+						.setName('all')
+						.setDescription('Pay crowns to all guild members equally')
+						.addIntegerOption(option =>
+							option.setName('amount')
+								.setDescription('Amount of crowns to pay each member')
+								.setRequired(true)
+								.setMinValue(1))))
+		.addSubcommandGroup(subcommandGroup =>
+			subcommandGroup
+				.setName('settings')
+				.setDescription('Manage guild settings')
+				.addSubcommand(subcommand =>
+					subcommand
+						.setName('member_title')
+						.setDescription('Set the title for what to call your guildmembers.')
+						.addStringOption(option =>
+							option.setName('title')
+								.setDescription('The title to give members (max 25 chars).')
+								.setRequired(true)
+								.setMaxLength(25)))
+				.addSubcommand(subcommand =>
+					subcommand
+						.setName('raid_messages')
+						.setDescription('Customize the narrative messages for when your guild raids or is raided.'))
+				.addSubcommand(subcommand =>
+					subcommand
+						.setName('emoji')
+						.setDescription('Set or replace your guild\'s default custom emoji.'))
+				.addSubcommand(subcommand =>
+					subcommand
+						.setName('sticker')
+						.setDescription('Set or replace your guild\'s custom sticker slot.'))
+				.addSubcommand(subcommand =>
+					subcommand
+						.setName('about')
+						.setDescription('Set your guild description')
+						.addStringOption(option =>
+							option.setName('text')
+								.setDescription('About your guild (max 1000 chars)')
+								.setRequired(true)))
+				.addSubcommand(subcommand =>
+					subcommand
+						.setName('motto')
+						.setDescription('Set your guild motto')
+						.addStringOption(option =>
+							option.setName('text')
+								.setDescription('Short guild motto (max 50 chars)')
+								.setRequired(true)))
+
+				.addSubcommand(subcommand =>
+					subcommand
+						.setName('name')
+						.setDescription('Change guild name')
+						.addStringOption(option =>
+							option.setName('new_name')
+								.setDescription('New guild name')
+								.setRequired(true)))
+				.addSubcommand(subcommand =>
+					subcommand
+						.setName('tag')
+						.setDescription('Change guild tag')
+						.addStringOption(option =>
+							option.setName('new_tag')
+								.setDescription('New 3-letter tag')
+								.setRequired(true)))
+				.addSubcommand(subcommand =>
+					subcommand
+						.setName('visibility')
+						.setDescription('Set guild joinability')
+						.addStringOption(option =>
+							option.setName('status')
+								.setDescription('Guild join status')
+								.setRequired(true)
+								.addChoices(
+									{ name: 'Open (Anyone can join)', value: 'open' },
+									{ name: 'Closed (Invite only)', value: 'closed' },
+								)))
+				.addSubcommand(subcommand =>
+					subcommand
+						.setName('channel')
+						.setDescription('Change channel name')
+						.addStringOption(option =>
+							option.setName('new_name')
+								.setDescription('New channel name (without guild- prefix)')
+								.setRequired(true)))
+				.addSubcommand(subcommand =>
+					subcommand
+						.setName('role')
+						.setDescription('Change role name')
+						.addStringOption(option =>
+							option.setName('new_name')
+								.setDescription('New role name (without Guild: prefix)')
+								.setRequired(true)))
+				.addSubcommand(subcommand =>
+					subcommand
+						.setName('promote')
+						.setDescription('Promote a member to Vice Guildmaster')
+						.addUserOption(option =>
+							option.setName('user')
+								.setDescription('The member to promote')
+								.setRequired(true)))
+				.addSubcommand(subcommand =>
+					subcommand
+						.setName('demote')
+						.setDescription('Demote a Vice Guildmaster back to a member')
+						.addUserOption(option =>
+							option.setName('user')
+								.setDescription('The member to demote')
+								.setRequired(true))),
+		),
+	async execute(interaction) {
+		if (interaction.isAutocomplete()) {
+			if (interaction.commandName === 'guild') {
+				const subcommand = interaction.options.getSubcommand();
+				if (subcommand === 'join') {
+					return handleJoinAutocomplete(interaction);
+				}
+				else if (subcommand === 'info') {
+					return handleInfoAutocomplete(interaction);
+				}
+				else if (subcommand === 'raid') {
+					return handleRaidAutocomplete(interaction);
+				}
+			}
+			return;
+		}
+
+		if (interaction.isButton()) {
+			if (interaction.customId.startsWith('raidmsg')) {
+				return this.buttons.handleRaidMessageButton(interaction);
+			}
+			if (interaction.customId.startsWith('fundraise_')) {
+				return this.buttons.handleFundraiseButton(interaction);
+			}
+			if (interaction.customId.startsWith('shield_confirm')) {
+				return this.buttons.handleShieldConfirmation(interaction);
+			}
+			if (interaction.customId.startsWith('raid_confirm')) {
+				return this.buttons.handleRaidConfirmation(interaction);
+			}
+			if (interaction.customId.startsWith('guild_invite')) {
+				return this.buttons.handleInviteResponse(interaction);
+			}
+			if (interaction.customId.startsWith('upgrade_confirm')) {
+				return this.buttons.handleUpgradeConfirmation(interaction);
+			}
+			if (interaction.customId === 'raid_cancel' || interaction.customId === 'shield_cancel' || interaction.customId === 'upgrade_cancel' || interaction.customId === 'guild_delete_cancel') {
+				const cancelEmbed = new EmbedBuilder().setColor(0x3498DB).setDescription('Action cancelled.');
+				return interaction.update({ embeds: [cancelEmbed], components: [] });
+			}
+		}
+
+		if (interaction.isModalSubmit()) {
+			if (interaction.customId.startsWith('fundraise_custommodal')) {
+				return this.buttons.handleFundraiseCustomModal(interaction);
+			}
+		}
+
+		const subcommand = interaction.options.getSubcommand();
+		const subcommandGroup = interaction.options.getSubcommandGroup();
+
+		if (subcommandGroup === 'settings') {
+			await handleSettings(interaction, subcommand);
+		}
+		else if (subcommandGroup === 'payout') {
+			if (subcommand === 'member') {
+				const user = interaction.options.getUser('user');
+				await handlePayout(interaction, user);
+			}
+			else if (subcommand === 'all') {
+				await handlePayout(interaction);
+			}
+		}
+		else if (subcommand === 'create') {await handleCreate(interaction);}
+		else if (subcommand === 'delete') {await handleDelete(interaction);}
+		else if (subcommand === 'leave') {await handleLeave(interaction);}
+		else if (subcommand === 'invite') {await handleInvite(interaction);}
+		else if (subcommand === 'info') {await handleInfo(interaction);}
+		else if (subcommand === 'bequeath') {await handleBequeath(interaction);}
+		else if (subcommand === 'list') {await handleList(interaction);}
+		else if (subcommand === 'join') {await handleJoin(interaction);}
+		else if (subcommand === 'raid') {await handleRaid(interaction);}
+    	else if (subcommand === 'upgrade') {await handleUpgrade(interaction);}
+    	else if (subcommand === 'raidstats') {await handleRaidStats(interaction);}
+		else if (subcommand === 'shield') {await handleShield(interaction);}
+		else if (subcommand === 'fundraise') {await handleFundraise(interaction);}
+		else if (subcommand === 'fund') {await handleGuildFund(interaction);}
+		else if (subcommand === 'dues') {await handleDues(interaction);}
+
+
+	},
+
+};
