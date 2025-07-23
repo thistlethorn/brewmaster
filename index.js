@@ -4,6 +4,8 @@ const { Client, Collection, GatewayIntentBits } = require('discord.js');
 const { token } = require('./config.json');
 
 
+// This is the main entry point for Brewmaster, the Discord bot.
+
 const client = new Client({ intents: [GatewayIntentBits.Guilds,
 	GatewayIntentBits.GuildMessages,
 	GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers ] });
