@@ -86,6 +86,7 @@ Here is a list of the primary commands available for Brewmaster. For detailed in
 *   **Scheduling**: [node-cron](https://www.npmjs.com/package/node-cron) v4.0.5 & [node-schedule](https://www.npmjs.com/package/node-schedule) v2.1.1
 
 ### Project Structure
+```
 /
 ├── commands/
 │ └── utility/
@@ -116,6 +117,7 @@ Here is a list of the primary commands available for Brewmaster. For detailed in
 ├── bump_data.db
 ├── database.js
 └── index.js
+```
 ---
 
 ## Development Roadmap
