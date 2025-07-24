@@ -2683,7 +2683,7 @@ async function handleInfoAutocomplete(interaction) {
 
 	await interaction.respond(
 		guilds.map(guild => ({
-			name: `${guild.guild_name} [${guild.guild_name}]`,
+			name: `${guild.guild_name} [${guild.guild_tag}]`,
 			value: guild.guild_tag,
 		})),
 	);
