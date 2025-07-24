@@ -1201,7 +1201,6 @@ const ULTRA_RARE_DUES_SCENARIOS = [
 	{ base: 'With **{user}**\'s **{amount}**, the guild funded a voyage to an uncharted island.', success: '🐲 **ULTRA-RARE!!!** The island was the hoard of an ancient dragon who, amused by your audacity, gifted you a mountain of treasure!' },
 ];
 
-
 // Helper function to shuffle an array
 function shuffleArray(array) {
 	const newArr = [...array];
@@ -1522,7 +1521,7 @@ async function handleInfo(interaction) {
 
 		for (const member of members) {
 			try {
-				const discordMember = await interaction.guild.members.fetch(member.user_id);
+				const discordMember = await interaction.guild.members.fetch(member.user_id).catch(() => null);
 				// Use the fetched variables
 				const memberText = member.owner === 1
 					? `👑 __**GUILDMASTER**__\n• ${discordMember.toString()}`
@@ -2260,7 +2259,7 @@ async function collectAndCreateEmoji(interaction, messageToEdit, guildData, exis
 					embeds: [successEmbed],
 					flags: [MessageFlags.Ephemeral],
 				});
-				await m.delete().catch((error) => { console.log('Couldn\'t delete message: ' + error); });
+				await m.delete().catch(console.error);
 			}
 			catch (error) {
 				console.error('Emoji creation/DB transaction error:', error);
@@ -2287,7 +2286,7 @@ async function collectAndCreateEmoji(interaction, messageToEdit, guildData, exis
 			interaction.followUp({
 				embeds: [timeoutEmbed],
 				flags: [MessageFlags.Ephemeral],
-			}).catch((error) => { console.log('Failed to reply with cancelation message error: ' + error); });
+			}).catch((error) => { console.log('Couldn\'t delete message: ' + error); });
 		}
 	});
 }
@@ -2771,6 +2770,7 @@ async function handleRaid(interaction) {
 
 	// Check if user is in a guild
 	const attackerGuild = db.prepare(`
+		SELECT gmt.guild_tag, gl.guild_name, COALESCE(gt.tier, 1) as tier, ge.balance
 		SELECT gmt.guild_tag, gl.guild_name, COALESCE(gt.tier, 1) as tier, ge.balance
 		FROM guildmember_tracking gmt
 		JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
@@ -3558,84 +3558,49 @@ module.exports = {
 			const userId = interaction.user.id;
 			const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTimestamp();
 
-			const guildInfo = db.prepare(`
-				SELECT gmt.guild_tag, gl.guild_name, COALESCE(gt.tier, 1) as tier, COALESCE(ge.balance, 0) as balance
-				FROM guildmember_tracking gmt
-				JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
-				LEFT JOIN guild_tiers gt ON gl.guild_tag = gt.guild_tag
-				LEFT JOIN guild_economy ge ON gmt.guild_tag = ge.guild_tag
-				WHERE gmt.user_id = ?
-			`).get(userId);
-
-			if (!guildInfo) {
-				errorEmbed.setTitle('❌ Not in a Guild').setDescription('You must be in a guild to join a war.');
-				return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
-			}
-
-			const raidData = db.prepare('SELECT attacker_tag, defender_tag FROM raid_history WHERE id = ?').get(raidId);
-			if (!raidData) {
-				// This can happen if the raid concludes while the button is still visible
-				return interaction.update({ components: [] });
-			}
-
-			if (guildInfo.guild_tag === raidData.attacker_tag || guildInfo.guild_tag === raidData.defender_tag) {
-				errorEmbed.setTitle('❌ Cannot Join').setDescription('Your guild is already a primary combatant in this war.');
-				return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
-			}
-
-			const alreadyJoined = db.prepare('SELECT 1 FROM active_raid_allies WHERE raid_id = ? AND allied_guild_tag = ?').get(raidId, guildInfo.guild_tag);
-			if (alreadyJoined) {
-				errorEmbed.setTitle('❌ Already Joined').setDescription('Your guild has already committed to this war.');
-				return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
-			}
-
-			const interventionCost = guildInfo.tier * 100;
-			if (guildInfo.balance < interventionCost) {
-				errorEmbed.setTitle('❌ Insufficient Funds').setDescription(`Your guild vault needs **${interventionCost.toLocaleString()} Crowns** to join this war, but you only have ${guildInfo.balance.toLocaleString()}.`);
-				return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
-			}
-
 			try {
-				db.transaction(() => {
-					db.prepare('UPDATE guild_economy SET balance = balance - ? WHERE guild_tag = ?').run(interventionCost, guildInfo.guild_tag);
-					db.prepare('INSERT INTO active_raid_allies (raid_id, allied_guild_tag, side) VALUES (?, ?, ?)')
-						.run(raidId, guildInfo.guild_tag, side);
-				})();
+				// Verify the user is a guildmaster or vice-guildmaster
+				const guildData = db.prepare(`
+            SELECT gmt.guild_tag, gl.guild_name, gmt.owner, gmt.vice_gm
+            FROM guildmember_tracking gmt
+            JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
+            WHERE gmt.user_id = ? AND (gmt.owner = 1 OR gmt.vice_gm = 1)
+        `).get(userId);
 
-				const originalEmbed = new EmbedBuilder(interaction.message.embeds[0].data);
-				const allies = db.prepare(`
-					SELECT ara.side, gl.guild_name, gt.tier
-					FROM active_raid_allies ara
-					JOIN guild_list gl ON ara.allied_guild_tag = gl.guild_tag
-					JOIN guild_tiers gt ON ara.allied_guild_tag = gt.guild_tag
-					WHERE ara.raid_id = ?
-				`).all(raidId);
+				if (!guildData) {
+					errorEmbed.setTitle('❌ Not Authorized')
+						.setDescription('Only guildmasters or vice-guildmasters can join a raid on behalf of their guild.');
+					return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+				}
 
-				const attackingAllies = allies.filter(a => a.side === 'attacker');
-				const defendingAllies = allies.filter(a => a.side === 'defender');
+				// Check if the guild is already part of the raid
+				const isAlreadyInRaid = db.prepare(`
+            SELECT 1 FROM active_raid_allies
+            WHERE raid_id = ? AND allied_guild_tag = ?
+        `).get(raidId, guildData.guild_tag);
 
-				const formatAllies = (allyList) => {
-					if (allyList.length === 0) return 'None';
-					return allyList.map(a => `${tierEmojis[a.tier - 1]} ${a.guild_name}`).join('\n');
-				};
+				if (isAlreadyInRaid) {
+					errorEmbed.setTitle('❌ Already Participating')
+						.setDescription(`Your guild, **${guildData.guild_name}**, is already part of this raid.`);
+					return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+				}
 
-				originalEmbed.setFields(
-					{ name: '⚔️ Attacking Alliance', value: formatAllies(attackingAllies), inline: true },
-					{ name: '🛡️ Defending Coalition', value: formatAllies(defendingAllies), inline: true },
-				);
-
-				await interaction.update({ embeds: [originalEmbed] });
+				// Add the guild to the raid
+				db.prepare(`
+            INSERT INTO active_raid_allies (raid_id, allied_guild_tag, side)
+            VALUES (?, ?, ?)
+        `).run(raidId, guildData.guild_tag, side);
 
 				const successEmbed = new EmbedBuilder()
-					.setColor(side === 'attacker' ? 0xE67E22 : 0x3498DB)
-					.setTitle('✅ Joined the Fray!')
-					.setDescription(`Your guild, **${guildInfo.guild_name}**, has joined the **${side}s** for ${interventionCost.toLocaleString()} Crowns!`);
-				await interaction.followUp({ embeds: [successEmbed], flags: [MessageFlags.Ephemeral] });
-
+					.setColor(0x57F287)
+					.setTitle('✅ Guild Joined the Raid')
+					.setDescription(`Your guild, **${guildData.guild_name}**, has joined the raid as a ${side === 'attacker' ? 'supporting attacker' : 'defender'}.`);
+				return interaction.reply({ embeds: [successEmbed], flags: [MessageFlags.Ephemeral] });
 			}
 			catch (error) {
-				console.error('Alliance join error:', error);
-				errorEmbed.setTitle('❌ Transaction Failed').setDescription('An error occurred while joining the war. Your crowns have not been spent.');
+				console.error('Error in handleAllianceJoin:', error);
+				errorEmbed.setTitle('❌ Error')
+					.setDescription('An unexpected error occurred while joining the raid.');
 				return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 			}
 		},
