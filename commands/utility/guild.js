@@ -3072,7 +3072,6 @@ function calculatePotentialLoot(defenderGuild, members) {
 	return `Guild Vault: \`${guildLoot.toLocaleString()}\` Crowns\nMember Pockets: \`👑 ${memberLoot.toLocaleString()}\` Crowns`;
 }
 
-// NEW: This function will contain the entire battle resolution, including the narration.
 async function resolveBattleSequentially(interaction, warMessage, raidId, attackerTag, defenderTag) {
 	console.log(`[Raid Resolution] Collector ended for raid ID ${raidId}. Starting battle resolution.`);
 
@@ -3081,7 +3080,7 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 		const finalAttackerData = db.prepare('SELECT gl.guild_name, gl.role_id, COALESCE(gt.tier, 1) as tier, ge.balance FROM guild_list gl LEFT JOIN guild_tiers gt ON gl.guild_tag = gt.guild_tag LEFT JOIN guild_economy ge ON gl.guild_tag = ge.guild_tag WHERE gl.guild_tag = ?').get(attackerTag);
 		const finalDefenderData = db.prepare('SELECT gl.guild_name, gl.public_channel_id, gl.role_id, COALESCE(gt.tier, 1) as tier, ge.balance FROM guild_list gl LEFT JOIN guild_tiers gt ON gl.guild_tag = gt.guild_tag LEFT JOIN guild_economy ge ON gl.guild_tag = ge.guild_tag WHERE gl.guild_tag = ?').get(defenderTag);
 
-		const allAllies = db.prepare(`
+		const allParticipants = db.prepare(`
             SELECT ara.side, gl.guild_name, gt.tier, ara.allied_guild_tag
             FROM active_raid_allies ara
             JOIN guild_list gl ON ara.allied_guild_tag = gl.guild_tag
@@ -3089,8 +3088,8 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
             WHERE ara.raid_id = ?
         `).all(raidId);
 
-		const attackingParticipants = allAllies.filter(a => a.side === 'attacker');
-		const defendingParticipants = allAllies.filter(a => a.side === 'defender');
+		const attackingParticipants = allParticipants.filter(a => a.side === 'attacker');
+		const defendingParticipants = allParticipants.filter(a => a.side === 'defender');
 		const now = new Date();
 		const raidCost = finalAttackerData.tier * 200;
 
@@ -3112,6 +3111,7 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 				const stolenFromGuild = Math.floor((finalDefenderData.balance || 0) * (maxStolenPercent / 100));
 				db.transaction(() => {
 					db.prepare('UPDATE guild_economy SET balance = balance - ? WHERE guild_tag = ?').run(stolenFromGuild, defenderTag);
+					// In a forfeit, the sole attacker gets all the loot
 					db.prepare('UPDATE guild_economy SET balance = balance + ? WHERE guild_tag = ?').run(stolenFromGuild, attackerTag);
 				})();
 				await checkAndDestroyGuildOnRaid(defenderTag, attackerTag, interaction);
@@ -3145,7 +3145,6 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 			defendingGuild: `**${finalDefenderData.guild_name}**`,
 			raidingGuildmaster: attackerGM ? `<@${attackerGM.user_id}>` : `**${finalAttackerData.guild_name}**'s leader`,
 			defendingGuildmaster: defenderGM ? `<@${defenderGM.user_id}>` : `**${finalDefenderData.guild_name}**'s leader`,
-			// Add vice GMs if needed in the future
 			raidingViceGuildmaster: 'their second-in-command',
 			defendingViceGuildmaster: 'their second-in-command',
 		};
@@ -3222,22 +3221,37 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 			const lostDuringEscape = Math.floor(totalLoot * (escapeLossPercent / 100));
 			netLoot = totalLoot - lostDuringEscape;
 
-			db.transaction(() => {
+			// --- Loot Distribution Logic ---
+			const spoilsTransaction = db.transaction(() => {
 				if (stolenFromGuild > 0) db.prepare('UPDATE guild_economy SET balance = balance - ? WHERE guild_tag = ?').run(stolenFromGuild, defenderTag);
-				if (netLoot > 0) db.prepare('UPDATE guild_economy SET balance = balance + ? WHERE guild_tag = ?').run(netLoot, attackerTag);
-			})();
+
+				const totalAttackerPower = attackingParticipants.reduce((sum, p) => sum + p.tier, 0);
+
+				if (netLoot > 0 && totalAttackerPower > 0) {
+					for (const winner of attackingParticipants) {
+						const shareOfLoot = Math.floor((winner.tier / totalAttackerPower) * netLoot);
+						if (shareOfLoot > 0) {
+							db.prepare('UPDATE guild_economy SET balance = balance + ? WHERE guild_tag = ?').run(shareOfLoot, winner.allied_guild_tag);
+							// Also update their raid leaderboard stats
+							db.prepare('INSERT INTO raid_leaderboard (guild_tag, successful_raids, crowns_stolen) VALUES (?, 1, ?) ON CONFLICT(guild_tag) DO UPDATE SET successful_raids = successful_raids + 1, crowns_stolen = crowns_stolen + ?').run(winner.allied_guild_tag, shareOfLoot, shareOfLoot);
+						}
+					}
+				}
+			});
+			spoilsTransaction();
 
 			await checkAndDestroyGuildOnRaid(defenderTag, attackerTag, interaction);
 			const isDestroyed = !db.prepare('SELECT 1 FROM guild_list WHERE guild_tag = ?').get(defenderTag);
 			const description = isDestroyed ? `The attacking alliance has utterly destroyed **${finalDefenderData.guild_name}**!` : `The attacking alliance has triumphed over **${finalDefenderData.guild_name}**!`;
 
+			const spoilsField = { name: 'Spoils of War', value: `The total plunder of **${netLoot.toLocaleString()}** Crowns was distributed among the victors.`, inline: false };
+
 			resultEmbed = new EmbedBuilder().setTitle('⚔️ VICTORY FOR THE ATTACKERS! ⚔️').setColor(0x2ECC71).setDescription(description)
 				.addFields(
 					{ name: 'War Power Calculation', value: `Attacker Roll: **${attackerRoll}**${modifierText}\nTotal Power: 💥 **${finalAttackPower}** vs 🛡️ **${defenderBasePower}**`, inline: false },
-					{ name: 'Total Loot Plundered', value: `👑 ${netLoot.toLocaleString()}`, inline: false },
+					spoilsField,
 				);
 			announceEmbed = new EmbedBuilder().setTitle('⚔️ War Report: Attackers Win! ⚔️').setColor(0x2ECC71).setDescription(description).setTimestamp();
-			db.prepare('INSERT INTO raid_leaderboard (guild_tag, successful_raids, crowns_stolen) VALUES (?, 1, ?) ON CONFLICT(guild_tag) DO UPDATE SET successful_raids = successful_raids + 1, crowns_stolen = crowns_stolen + ?').run(attackerTag, netLoot, netLoot);
 		}
 		else {
 			finalDescription = replacePlaceholders(defenderMsgs.defending_success || DEFAULT_RAID_MESSAGES.defending_success) + '\n\n' + replacePlaceholders(attackerMsgs.raiding_retreat || DEFAULT_RAID_MESSAGES.raiding_retreat);
@@ -3245,15 +3259,29 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 			await warMessage.edit({ embeds: [narrativeEmbed] });
 			await wait(4000);
 
-			// --- Perform Failure Logic ---
+			// --- Defender Compensation Distribution ---
 			defenderGain = Math.floor(raidCost * 0.5);
-			db.prepare('UPDATE guild_economy SET balance = balance + ? WHERE guild_tag = ?').run(defenderGain, defenderTag);
+			const compensationTransaction = db.transaction(() => {
+				const totalDefenderPower = defendingParticipants.reduce((sum, p) => sum + p.tier, 0);
+
+				if (defenderGain > 0 && totalDefenderPower > 0) {
+					for (const winner of defendingParticipants) {
+						const shareOfCompensation = Math.floor((winner.tier / totalDefenderPower) * defenderGain);
+						if (shareOfCompensation > 0) {
+							db.prepare('UPDATE guild_economy SET balance = balance + ? WHERE guild_tag = ?').run(shareOfCompensation, winner.allied_guild_tag);
+						}
+					}
+				}
+			});
+			compensationTransaction();
+
 			const description = `The defending coalition has repelled the invaders led by **${finalAttackerData.guild_name}**!`;
+			const compensationField = { name: 'Defender\'s Compensation', value: `A total of **${defenderGain.toLocaleString()}** Crowns was distributed among the defending guilds.`, inline: false };
 
 			resultEmbed = new EmbedBuilder().setTitle('🛡️ VICTORY FOR THE DEFENDERS! 🛡️').setColor(0x3498DB).setDescription(description)
 				.addFields(
 					{ name: 'War Power Calculation', value: `Attacker Roll: **${attackerRoll}**${modifierText}\nTotal Power: 💥 **${finalAttackPower}** vs 🛡️ **${defenderBasePower}**`, inline: false },
-					{ name: 'Defender\'s Compensation', value: `👑 ${defenderGain.toLocaleString()}`, inline: false },
+					compensationField,
 				);
 			announceEmbed = new EmbedBuilder().setTitle('🛡️ War Report: Defenders Win! 🛡️').setColor(0x3498DB).setDescription(description).setTimestamp();
 		}
@@ -3769,7 +3797,6 @@ module.exports = {
 		},
 		async handleAllianceJoin(interaction) {
 			const parts = interaction.customId.split('_');
-			// Correctly reconstruct the action from the customId
 			const action = `${parts[0]}_${parts[1]}`;
 			const raidId = parts[2];
 			const side = action === 'join_attack' ? 'attacker' : 'defender';
@@ -3779,13 +3806,19 @@ module.exports = {
 			try {
 				await interaction.deferReply({ ephemeral: true });
 
-				// Verify the user is a guildmaster or vice-guildmaster
+				// Verify the user is a guildmaster or vice-guildmaster and get guild data
 				const joiningGuildData = db.prepare(`
-					SELECT gmt.guild_tag, gl.guild_name
-					FROM guildmember_tracking gmt
-					JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
-					WHERE gmt.user_id = ? AND (gmt.owner = 1 OR gmt.vice_gm = 1)
-				`).get(userId);
+            SELECT 
+                gmt.guild_tag, 
+                gl.guild_name,
+                COALESCE(gt.tier, 1) as tier,
+                COALESCE(ge.balance, 0) as balance
+            FROM guildmember_tracking gmt
+            JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
+            LEFT JOIN guild_tiers gt ON gl.guild_tag = gt.guild_tag
+            LEFT JOIN guild_economy ge ON gmt.guild_tag = ge.guild_tag
+            WHERE gmt.user_id = ? AND (gmt.owner = 1 OR gmt.vice_gm = 1)
+        `).get(userId);
 
 				if (!joiningGuildData) {
 					errorEmbed.setTitle('❌ Not Authorized')
@@ -3795,22 +3828,21 @@ module.exports = {
 
 				const joiningGuildTag = joiningGuildData.guild_tag;
 
-				// === NEW VALIDATION ===
-				// Get the original raid participants from raid_history
+				// (NEW) Calculate and verify the cost for an ally to join.
+				const allyCost = Math.floor(0.5 * joiningGuildData.tier * 200);
+				if (joiningGuildData.balance < allyCost) {
+					errorEmbed.setTitle('❌ Insufficient Funds')
+						.setDescription(`Your guild vault needs **${allyCost.toLocaleString()}** Crowns to join this war, but you only have **${joiningGuildData.balance.toLocaleString()}**.`);
+					return interaction.editReply({ embeds: [errorEmbed] });
+				}
+
 				const originalRaid = db.prepare('SELECT attacker_tag, defender_tag FROM raid_history WHERE id = ?').get(raidId);
 				if (!originalRaid) {
 					errorEmbed.setTitle('❌ Raid Expired').setDescription('This call to arms has ended.');
 					return interaction.editReply({ embeds: [errorEmbed] });
 				}
 
-
-				// === END NEW VALIDATION ===
-
-				// Check if the guild is already part of the raid
-				const isAlreadyInRaid = db.prepare(`
-					SELECT 1 FROM active_raid_allies
-					WHERE raid_id = ? AND allied_guild_tag = ?
-				`).get(raidId, joiningGuildTag);
+				const isAlreadyInRaid = db.prepare('SELECT 1 FROM active_raid_allies WHERE raid_id = ? AND allied_guild_tag = ?').get(raidId, joiningGuildTag);
 
 				if (isAlreadyInRaid) {
 					errorEmbed.setTitle('❌ Already Participating')
@@ -3818,16 +3850,19 @@ module.exports = {
 					return interaction.editReply({ embeds: [errorEmbed] });
 				}
 
-				// Add the guild to the raid
-				db.prepare(`
-					INSERT INTO active_raid_allies (raid_id, allied_guild_tag, side)
-					VALUES (?, ?, ?)
-				`).run(raidId, joiningGuildTag, side);
+				// (NEW) Use a transaction to charge the guild and add them to the raid.
+				db.transaction(() => {
+					// Deduct the cost from the joining ally's vault
+					db.prepare('UPDATE guild_economy SET balance = balance - ? WHERE guild_tag = ?').run(allyCost, joiningGuildTag);
+					// Add the guild to the raid
+					db.prepare('INSERT INTO active_raid_allies (raid_id, allied_guild_tag, side) VALUES (?, ?, ?)').run(raidId, joiningGuildTag, side);
+				})();
+
 
 				const successEmbed = new EmbedBuilder()
 					.setColor(0x57F287)
 					.setTitle('✅ Guild Joined the Raid!')
-					.setDescription(`Your guild, **${joiningGuildData.guild_name}**, has joined the war as a supporting **${side}**.`);
+					.setDescription(`Your guild, **${joiningGuildData.guild_name}**, has paid **${allyCost.toLocaleString()}** Crowns and joined the war as a supporting **${side}**.`);
 				return interaction.editReply({ embeds: [successEmbed] });
 			}
 			catch (error) {
