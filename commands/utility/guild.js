@@ -2771,7 +2771,6 @@ async function handleRaid(interaction) {
 	// Check if user is in a guild
 	const attackerGuild = db.prepare(`
 		SELECT gmt.guild_tag, gl.guild_name, COALESCE(gt.tier, 1) as tier, ge.balance
-		SELECT gmt.guild_tag, gl.guild_name, COALESCE(gt.tier, 1) as tier, ge.balance
 		FROM guildmember_tracking gmt
 		JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
 		LEFT JOIN guild_tiers gt ON gmt.guild_tag = gt.guild_tag
