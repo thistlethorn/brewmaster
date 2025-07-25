@@ -430,19 +430,19 @@ try {
 catch (error) {
 	console.error('[Database Migration/Backfill] An error occurred:', error);
 }
-
+const raidNum = 9;
 try {
-	console.log('[Database Migration] Checking for and attempting to fix bugged raid ID 7...');
-	const buggedRaid = db.prepare('SELECT id FROM raid_history WHERE id = ? AND success = -1').get(7);
+	console.log(`[Database Migration] Checking for and attempting to fix bugged raid ID ${raidNum}...`);
+	const buggedRaid = db.prepare('SELECT id FROM raid_history WHERE id = ? AND success = -1').get(raidNum);
 
 	if (buggedRaid) {
 		const migrationTransaction = db.transaction(() => {
 			// Step 1: Clean up the orphaned alliance entries.
-			const allyDeletionResult = db.prepare('DELETE FROM active_raid_allies WHERE raid_id = ?').run(7);
+			const allyDeletionResult = db.prepare('DELETE FROM active_raid_allies WHERE raid_id = ?').run(raidNum);
 			console.log(`[Migration] Deleted ${allyDeletionResult.changes} orphaned entries from active_raid_allies.`);
 
 			// Step 2: Remove the bugged raid history record.
-			const historyDeletionResult = db.prepare('DELETE FROM raid_history WHERE id = ?').run(7);
+			const historyDeletionResult = db.prepare('DELETE FROM raid_history WHERE id = ?').run(raidNum);
 			console.log(`[Migration] Deleted ${historyDeletionResult.changes} bugged record from raid_history.`);
 
 			// Step 3: Unlock the defender's guild.
@@ -457,14 +457,14 @@ try {
 		});
 
 		migrationTransaction();
-		console.log('[Database Migration] Successfully reversed and cleaned up all aspects of bugged raid ID 7.');
+		console.log(`[Database Migration] Successfully reversed and cleaned up all aspects of bugged raid ID ${raidNum}.`);
 	}
 	else {
-		console.log('[Database Migration] Bugged raid ID 7 not found or already fixed. No action taken.');
+		console.log(`[Database Migration] Bugged raid ID ${raidNum} not found or already fixed. No action taken.`);
 	}
 }
 catch (error) {
-	console.error('[Database Migration] CRITICAL ERROR while trying to fix bugged raid ID 7:', error);
+	console.error(`[Database Migration] CRITICAL ERROR while trying to fix bugged raid ID ${raidNum}:`, error);
 }
 
 db.pragma('journal_mode = WAL');
