@@ -28,8 +28,8 @@ const tierEmojis = arrayTierEmoji();
 const GUILD_CREATION_WITHDRAWAL_LIMIT = 5000;
 
 // Alliance Raid constants (10 minutes)
-// const ALLIANCE_RAID_DURATION_MS = 600000;
-const ALLIANCE_RAID_DURATION_MS = 30000;
+const ALLIANCE_RAID_DURATION_MS = 600000;
+// const ALLIANCE_RAID_DURATION_MS = 30000;
 // 30 seconds for testing
 
 // NEW: Helper function for creating delays
@@ -4107,7 +4107,7 @@ module.exports = {
 
 				console.log('[RAID CONFIRM] Sending war message');
 				const warMessage = await defenderChannel.send({
-					content: `<@&/${attackerData.role_id}> and <@&/${defenderData.role_id}>, prepare for war!`,
+					content: `<@&${attackerData.role_id}> and <@&${defenderData.role_id}>, prepare for war!`,
 					embeds: [callToArmsEmbed],
 					components: [callToArmsRow],
 				});
