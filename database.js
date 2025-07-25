@@ -430,13 +430,14 @@ try {
 catch (error) {
 	console.error('[Database Migration/Backfill] An error occurred:', error);
 }
-const raidNum = 10;
+const raidNum = 11;
 const defendingGuildTag = 'GRG';
 const attackingGuildTag = 'FUN';
+const overrideCheck = true;
 try {
 	console.log(`[Database Migration] Checking for and attempting to fix bugged raid ID ${raidNum}...`);
 	const buggedRaid = db.prepare('SELECT id FROM raid_history WHERE id = ? AND success = -1').get(raidNum);
-	if (buggedRaid) {
+	if (buggedRaid || overrideCheck) {
 		const migrationTransaction = db.transaction(() => {
 			// Step 1: Clean up the orphaned alliance entries.
 			const allyDeletionResult = db.prepare('DELETE FROM active_raid_allies WHERE raid_id = ?').run(raidNum);
@@ -449,6 +450,9 @@ try {
 			// Step 3: Unlock the defender's guild.
 			db.prepare(`UPDATE raid_cooldowns SET is_under_raid = 0 WHERE guild_tag = '${defendingGuildTag}' AND is_under_raid = 1`).run();
 			console.log(`[Migration] Unlocked the '${defendingGuildTag}' guild by resetting its is_under_raid flag.`);
+
+			db.prepare(`UPDATE raid_cooldowns SET shield_expiry = NULL WHERE guild_tag = '${defendingGuildTag}'`).run();
+			console.log(`[Migration] Turned off the shield for the '${defendingGuildTag}' guild.`);
 
 			// Step 4: (NEW) Remove the unfair raid cooldown for the attacker.
 			const cooldownResetResult = db.prepare(`UPDATE raid_cooldowns SET last_raid_time = NULL WHERE guild_tag = '${attackingGuildTag}'`).run();
