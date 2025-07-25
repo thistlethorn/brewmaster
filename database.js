@@ -430,7 +430,7 @@ try {
 catch (error) {
 	console.error('[Database Migration/Backfill] An error occurred:', error);
 }
-const raidNum = 11;
+const raidNum = 14;
 const defendingGuildTag = 'GRG';
 const attackingGuildTag = 'FUN';
 const overrideCheck = true;
