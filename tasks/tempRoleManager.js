@@ -62,6 +62,19 @@ async function removeRole(client, recordId) {
  * @param {number} durationMs The duration in milliseconds until the role is removed.
  */
 async function scheduleRoleRemoval(client, userId, guildId, roleId, durationMs) {
+	// Input validation
+	if (!userId || !guildId || !roleId || typeof durationMs !== 'number' || durationMs <= 0) {
+		throw new Error('Invalid parameters for scheduleRoleRemoval');
+	}
+
+	// Check for existing temporary role
+	const existing = db.prepare('SELECT id FROM temp_roles WHERE user_id = ? AND guild_id = ? AND role_id = ?')
+		.get(userId, guildId, roleId);
+	if (existing) {
+		console.log(`[tempRoleManager] Temporary role ${roleId} already scheduled for user ${userId} in guild ${guildId}`);
+		return;
+	}
+
 	const expiryTime = new Date(Date.now() + durationMs);
 
 	// Store in DB to survive restarts
@@ -94,8 +107,13 @@ async function resumeTempRoleRemovals(client) {
 
 		if (expiryTime <= now) {
 			// Expiry time is in the past, remove it now.
-			await removeRole(client, roleRecord.id);
-			immediateRemovals++;
+			try {
+				await removeRole(client, roleRecord.id);
+				immediateRemovals++;
+			}
+			catch (error) {
+				console.error('[tempRoleManager] Failed to remove expired role during resume:', error);
+			}
 		}
 		else {
 			// Expiry time is in the future, schedule it.
