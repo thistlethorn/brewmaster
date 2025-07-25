@@ -288,29 +288,6 @@ module.exports = {
 						return;
 					}
 				}
-				if (interaction.customId.startsWith('join_attack_') || interaction.customId.startsWith('aid_defence_')) {
-					if (!guildCommand) {
-						console.error('[Error] Guild command not found for alliance button handling');
-						return;
-					}
-
-					try {
-						// This specifically calls the function to handle joining a raid alliance
-						await guildCommand.buttons.handleAllianceJoin(interaction);
-						console.log(`[Execute] Successfully handled a Guild Alliance Button (${interaction.customId}), requested by ${interaction.user.displayName}`);
-						return;
-					}
-					catch (error) {
-						console.error(`[Error] Alliance Join button interaction error for ${interaction.customId}:`, error);
-						// Use followUp if the interaction was already deferred in the handler
-						const replyMethod = interaction.deferred ? 'followUp' : 'reply';
-						await interaction[replyMethod]({
-							content: 'There was an error processing this raid action.',
-							ephemeral: true,
-						});
-						return;
-					}
-				}
 				// Handle all guild-related buttons by routing them to the 'guild' command file.
 				if (interaction.customId.startsWith('guild_') || interaction.customId.startsWith('raid_') || interaction.customId.startsWith('upgrade_') || interaction.customId.startsWith('shield_') || interaction.customId.startsWith('fundraise_') || interaction.customId.startsWith('raidmsg_')) {
 					if (!guildCommand) {

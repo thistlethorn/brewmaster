@@ -3981,32 +3981,138 @@ module.exports = {
 				console.log('[RAID CONFIRM] Collector created');
 
 				collector.on('collect', async (i) => {
-					console.log(`[RAID COLLECTOR] Button clicked by ${i.user.id}`);
-					if (!i.deferred && !i.replied) {
-						console.log('[RAID COLLECTOR] Deferring update');
-						await i.deferUpdate();
+					// This is now the ONLY place these button clicks are handled.
+					const logPrefix = `[RAID COLLECTOR | Raid ID: ${raidId} | User: ${i.user.username}]`;
+					console.log(`${logPrefix} Button interaction received. Custom ID: ${i.customId}`);
+
+					try {
+						const parts = i.customId.split('_');
+						const action = `${parts[0]}_${parts[1]}`;
+						const collectedRaidId = parts[2];
+						const side = action === 'join_attack' ? 'attacker' : 'defender';
+						const buttonUser = i.user;
+						// Get the full user object for better logging
+
+						console.log(`${logPrefix} Parsed Data: action=${action}, side=${side}, collectedRaidId=${collectedRaidId}`);
+
+						// Acknowledge the interaction immediately with an ephemeral (private) message
+						console.log(`${logPrefix} Deferring ephemeral reply...`);
+						await i.deferReply({ ephemeral: true });
+						console.log(`${logPrefix} Reply deferred successfully.`);
+
+						// --- Start of logic from handleAllianceJoin ---
+						console.log(`${logPrefix} Checking authorization for user ID: ${buttonUser.id}`);
+						const joiningGuildData = db.prepare(`
+            SELECT gmt.guild_tag, gl.guild_name, COALESCE(gt.tier, 1) as tier, COALESCE(ge.balance, 0) as balance
+            FROM guildmember_tracking gmt
+            JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
+            LEFT JOIN guild_tiers gt ON gmt.guild_tag = gt.guild_tag
+            LEFT JOIN guild_economy ge ON gmt.guild_tag = ge.guild_tag
+            WHERE gmt.user_id = ? AND (gmt.owner = 1 OR gmt.vice_gm = 1)
+        `).get(buttonUser.id);
+
+						if (!joiningGuildData) {
+							console.log(`${logPrefix} Authorization FAILED. User is not owner or vice-gm.`);
+							const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Not Authorized').setDescription('Only guildmasters or vice-guildmasters can join a raid on behalf of their guild.');
+							return i.editReply({ embeds: [errorEmbed] });
+						}
+						console.log(`${logPrefix} Authorization SUCCEEDED. User is in guild [${joiningGuildData.guild_tag}] with tier ${joiningGuildData.tier} and balance ${joiningGuildData.balance}.`);
+
+						const joiningGuildTag = joiningGuildData.guild_tag;
+						console.log(`${logPrefix} Verifying if the raid is still active in the database...`);
+						const originalRaid = db.prepare('SELECT attacker_tag, defender_tag FROM raid_history WHERE id = ? AND success = -1').get(collectedRaidId);
+
+						if (!originalRaid) {
+							console.log(`${logPrefix} Raid check FAILED. The raid has expired or was already resolved.`);
+							const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Raid Expired').setDescription('This call to arms has ended.');
+							return i.editReply({ embeds: [errorEmbed] });
+						}
+						console.log(`${logPrefix} Raid check SUCCEEDED. Original Attacker: [${originalRaid.attacker_tag}], Original Defender: [${originalRaid.defender_tag}]`);
+
+						console.log(`${logPrefix} Checking if guild [${joiningGuildTag}] is already in this raid...`);
+						const isAlreadyInRaid = db.prepare('SELECT 1 FROM active_raid_allies WHERE raid_id = ? AND allied_guild_tag = ?').get(collectedRaidId, joiningGuildTag);
+						if (isAlreadyInRaid) {
+							console.log(`${logPrefix} Participation check FAILED. Guild is already in the raid.`);
+							const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Already Participating').setDescription(`Your guild, **${joiningGuildData.guild_name}**, is already part of this war.`);
+							return i.editReply({ embeds: [errorEmbed] });
+						}
+						console.log(`${logPrefix} Participation check SUCCEEDED. Guild is not yet in the raid.`);
+
+						const isPrimaryAttacker = joiningGuildTag === originalRaid.attacker_tag;
+						const isPrimaryDefender = joiningGuildTag === originalRaid.defender_tag;
+
+						let joinCost = 0;
+						let successMessage;
+
+						console.log(`${logPrefix} Calculating join cost. Primary Attacker: ${isPrimaryAttacker}, Primary Defender: ${isPrimaryDefender}`);
+						if (isPrimaryAttacker || isPrimaryDefender) {
+							joinCost = 0;
+							successMessage = `Your guild has officially joined as the ${isPrimaryAttacker ? 'leading attacker' : 'primary defender'}!`;
+							console.log(`${logPrefix} Join cost is 0 (Primary Participant).`);
+						}
+						else {
+							joinCost = Math.floor(0.5 * joiningGuildData.tier * 200);
+							console.log(`${logPrefix} Calculated ally join cost: ${joinCost}. Checking balance...`);
+							if (joiningGuildData.balance < joinCost) {
+								console.log(`${logPrefix} Insufficient funds. Balance: ${joiningGuildData.balance}, Cost: ${joinCost}`);
+								const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Insufficient Funds').setDescription(`Your guild vault needs **${joinCost.toLocaleString()}** Crowns to join this war, but you only have **${joiningGuildData.balance.toLocaleString()}**.`);
+								return i.editReply({ embeds: [errorEmbed] });
+							}
+							successMessage = `Your guild, **${joiningGuildData.guild_name}**, has paid **${joinCost.toLocaleString()}** Crowns and joined the war as a **${side}**!`;
+							console.log(`${logPrefix} Sufficient funds confirmed.`);
+						}
+
+						console.log(`${logPrefix} Starting database transaction to add guild [${joiningGuildTag}] to the raid...`);
+						db.transaction(() => {
+							if (joinCost > 0) {
+								db.prepare('UPDATE guild_economy SET balance = balance - ? WHERE guild_tag = ?').run(joinCost, joiningGuildTag);
+								console.log(`${logPrefix} -> Deducted ${joinCost} from guild [${joiningGuildTag}]`);
+							}
+							db.prepare('INSERT INTO active_raid_allies (raid_id, allied_guild_tag, side) VALUES (?, ?, ?)').run(collectedRaidId, joiningGuildTag, side);
+							console.log(`${logPrefix} -> Inserted guild [${joiningGuildTag}] into 'active_raid_allies' for side '${side}'.`);
+						})();
+						console.log(`${logPrefix} Database transaction completed successfully.`);
+
+						const successEmbed = new EmbedBuilder().setColor(0x57F287).setTitle('✅ Joined the Fray!').setDescription(successMessage);
+						console.log(`${logPrefix} Sending success reply to the user...`);
+						await i.editReply({ embeds: [successEmbed] });
+						console.log(`${logPrefix} Success reply sent.`);
+						// --- End of logic from handleAllianceJoin ---
+
+						// --- Now, update the public war message ---
+						console.log(`${logPrefix} Fetching all current allies to update the public war message...`);
+						const allAllies = db.prepare(`
+							SELECT ara.side, gl.guild_name
+							FROM active_raid_allies ara
+							JOIN guild_list gl ON ara.allied_guild_tag = gl.guild_tag
+							WHERE ara.raid_id = ?
+						`).all(collectedRaidId);
+						console.log(`${logPrefix} Found ${allAllies.length} total allies.`);
+
+						const attackers = allAllies.filter(a => a.side === 'attacker');
+						const defenders = allAllies.filter(a => a.side === 'defender');
+
+						const updatedEmbed = new EmbedBuilder(warMessage.embeds[0].data)
+							.setFields(
+								{ name: `⚔️ Attacking Alliance (${attackers.length})`, value: attackers.map(a => `**${a.guild_name}**`).join('\n') || 'None yet.', inline: true },
+								{ name: `🛡️ Defending Coalition (${defenders.length})`, value: defenders.map(d => `**${d.guild_name}**`).join('\n') || 'None yet.', inline: true },
+							);
+
+						console.log(`${logPrefix} Editing the public war message with the new alliance list...`);
+						await warMessage.edit({ embeds: [updatedEmbed] });
+						console.log(`${logPrefix} Public war message updated successfully. Interaction complete.`);
+
 					}
-
-					console.log('[RAID COLLECTOR] Waiting 2.5s for DB sync');
-					await wait(2500);
-
-					console.log(`[RAID COLLECTOR] Fetching allies for raid ${raidId}`);
-					const allAllies = db.prepare(`
-        SELECT ara.side, gl.guild_name, ara.allied_guild_tag
-        FROM active_raid_allies ara
-        JOIN guild_list gl ON ara.allied_guild_tag = gl.guild_tag
-        WHERE ara.raid_id = ?
-      `).all(raidId);
-					console.log(`[RAID COLLECTOR] Found ${allAllies.length} allies`);
-
-					const updatedEmbed = new EmbedBuilder(warMessage.embeds[0].data)
-						.setFields(
-							{ name: `⚔️ Attacking Alliance (${allAllies.filter(a => a.side === 'attacker').length})`, value: allAllies.filter(a => a.side === 'attacker').map(a => `**${a.guild_name}**`).join('\n') || 'None', inline: true },
-							{ name: `🛡️ Defending Coalition (${allAllies.filter(a => a.side === 'defender').length})`, value: allAllies.filter(a => a.side === 'defender').map(a => `**${a.guild_name}**`).join('\n') || 'None', inline: true },
-						);
-
-					console.log('[RAID COLLECTOR] Updating war message');
-					await warMessage.edit({ embeds: [updatedEmbed] });
+					catch (error) {
+						console.error(`${logPrefix} CRITICAL ERROR during collection:`, error);
+						// Try to inform the user that something went wrong
+						if (!i.replied && !i.deferred) {
+							await i.reply({ content: 'An unexpected error occurred. The Innkeepers have been notified.', ephemeral: true }).catch(e => console.error(`${logPrefix} Failed to send initial error reply:`, e));
+						}
+						else {
+							await i.followUp({ content: 'An unexpected error occurred. The Innkeepers have been notified.', ephemeral: true }).catch(e => console.error(`${logPrefix} Failed to send followup error reply:`, e));
+						}
+					}
 				});
 
 				collector.on('end', (collected) => {

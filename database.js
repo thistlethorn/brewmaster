@@ -430,11 +430,12 @@ try {
 catch (error) {
 	console.error('[Database Migration/Backfill] An error occurred:', error);
 }
-const raidNum = 9;
+const raidNum = 10;
+const defendingGuildTag = 'GRG';
+const attackingGuildTag = 'FUN';
 try {
 	console.log(`[Database Migration] Checking for and attempting to fix bugged raid ID ${raidNum}...`);
 	const buggedRaid = db.prepare('SELECT id FROM raid_history WHERE id = ? AND success = -1').get(raidNum);
-
 	if (buggedRaid) {
 		const migrationTransaction = db.transaction(() => {
 			// Step 1: Clean up the orphaned alliance entries.
@@ -446,13 +447,13 @@ try {
 			console.log(`[Migration] Deleted ${historyDeletionResult.changes} bugged record from raid_history.`);
 
 			// Step 3: Unlock the defender's guild.
-			db.prepare('UPDATE raid_cooldowns SET is_under_raid = 0 WHERE guild_tag = \'FUN\' AND is_under_raid = 1').run();
-			console.log('[Migration] Unlocked the \'FUN\' guild by resetting its is_under_raid flag.');
+			db.prepare(`UPDATE raid_cooldowns SET is_under_raid = 0 WHERE guild_tag = '${defendingGuildTag}' AND is_under_raid = 1`).run();
+			console.log(`[Migration] Unlocked the '${defendingGuildTag}' guild by resetting its is_under_raid flag.`);
 
 			// Step 4: (NEW) Remove the unfair raid cooldown for the attacker.
-			const cooldownResetResult = db.prepare('UPDATE raid_cooldowns SET last_raid_time = NULL WHERE guild_tag = \'RIP\'').run();
+			const cooldownResetResult = db.prepare(`UPDATE raid_cooldowns SET last_raid_time = NULL WHERE guild_tag = '${attackingGuildTag}'`).run();
 			if (cooldownResetResult.changes > 0) {
-				console.log('[Migration] Successfully removed the unfair raid cooldown for \'RIP\'.');
+				console.log(`[Migration] Successfully removed the unfair raid cooldown for '${attackingGuildTag}'.`);
 			}
 		});
 
