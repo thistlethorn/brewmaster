@@ -199,6 +199,15 @@ const setupTables = db.transaction(() => {
         )
     `).run();
 
+	db.prepare(`
+		CREATE TABLE IF NOT EXISTS temp_roles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            guild_id TEXT NOT NULL,
+            role_id TEXT NOT NULL,
+            expiry_time TEXT NOT NULL
+        )
+    `).run();
 
 	// "Economy system" via /commands/utility/ @ [econ.js]
 
@@ -331,6 +340,7 @@ const setupTables = db.transaction(() => {
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_raid_history ON raid_history(attacker_tag, defender_tag, timestamp)').run();
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_guild_stickers_tag ON guild_stickers(guild_tag)').run();
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_raid_allies ON active_raid_allies(raid_id)').run();
+	db.prepare('CREATE INDEX IF NOT EXISTS idx_temp_roles_expiry ON temp_roles(expiry_time)').run();
 
 
 	// Initialize the jackpot if it doesn't exist
@@ -430,10 +440,10 @@ try {
 catch (error) {
 	console.error('[Database Migration/Backfill] An error occurred:', error);
 }
-const raidNum = 14;
-const defendingGuildTag = 'GRG';
-const attackingGuildTag = 'FUN';
-const overrideCheck = true;
+const raidNum = 16;
+const defendingGuildTag = 'FUN';
+const attackingGuildTag = 'RIP';
+const overrideCheck = false;
 try {
 	console.log(`[Database Migration] Checking for and attempting to fix bugged raid ID ${raidNum}...`);
 	const buggedRaid = db.prepare('SELECT id FROM raid_history WHERE id = ? AND success = -1').get(raidNum);

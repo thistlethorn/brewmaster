@@ -22,10 +22,14 @@ const {
 } = require('../../utils/emoji');
 
 const { getTierBenefits, getTierData } = require('../../utils/getTierBenefits');
+const { scheduleRoleRemoval } = require('../../tasks/tempRoleManager');
 
 const TIER_DATA = getTierData();
 const tierEmojis = arrayTierEmoji();
 const GUILD_CREATION_WITHDRAWAL_LIMIT = 5000;
+
+const RAID_DEFENDER_ROLE_ID = '1387473320093548724';
+const DEFENDER_ROLE_DURATION_MS = 24 * 60 * 60 * 1000;
 
 // Alliance Raid constants (10 minutes)
 const ALLIANCE_RAID_DURATION_MS = 600000;
@@ -3187,11 +3191,11 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 		let attackerModifierText = '';
 		if (finalAttackerData.tier < finalDefenderData.tier) {
 			modifier = 3;
-			attackerModifierText = '-` +3` (Kingslayer Bonus - Attacking Higher Tier)\n';
+			attackerModifierText = '- `+3` (Kingslayer Bonus - Attacking Higher Tier)\n';
 		}
 		else if (finalAttackerData.tier > finalDefenderData.tier) {
 			modifier = -4;
-			attackerModifierText = '-` -4` (Bully Penalty - Attacking Lower Tier)\n';
+			attackerModifierText = '- `-4` (Bully Penalty - Attacking Lower Tier)\n';
 		}
 		const attackerRoll = Math.floor(Math.random() * 20) + 1;
 		const finalAttackPower = attackerRoll + attackerBasePower + attackerAllyPower + modifier;
@@ -3200,14 +3204,14 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 
 		const attackerTierList = attackingParticipants
 			.filter(p => p.allied_guild_tag !== attackerTag)
-			.map(p => `- \`+${getTierPowerBonus(p.tier)}\` (${p.guild_name} - Tier Bonus)`)
+			.map(p => `- \`+${getTierPowerBonus(p.tier)}\` (${p.guild_name} - Supporting Tier Bonus)`)
 			.join('\n');
 		const defenderTierList = defendingParticipants
 			.filter(p => p.allied_guild_tag !== defenderTag)
-			.map(p => `- \`+${getTierPowerBonus(p.tier)}\` (${p.guild_name} - Tier Bonus)`)
+			.map(p => `- \`+${getTierPowerBonus(p.tier)}\` (${p.guild_name} - Supporting Tier Bonus)`)
 			.join('\n');
-		attackerModifierText += `${attackerTierList}\n**TOTAL** = \`+${attackerAllyPower}\`\n(Combined Tier Bonuses of Non-Primary Attackers)\n- \`+${attackerBasePower}\` (Base Tier Power of Attacking Guild)`;
-		const defenderModifierText = `${defenderTierList}\n**TOTAL** = \`+${defenderAllyPower}\`\n(Combined Tier Bonuses of Non-Primary Defenders)`;
+		attackerModifierText += `${attackerTierList}\n- \`+${attackerBasePower}\` (Base Tier Power of Attacking Guild)\n**MODIFIERS TOTAL** = \`+${attackerAllyPower}\``;
+		const defenderModifierText = `${defenderTierList}\n**MODIFIERS TOTAL** = \`+${defenderAllyPower}\``;
 		// 3. Narrative Sequence with Separate Messages & Countdown Timers
 		const NARRATIVE_DELAY_MS = 60000;
 
@@ -3380,7 +3384,33 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 				}
 			});
 			compensationTransaction();
+			 const defenderMembers = db.prepare('SELECT user_id FROM guildmember_tracking WHERE guild_tag = ?').all(defenderTag);
+			let roleAwardedCount = 0;
+			const defenderGuild = await interaction.client.guilds.fetch(interaction.guild.id);
+			const raidDefenderRole = await defenderGuild.roles.fetch(RAID_DEFENDER_ROLE_ID);
 
+			if (raidDefenderRole) {
+				console.log(`[Raid Resolution] Awarding Raid Defender role to ${defenderMembers.length} members of [${defenderTag}].`);
+				for (const dMember of defenderMembers) {
+					try {
+						const member = await defenderGuild.members.fetch(dMember.user_id);
+						if (member) {
+							await member.roles.add(raidDefenderRole);
+							await updateMultiplier(member.id, defenderGuild);
+							await scheduleRoleRemoval(interaction.client, member.id, defenderGuild.id, RAID_DEFENDER_ROLE_ID, DEFENDER_ROLE_DURATION_MS);
+							roleAwardedCount++;
+							await wait(500);
+						}
+					}
+					catch (err) {
+						console.error(`[Raid Resolution] Failed to award defender role to user ${dMember.user_id}:`, err);
+					}
+				}
+				console.log(`[Raid Resolution] Successfully awarded role to ${roleAwardedCount}/${defenderMembers.length} members.`);
+			}
+			else {
+				console.error(`[Raid Resolution] CRITICAL: Could not find the Raid Defender Role (${RAID_DEFENDER_ROLE_ID})`);
+			}
 			const description = `The defending coalition has repelled the invaders led by **${finalAttackerData.guild_name}**!`;
 
 			// --- NEW: Create the verbose compensation field ---
