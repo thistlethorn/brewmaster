@@ -3274,7 +3274,6 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 			finalDescription = replacePlaceholders(defenderMsgs.defending_failure || DEFAULT_RAID_MESSAGES.defending_failure) + '\n\n' + replacePlaceholders(attackerMsgs.raiding_victory || DEFAULT_RAID_MESSAGES.raiding_victory);
 			await warMessage.channel.send({ embeds: [new EmbedBuilder().setColor(0x2ECC71).setDescription(finalDescription).setTitle('⚔️📜 Final Battle Outcome: Attackers are Triumphant! 💥🏚️').setFooter({ text: `⚔️ [${attackerTag}] vs. 🛡️ [${defenderTag}]` }).setTimestamp()] });
 			await wait(5000);
-			// Shorter wait for the final result
 
 			const isVulnerable = finalDefenderData.balance < 200;
 			const defenderTierInfo = TIER_DATA[finalDefenderData.tier - 1];
@@ -3295,8 +3294,8 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 			netLoot = totalLoot - lostDuringEscape;
 			console.log(`[Raid Resolution LOG] [${raidId}] Loot calculated. Vault: ${stolenFromGuild}, Members: ${stolenFromMembers}, Total: ${totalLoot}, Net: ${netLoot}.`);
 
-
-			// --- Loot Distribution Logic ---
+			// --- Loot Distribution & Logging ---
+			const distributionLog = [];
 			console.log(`[Raid Resolution LOG] [${raidId}] Starting loot distribution transaction.`);
 			const spoilsTransaction = db.transaction(() => {
 				if (stolenFromGuild > 0) db.prepare('UPDATE guild_economy SET balance = balance - ? WHERE guild_tag = ?').run(stolenFromGuild, defenderTag);
@@ -3307,14 +3306,34 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 						if (shareOfLoot > 0) {
 							db.prepare('UPDATE guild_economy SET balance = balance + ? WHERE guild_tag = ?').run(shareOfLoot, winner.allied_guild_tag);
 							db.prepare('INSERT INTO raid_leaderboard (guild_tag, successful_raids, crowns_stolen) VALUES (?, 1, ?) ON CONFLICT(guild_tag) DO UPDATE SET successful_raids = successful_raids + 1, crowns_stolen = crowns_stolen + ?').run(winner.allied_guild_tag, shareOfLoot, shareOfLoot);
+							// Add a detailed line to our log for the final embed
+							distributionLog.push(`> **${winner.guild_name}**: +**${shareOfLoot.toLocaleString()}** Crowns`);
 						}
 					}
 				}
 			});
 			spoilsTransaction();
+
 			await checkAndDestroyGuildOnRaid(defenderTag, attackerTag, interaction);
 			const isDestroyed = !db.prepare('SELECT 1 FROM guild_list WHERE guild_tag = ?').get(defenderTag);
-			const description = isDestroyed ? `The attacking alliance has utterly destroyed **${finalDefenderData.guild_name}**!` : `The attacking alliance has triumphed over **${finalDefenderData.guild_name}**!`;const spoilsField = { name: 'Spoils of War', value: `The total plunder of **${netLoot.toLocaleString()}** Crowns was distributed among the victors.`, inline: false };
+			const description = isDestroyed ? `The attacking alliance has utterly destroyed **${finalDefenderData.guild_name}**!` : `The attacking alliance has triumphed over **${finalDefenderData.guild_name}**!`;
+
+			// --- NEW: Create the verbose spoils field ---
+			const spoilsField = {
+				name: 'Spoils of War',
+				value: [
+					`Plunder from Vault: **${stolenFromGuild.toLocaleString()}**`,
+					`Plunder from Members: **${stolenFromMembers.toLocaleString()}**`,
+					`**Total Loot:** **${totalLoot.toLocaleString()}**`,
+					`Lost During Escape (-${escapeLossPercent}%): **-${lostDuringEscape.toLocaleString()}**`,
+					'---',
+					`**Net Plunder Distributed:** **${netLoot.toLocaleString()}**`,
+					'**Distribution Details:**',
+					...distributionLog,
+				].join('\n'),
+				inline: false,
+			};
+
 			resultEmbed = new EmbedBuilder()
 				.setTitle('⚔️ VICTORY FOR THE ATTACKERS! ⚔️')
 				.setColor(0x2ECC71)
@@ -3336,7 +3355,6 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 					{ name: '⚔️ Victorious Alliance', value: attackerParticipantList, inline: false },
 					{ name: '🛡️ Defeated Coalition', value: defenderParticipantList, inline: false },
 					{ name: 'Final Scores:', value: `[${attackerTag}] Total Power: 💥 **${finalAttackPower}**\n[${defenderTag}] Overall Resistance: 🛡️ **${finalDefensePower}**`, inline: false },
-
 				)
 				.setTimestamp();
 		}
@@ -3346,6 +3364,8 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 			await wait(5000);
 
 			defenderGain = Math.floor(raidCost * 0.5);
+			const distributionLog = [];
+
 			const compensationTransaction = db.transaction(() => {
 				const totalDefenderPower = defendingParticipants.reduce((sum, p) => sum + p.tier, 0);
 				if (defenderGain > 0 && totalDefenderPower > 0) {
@@ -3353,13 +3373,28 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 						const shareOfCompensation = Math.floor((winner.tier / totalDefenderPower) * defenderGain);
 						if (shareOfCompensation > 0) {
 							db.prepare('UPDATE guild_economy SET balance = balance + ? WHERE guild_tag = ?').run(shareOfCompensation, winner.allied_guild_tag);
+							// Add a detailed line to our log for the final embed
+							distributionLog.push(`> **${winner.guild_name}**: +**${shareOfCompensation.toLocaleString()}** Crowns`);
 						}
 					}
 				}
 			});
 			compensationTransaction();
+
 			const description = `The defending coalition has repelled the invaders led by **${finalAttackerData.guild_name}**!`;
-			const compensationField = { name: 'Defender\'s Compensation', value: `A total of **${defenderGain.toLocaleString()}** Crowns was distributed among the defending guilds.`, inline: false };
+
+			// --- NEW: Create the verbose compensation field ---
+			const compensationField = {
+				name: 'Defender\'s Compensation',
+				value: [
+					`Attacker's War Declaration Cost: **${raidCost.toLocaleString()}**`,
+					`Compensation Awarded (50%): **${defenderGain.toLocaleString()}**`,
+					'---',
+					'**Distribution Details:**',
+					...distributionLog,
+				].join('\n'),
+				inline: false,
+			};
 
 			resultEmbed = new EmbedBuilder()
 				.setTitle('🛡️ VICTORY FOR THE DEFENDERS! 🛡️')
