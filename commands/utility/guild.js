@@ -3076,10 +3076,18 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 	console.log(`[Raid Resolution] Collector ended for raid ID ${raidId}. Starting battle resolution.`);
 
 	try {
-		console.log(`[Raid Resolution] Starting battle resolution for raid ${raidId}`);
+		console.log(`[Raid Resolution LOG] [${raidId}] Starting battle resolution function.`);
 		// --- DATA FETCHING ---
 		const finalAttackerData = db.prepare('SELECT gl.guild_name, gl.role_id, COALESCE(gt.tier, 1) as tier, ge.balance FROM guild_list gl LEFT JOIN guild_tiers gt ON gl.guild_tag = gt.guild_tag LEFT JOIN guild_economy ge ON gl.guild_tag = ge.guild_tag WHERE gl.guild_tag = ?').get(attackerTag);
 		const finalDefenderData = db.prepare('SELECT gl.guild_name, gl.public_channel_id, gl.role_id, COALESCE(gt.tier, 1) as tier, ge.balance FROM guild_list gl LEFT JOIN guild_tiers gt ON gl.guild_tag = gt.guild_tag LEFT JOIN guild_economy ge ON gl.guild_tag = ge.guild_tag WHERE gl.guild_tag = ?').get(defenderTag);
+
+		if (!finalAttackerData || !finalDefenderData) {
+			console.error(`[Raid Resolution FATAL] [${raidId}] Could not fetch data for one of the primary guilds. Attacker: ${!!finalAttackerData}, Defender: ${!!finalDefenderData}`);
+			// Consider adding a graceful exit here if this is a possibility
+			return;
+		}
+		console.log(`[Raid Resolution LOG] [${raidId}] Fetched primary guild data. Attacker: ${finalAttackerData.guild_name}, Defender: ${finalDefenderData.guild_name}.`);
+
 
 		const allParticipants = db.prepare(`
             SELECT ara.side, gl.guild_name, gt.tier, ara.allied_guild_tag
@@ -3088,14 +3096,20 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
             LEFT JOIN guild_tiers gt ON ara.allied_guild_tag = gt.guild_tag
             WHERE ara.raid_id = ?
         `).all(raidId);
+		console.log(`[Raid Resolution LOG] [${raidId}] Fetched all participants. Total found: ${allParticipants.length}.`);
+		console.log(`[Raid Resolution LOG] [${raidId}] Participants Details:`, JSON.stringify(allParticipants, null, 2));
+
 
 		const attackingParticipants = allParticipants.filter(a => a.side === 'attacker');
 		const defendingParticipants = allParticipants.filter(a => a.side === 'defender');
+		console.log(`[Raid Resolution LOG] [${raidId}] Sorted participants. Attackers: ${attackingParticipants.length}, Defenders: ${defendingParticipants.length}.`);
+
 		const now = new Date();
 		const raidCost = finalAttackerData.tier * 200;
 
 		// --- FORFEIT SCENARIOS (Handled Instantly) ---
 		if (attackingParticipants.length === 0 || defendingParticipants.length === 0) {
+			console.log(`[Raid Resolution LOG] [${raidId}] Forfeit condition met. Processing forfeit.`);
 			let resultEmbed, announceEmbed;
 			if (attackingParticipants.length === 0) {
 				const defenderGain = Math.floor(raidCost * 0.5);
@@ -3133,13 +3147,18 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 			return;
 		}
 
+		console.log(`[Raid Resolution LOG] [${raidId}] Forfeit condition NOT met. Proceeding to full battle.`);
+
 		// --- BATTLE NARRATION & RESOLUTION ---
 
 		// 1. Fetch all necessary data for narration and calculation
+		console.log(`[Raid Resolution LOG] [${raidId}] Fetching custom raid messages and guildmaster info.`);
 		const attackerMsgs = db.prepare('SELECT * FROM guild_raid_messages WHERE guild_tag = ?').get(attackerTag) || {};
 		const defenderMsgs = db.prepare('SELECT * FROM guild_raid_messages WHERE guild_tag = ?').get(defenderTag) || {};
 		const attackerGM = db.prepare('SELECT u.user_id FROM guildmember_tracking gmt JOIN user_economy u ON gmt.user_id = u.user_id WHERE gmt.guild_tag = ? AND gmt.owner = 1').get(attackerTag);
 		const defenderGM = db.prepare('SELECT u.user_id FROM guildmember_tracking gmt JOIN user_economy u ON gmt.user_id = u.user_id WHERE gmt.guild_tag = ? AND gmt.owner = 1').get(defenderTag);
+		console.log(`[Raid Resolution LOG] [${raidId}] Attacker GM: ${attackerGM ? attackerGM.user_id : 'Not Found'}. Defender GM: ${defenderGM ? defenderGM.user_id : 'Not Found'}.`);
+
 
 		const placeholders = {
 			raidingGuild: `**${finalAttackerData.guild_name}**`,
@@ -3159,49 +3178,65 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 		};
 
 		// 2. Battle Calculation
+		console.log(`[Raid Resolution LOG] [${raidId}] Beginning battle calculations.`);
 		const attackerBasePower = attackingParticipants.reduce((sum, a) => sum + a.tier, 0);
 		const defenderBasePower = TIER_DATA[finalDefenderData.tier - 1].ac + defendingParticipants.reduce((sum, a) => sum + a.tier, 0);
+		console.log(`[Raid Resolution LOG] [${raidId}] Base Power -> Attacker: ${attackerBasePower}, Defender: ${defenderBasePower} (includes base AC).`);
+
 		let modifier = 0;
 		let modifierText = '';
 		if (finalAttackerData.tier < finalDefenderData.tier) {
 			modifier = 3;
 			modifierText = ' (Kingslayer Bonus: +3)';
+			console.log(`[Raid Resolution LOG] [${raidId}] Applied Kingslayer Bonus.`);
 		}
 		else if (finalAttackerData.tier > finalDefenderData.tier) {
 			modifier = -4;
 			modifierText = ' (Bully Penalty: -4)';
+			console.log(`[Raid Resolution LOG] [${raidId}] Applied Bully Penalty.`);
 		}
 		const attackerRoll = Math.floor(Math.random() * 20) + 1;
 		const finalAttackPower = attackerRoll + attackerBasePower + modifier;
 		const success = finalAttackPower >= defenderBasePower;
+		console.log(`[Raid Resolution LOG] [${raidId}] Final Calculation: (Roll ${attackerRoll} + Power ${attackerBasePower} + Mod ${modifier}) = ${finalAttackPower} vs Defender AC ${defenderBasePower}. Success: ${success}.`);
+
 
 		// 3. Narrative Sequence
-		const narrativeEmbed = new EmbedBuilder().setTitle('⚔️ The Battle Begins! ⚔️');
+		console.log(`[Raid Resolution LOG] [${raidId}] Beginning narrative sequence.`);
+		const narrativeEmbed = new EmbedBuilder().setTitle('⚔️ The Battle Begins! ⚔️').setColor(0xE67E22);
 		await warMessage.edit({ embeds: [narrativeEmbed], components: [] });
+		console.log(`[Raid Resolution LOG] [${raidId}] Narrative step 1: Displayed 'Battle Begins'. Waiting 3s.`);
 		await wait(3000);
 
 		narrativeEmbed.setDescription(replacePlaceholders(attackerMsgs.raiding_description || DEFAULT_RAID_MESSAGES.raiding_description));
 		await warMessage.edit({ embeds: [narrativeEmbed] });
+		console.log(`[Raid Resolution LOG] [${raidId}] Narrative step 2: Displayed raiding description. Waiting 4s.`);
 		await wait(4000);
 
 		narrativeEmbed.setDescription(narrativeEmbed.data.description + '\n\n' + replacePlaceholders(defenderMsgs.defending_description || DEFAULT_RAID_MESSAGES.defending_description));
 		await warMessage.edit({ embeds: [narrativeEmbed] });
+		console.log(`[Raid Resolution LOG] [${raidId}] Narrative step 3: Displayed defending description. Waiting 4s.`);
 		await wait(4000);
 
 		narrativeEmbed.setDescription(replacePlaceholders(attackerMsgs.raiding_attack || DEFAULT_RAID_MESSAGES.raiding_attack));
 		await warMessage.edit({ embeds: [narrativeEmbed] });
+		console.log(`[Raid Resolution LOG] [${raidId}] Narrative step 4: Displayed raiding attack. Waiting 5s.`);
 		await wait(5000);
 
 		// 4. Reveal Outcome and Finalize
+		console.log(`[Raid Resolution LOG] [${raidId}] Revealing final outcome.`);
 		let finalDescription, resultEmbed, announceEmbed, netLoot = 0, defenderGain = 0;
 
 		if (success) {
+			console.log(`[Raid Resolution LOG] [${raidId}] Outcome: SUCCESS. Processing attacker victory.`);
 			finalDescription = replacePlaceholders(defenderMsgs.defending_failure || DEFAULT_RAID_MESSAGES.defending_failure) + '\n\n' + replacePlaceholders(attackerMsgs.raiding_victory || DEFAULT_RAID_MESSAGES.raiding_victory);
 			narrativeEmbed.setColor(0x2ECC71).setDescription(finalDescription);
 			await warMessage.edit({ embeds: [narrativeEmbed] });
+			console.log(`[Raid Resolution LOG] [${raidId}] Displayed victory narrative. Waiting 4s.`);
 			await wait(4000);
 
 			// --- Perform Success Logic ---
+			console.log(`[Raid Resolution LOG] [${raidId}] Calculating loot...`);
 			const isVulnerable = finalDefenderData.balance < 200;
 			const defenderTierInfo = TIER_DATA[finalDefenderData.tier - 1];
 			const maxStolenPercent = isVulnerable ? 25 : defenderTierInfo.stolen;
@@ -3221,8 +3256,11 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 			const totalLoot = stolenFromGuild + stolenFromMembers;
 			const lostDuringEscape = Math.floor(totalLoot * (escapeLossPercent / 100));
 			netLoot = totalLoot - lostDuringEscape;
+			console.log(`[Raid Resolution LOG] [${raidId}] Loot calculated. Vault: ${stolenFromGuild}, Members: ${stolenFromMembers}, Total: ${totalLoot}, Net: ${netLoot}.`);
+
 
 			// --- Loot Distribution Logic ---
+			console.log(`[Raid Resolution LOG] [${raidId}] Starting loot distribution transaction.`);
 			const spoilsTransaction = db.transaction(() => {
 				if (stolenFromGuild > 0) db.prepare('UPDATE guild_economy SET balance = balance - ? WHERE guild_tag = ?').run(stolenFromGuild, defenderTag);
 
@@ -3232,6 +3270,7 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 					for (const winner of attackingParticipants) {
 						const shareOfLoot = Math.floor((winner.tier / totalAttackerPower) * netLoot);
 						if (shareOfLoot > 0) {
+							console.log(`[Raid Resolution LOG] [${raidId}] Distributing ${shareOfLoot} to ${winner.allied_guild_tag}.`);
 							db.prepare('UPDATE guild_economy SET balance = balance + ? WHERE guild_tag = ?').run(shareOfLoot, winner.allied_guild_tag);
 							// Also update their raid leaderboard stats
 							db.prepare('INSERT INTO raid_leaderboard (guild_tag, successful_raids, crowns_stolen) VALUES (?, 1, ?) ON CONFLICT(guild_tag) DO UPDATE SET successful_raids = successful_raids + 1, crowns_stolen = crowns_stolen + ?').run(winner.allied_guild_tag, shareOfLoot, shareOfLoot);
@@ -3240,6 +3279,7 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 				}
 			});
 			spoilsTransaction();
+			console.log(`[Raid Resolution LOG] [${raidId}] Loot distribution complete.`);
 
 			await checkAndDestroyGuildOnRaid(defenderTag, attackerTag, interaction);
 			const isDestroyed = !db.prepare('SELECT 1 FROM guild_list WHERE guild_tag = ?').get(defenderTag);
@@ -3255,12 +3295,14 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 			announceEmbed = new EmbedBuilder().setTitle('⚔️ War Report: Attackers Win! ⚔️').setColor(0x2ECC71).setDescription(description).setTimestamp();
 		}
 		else {
+			console.log(`[Raid Resolution LOG] [${raidId}] Outcome: FAILURE. Processing defender victory.`);
 			finalDescription = replacePlaceholders(defenderMsgs.defending_success || DEFAULT_RAID_MESSAGES.defending_success) + '\n\n' + replacePlaceholders(attackerMsgs.raiding_retreat || DEFAULT_RAID_MESSAGES.raiding_retreat);
 			narrativeEmbed.setColor(0x3498DB).setDescription(finalDescription);
 			await warMessage.edit({ embeds: [narrativeEmbed] });
 			await wait(4000);
 
 			// --- Defender Compensation Distribution ---
+			console.log(`[Raid Resolution LOG] [${raidId}] Starting defender compensation transaction.`);
 			defenderGain = Math.floor(raidCost * 0.5);
 			const compensationTransaction = db.transaction(() => {
 				const totalDefenderPower = defendingParticipants.reduce((sum, p) => sum + p.tier, 0);
@@ -3269,12 +3311,14 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 					for (const winner of defendingParticipants) {
 						const shareOfCompensation = Math.floor((winner.tier / totalDefenderPower) * defenderGain);
 						if (shareOfCompensation > 0) {
+							console.log(`[Raid Resolution LOG] [${raidId}] Distributing ${shareOfCompensation} compensation to ${winner.allied_guild_tag}.`);
 							db.prepare('UPDATE guild_economy SET balance = balance + ? WHERE guild_tag = ?').run(shareOfCompensation, winner.allied_guild_tag);
 						}
 					}
 				}
 			});
 			compensationTransaction();
+			console.log(`[Raid Resolution LOG] [${raidId}] Defender compensation complete.`);
 
 			const description = `The defending coalition has repelled the invaders led by **${finalAttackerData.guild_name}**!`;
 			const compensationField = { name: 'Defender\'s Compensation', value: `A total of **${defenderGain.toLocaleString()}** Crowns was distributed among the defending guilds.`, inline: false };
@@ -3288,19 +3332,23 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 		}
 
 		// Shared DB updates
+		console.log(`[Raid Resolution LOG] [${raidId}] Updating raid history and cooldowns.`);
 		db.prepare('UPDATE raid_history SET success = ?, stolen_amount = ?, attacker_roll = ?, defender_ac = ?, attacker_allies = ?, defender_allies = ? WHERE id = ?')
 			.run(success ? 1 : 0, success ? netLoot : defenderGain, finalAttackPower, defenderBasePower, attackingParticipants.map(a => a.allied_guild_tag).join(','), defendingParticipants.map(a => a.allied_guild_tag).join(','), raidId);
 		const shieldExpiry = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
 		db.prepare('INSERT INTO raid_cooldowns (guild_tag, shield_expiry) VALUES (?, ?) ON CONFLICT(guild_tag) DO UPDATE SET shield_expiry = ?').run(defenderTag, shieldExpiry, shieldExpiry);
 		const attackerLastRaid = now.toISOString();
 		db.prepare('INSERT INTO raid_cooldowns (guild_tag, last_raid_time) VALUES (?, ?) ON CONFLICT(guild_tag) DO UPDATE SET last_raid_time = ?').run(attackerTag, attackerLastRaid, attackerLastRaid);
+		console.log(`[Raid Resolution LOG] [${raidId}] Database updates complete.`);
 
 		await sendGuildAnnouncement(interaction.client, announceEmbed);
 		await warMessage.edit({ embeds: [resultEmbed], components: [] });
+		console.log(`[Raid Resolution LOG] [${raidId}] Final messages sent. Resolution finished.`);
+
 
 	}
 	catch (error) {
-		console.error(`[FATAL] Error during raid resolution for raid ID ${raidId}:`, error);
+		console.error(`[FATAL] Error during raid resolution for raid ID ${raidId}:`, error.stack);
 		const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('⚔️ War Report: Indeterminate Outcome ⚔️').setDescription('A critical error occurred while resolving the battle. The raid has been cancelled, and the Innkeepers have been notified. No costs were consumed and no cooldowns were applied.');
 		db.prepare('UPDATE raid_history SET success = 0 WHERE id = ?').run(raidId);
 		db.prepare('UPDATE raid_cooldowns SET is_under_raid = 0 WHERE guild_tag = ?').run(defenderTag);
@@ -3313,6 +3361,7 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 		console.log(`[Raid Resolution] Cleaning up state for raid ID ${raidId}.`);
 		db.prepare('UPDATE raid_cooldowns SET is_under_raid = 0 WHERE guild_tag = ?').run(defenderTag);
 		db.prepare('DELETE FROM active_raid_allies WHERE raid_id = ?').run(raidId);
+		console.log(`[Raid Resolution] Cleanup for raid ID ${raidId} complete.`);
 	}
 }
 
