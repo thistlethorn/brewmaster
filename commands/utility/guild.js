@@ -31,7 +31,9 @@ const GUILD_CREATION_WITHDRAWAL_LIMIT = 5000;
 const RAID_DEFENDER_ROLE_ID = '1387473320093548724';
 const DEFENDER_ROLE_DURATION_MS = 24 * 60 * 60 * 1000;
 const GUILD_VULNERABILITY_THRESHOLD = 200;
-
+const GUILD_RAID_MAX_STOLEN_PERCENT = 25;
+const GUILD_RAID_MIN_PER_MEMBER_PERCENT = 5;
+const GUILD_RAID_MAX_PER_MEMBER_CAP = 100;
 // Alliance Raid constants (10 minutes)
 const ALLIANCE_RAID_DURATION_MS = 600000;
 // const ALLIANCE_RAID_DURATION_MS = 30000;
@@ -1506,11 +1508,11 @@ async function handleFullInfo(interaction) {
 
 
 		// Check if guild is in vulnerable state
-		const isVulnerable = guildInfo.balance < 200;
+		const isVulnerable = guildInfo.balance < GUILD_VULNERABILITY_THRESHOLD;
 		const vulnerableStatus = isVulnerable
 			? `🚨 **VULNERABLE STATE** 🚨\n__Your guild treasury has less than **${GUILD_VULNERABILITY_THRESHOLD} Crowns**!__\n` +
-              '• Raiders will steal **25% from each member** (uncapped) instead of the usual capped 5% (100 per member MAX)\n' +
-              '• Your vault will be targeted for a flat **25%** of its balance, ignoring your tier\'s normal damage reduction.\n' +
+              `• Raiders will steal **${GUILD_RAID_MAX_STOLEN_PERCENT}% from each member** (uncapped) instead of the usual capped ${GUILD_RAID_MIN_PER_MEMBER_PERCENT}% (${GUILD_RAID_MAX_PER_MEMBER_CAP} per member MAX)\n` +
+              `• Your vault will be targeted for a flat **${GUILD_RAID_MAX_STOLEN_PERCENT}%** of its balance, ignoring your tier's normal damage reduction.\n` +
 			  '• If your treasury is successfully raided and drops to __0 or less__ crowns, it will be **PERMANENTLY DESTROYED**.\n' +
 			  '• __**Consider funding your guild**__ with `/guild fund`, `/guild fundraise`, or `/guild dues` to exit this vulnerable state!'
 			: '✅ **Safe Treasury**\nYour guild has sufficient funds to withstand a raid without being destroyed.';

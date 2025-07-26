@@ -464,7 +464,7 @@ catch (error) {
 const raidNum = 18;
 const defendingGuildTag = 'FUN';
 const attackingGuildTag = 'RIP';
-const overrideCheck = true;
+const overrideCheck = false;
 try {
 	console.log(`[Database Migration] Checking for and attempting to fix bugged raid ID ${raidNum}...`);
 	const buggedRaid = db
