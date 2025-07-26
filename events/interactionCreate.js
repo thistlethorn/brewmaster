@@ -105,6 +105,11 @@ module.exports = {
 			// Handle button interactions first
 			if (interaction.isButton()) {
 				// --- DAILY NOTIFICATION BUTTON HANDLER ---
+				if (interaction.customId.startsWith('guild_info_')) {
+					if (guildCommand && typeof guildCommand.buttons?.handleGuildInfoButton === 'function') {
+						return guildCommand.buttons.handleGuildInfoButton(interaction);
+					}
+				}
 				if (interaction.customId.startsWith('daily_notify_')) {
 
 					const parts = interaction.customId.split('_');

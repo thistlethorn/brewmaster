@@ -57,6 +57,8 @@ const setupTables = db.transaction(() => {
             is_open INTEGER DEFAULT 0,
             about_text TEXT DEFAULT '',
             motto TEXT DEFAULT '',
+            hook TEXT DEFAULT '',
+            lore TEXT DEFAULT '',
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             guildmember_title TEXT DEFAULT 'Member',
             UNIQUE(guild_name)
@@ -440,6 +442,25 @@ try {
 catch (error) {
 	console.error('[Database Migration/Backfill] An error occurred:', error);
 }
+
+try {
+	console.log('[Database Migration] Checking for guild_list schema updates for lore/hook...');
+	const columns = db.prepare('PRAGMA table_info(guild_list)').all();
+
+	if (!columns.some(col => col.name === 'lore')) {
+		db.prepare('ALTER TABLE guild_list ADD COLUMN lore TEXT DEFAULT \'\'').run();
+		console.log('[Database Migration] Added "lore" column to guild_list.');
+	}
+
+	if (!columns.some(col => col.name === 'hook')) {
+		db.prepare('ALTER TABLE guild_list ADD COLUMN hook TEXT DEFAULT \'\'').run();
+		console.log('[Database Migration] Added "hook" column to guild_list.');
+	}
+}
+catch (error) {
+	console.error('[Database Migration] Error altering guild_list for lore/hook:', error);
+}
+
 const raidNum = 16;
 const defendingGuildTag = 'FUN';
 const attackingGuildTag = 'RIP';
