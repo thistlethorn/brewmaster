@@ -20,22 +20,42 @@ async function setupDailyReset(client) {
 
 			// Process guilds one at a time
 			for (const guild of client.guilds.cache.values()) {
-				const role = guild.roles.cache.get(ACTIVE_CHATTER_ROLE);
-				if (!role) continue;
-
-				// Process members one at a time with a small delay
-				for (const member of role.members.values()) {
-					try {
-						await member.roles.remove(role);
-						console.log(`[dailyReset] Removed Active Chatter role from ${member.user.tag}`);
-						await updateMultiplier(member.id, guild);
-
-						// Small delay to avoid rate limits
-						await new Promise(resolve => setTimeout(resolve, 500));
+				try {
+					// Added a try-catch for each guild to prevent one guild from stopping the whole process
+					const role = guild.roles.cache.get(ACTIVE_CHATTER_ROLE);
+					if (!role) {
+						console.log(`[dailyReset] Active Chatter role not found in guild: ${guild.name}`);
+						continue;
 					}
-					catch (error) {
-						console.error(`[dailyReset] [Error] Couldn't process ${member.user.tag}`, error);
+
+					// Fetch all members to ensure the cache is populated
+					await guild.members.fetch();
+					const membersWithRole = role.members;
+
+					if (membersWithRole.size === 0) {
+						console.log(`[dailyReset] No members with Active Chatter role in guild: ${guild.name}`);
+						continue;
 					}
+
+					console.log(`[dailyReset] Found ${membersWithRole.size} members with the Active Chatter role in ${guild.name}. Starting removal.`);
+
+					// Process members one at a time with a small delay
+					for (const member of membersWithRole.values()) {
+						try {
+							await member.roles.remove(role);
+							console.log(`[dailyReset] Removed Active Chatter role from ${member.user.tag}`);
+							await updateMultiplier(member.id, guild);
+
+							// Small delay to avoid rate limits
+							await new Promise(resolve => setTimeout(resolve, 500));
+						}
+						catch (error) {
+							console.error(`[dailyReset] [Error] Couldn't process ${member.user.tag}`, error);
+						}
+					}
+				}
+				catch (guildError) {
+					console.error(`[dailyReset] [Error] An error occurred while processing guild ${guild.name}`, guildError);
 				}
 			}
 

@@ -143,13 +143,21 @@ async function endMotwGiveaway(client, messageId) {
 			return;
 		}
 
-		// **FIXED LOGIC**: Remove previous winner's role now, not at the start
+		await channel.guild.members.fetch();
+
 		const previousMotwRole = await channel.guild.roles.fetch(MOTW_ROLE);
 		if (previousMotwRole) {
-			for (const member of previousMotwRole.members.values()) {
-				await member.roles.remove(previousMotwRole);
-				await updateMultiplier(member.id, channel.guild);
-				console.log(`[MotW] Removed MOTW role from previous winner ${member.user.tag}`);
+			const membersWithRole = previousMotwRole.members;
+			console.log(`[MotW] Found ${membersWithRole.size} member(s) with the previous MOTW role. Starting removal.`);
+			for (const member of membersWithRole.values()) {
+				try {
+					await member.roles.remove(previousMotwRole);
+					await updateMultiplier(member.id, channel.guild);
+					console.log(`[MotW] Removed MOTW role from previous winner ${member.user.tag}`);
+				}
+				catch (error) {
+					console.error(`[MotW] Failed to remove role from ${member.user.tag}`, error);
+				}
 			}
 		}
 
