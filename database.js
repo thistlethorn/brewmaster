@@ -461,10 +461,10 @@ catch (error) {
 	console.error('[Database Migration] Error altering guild_list for lore/hook:', error);
 }
 
-const raidNum = 16;
+const raidNum = 18;
 const defendingGuildTag = 'FUN';
 const attackingGuildTag = 'RIP';
-const overrideCheck = false;
+const overrideCheck = true;
 try {
 	console.log(`[Database Migration] Checking for and attempting to fix bugged raid ID ${raidNum}...`);
 	const buggedRaid = db

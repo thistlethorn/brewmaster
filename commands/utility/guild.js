@@ -30,6 +30,7 @@ const GUILD_CREATION_WITHDRAWAL_LIMIT = 5000;
 
 const RAID_DEFENDER_ROLE_ID = '1387473320093548724';
 const DEFENDER_ROLE_DURATION_MS = 24 * 60 * 60 * 1000;
+const GUILD_VULNERABILITY_THRESHOLD = 200;
 
 // Alliance Raid constants (10 minutes)
 const ALLIANCE_RAID_DURATION_MS = 600000;
@@ -1465,6 +1466,219 @@ async function handleInfo(interaction) {
 
 	await interaction.reply({ embeds: [hookEmbed], components: [row] });
 }
+async function handleFullInfo(interaction) {
+	try {
+		const guildTag = interaction.options.getString('guild_tag').toUpperCase();
+
+		// Get comprehensive guild info
+		const guildInfo = db.prepare(`
+            SELECT 
+                gl.*,
+                COALESCE(ge.balance, 0) AS balance,
+                COALESCE(gt.tier, 1) AS tier,
+                rc.shield_expiry,
+                rc.last_raid_time,
+                rl.successful_raids,
+				rl.guilds_destroyed,
+                rl.crowns_stolen
+            FROM guild_list gl
+            LEFT JOIN guild_economy ge ON ge.guild_tag = gl.guild_tag
+            LEFT JOIN guild_tiers gt ON gt.guild_tag = gl.guild_tag
+			LEFT JOIN raid_cooldowns rc ON rc.guild_tag = gl.guild_tag
+            LEFT JOIN raid_leaderboard rl ON rl.guild_tag = gl.guild_tag
+            WHERE gl.guild_tag = ?
+        `).get(guildTag);
+
+		if (!guildInfo) {
+			const errorEmbed = new EmbedBuilder()
+				.setColor(0xE74C3C)
+				.setTitle('❌ Not Found')
+				.setDescription('No guild found with that tag!');
+			return interaction.reply({
+				embeds: [errorEmbed],
+				flags: [MessageFlags.Ephemeral],
+			});
+		}
+		// Check if the user is a member of the guild
+		const memberData = db.prepare('SELECT owner, vice_gm FROM guildmember_tracking WHERE user_id = ? AND guild_tag = ?').get(interaction.user.id, guildTag);
+		const isMember = !!memberData;
+		const isOwner = memberData?.owner === 1;
+
+
+		// Check if guild is in vulnerable state
+		const isVulnerable = guildInfo.balance < 200;
+		const vulnerableStatus = isVulnerable
+			? `🚨 **VULNERABLE STATE** 🚨\n__Your guild treasury has less than **${GUILD_VULNERABILITY_THRESHOLD} Crowns**!__\n` +
+              '• Raiders will steal **25% from each member** (uncapped) instead of the usual capped 5% (100 per member MAX)\n' +
+              '• Your vault will be targeted for a flat **25%** of its balance, ignoring your tier\'s normal damage reduction.\n' +
+			  '• If your treasury is successfully raided and drops to __0 or less__ crowns, it will be **PERMANENTLY DESTROYED**.\n' +
+			  '• __**Consider funding your guild**__ with `/guild fund`, `/guild fundraise`, or `/guild dues` to exit this vulnerable state!'
+			: '✅ **Safe Treasury**\nYour guild has sufficient funds to withstand a raid without being destroyed.';
+
+		// Get all members with their balances
+		const members = db.prepare(`
+            SELECT 
+                gmt.user_id, 
+                gmt.owner,
+                gmt.vice_gm,
+                COALESCE(ue.crowns, 0) AS crowns
+            FROM guildmember_tracking gmt
+            LEFT JOIN user_economy ue ON gmt.user_id = ue.user_id
+            WHERE gmt.guild_tag = ?
+            ORDER BY gmt.owner DESC, gmt.vice_gm DESC, ue.crowns DESC
+        `).all(guildInfo.guild_tag);
+
+		// Calculate total guild wealth (vault + member balances)
+		const totalWealth = members.reduce((sum, member) => sum + member.crowns, guildInfo.balance);
+
+		const now = new Date();
+		const creationDate = new Date(guildInfo.created_at);
+		const daysSinceCreation = (now - creationDate) / (1000 * 60 * 60 * 24);
+
+		const shieldExpiry = guildInfo.shield_expiry ? new Date(guildInfo.shield_expiry) : null;
+		const rawShieldStatus = shieldExpiry && shieldExpiry > now
+			? `🛡️ Active (expires <t:${Math.floor(shieldExpiry.getTime() / 1000)}:R>)`
+			: (daysSinceCreation < 7 ? `🆕 New Guild Protection (expires <t:${Math.floor((creationDate.getTime() + (7 * 24 * 60 * 60 * 1000)) / 1000)}:R>)` : '❌ No active shield');
+		const shieldStatus = (isMember || isOwner) ? rawShieldStatus : '🛡️ ❓ (Hidden)';
+
+		const defaultEmojiRecord = db.prepare(`
+            SELECT emoji_name, emoji_id FROM guild_emojis 
+            WHERE guild_tag = ? AND is_default = 1
+        `).get(guildTag);
+
+		const guildEmoji = defaultEmojiRecord
+			? `<:${defaultEmojiRecord.emoji_name}:${defaultEmojiRecord.emoji_id}>`
+			: '•';
+
+		// Fetch member details and format member list
+		const memberList = [];
+		let titleNameTicker = 0;
+		let leader = 'the Guildmaster';
+
+		let raidCooldownStatus = '❓ (Hidden)';
+		if (isMember) {
+			if (guildInfo.last_raid_time) {
+				const lastRaid = new Date(guildInfo.last_raid_time);
+				const nextRaidTime = new Date(lastRaid.getTime() + 24 * 60 * 60 * 1000);
+				if (now < nextRaidTime) {
+					raidCooldownStatus = `🕰️ Can raid <t:${Math.floor(nextRaidTime.getTime() / 1000)}:R>`;
+				}
+				else {
+					raidCooldownStatus = '✅ Ready to raid';
+				}
+			}
+			else {
+				raidCooldownStatus = '✅ Ready to raid';
+			}
+		}
+
+		for (const member of members) {
+			try {
+				const discordUser = await interaction.client.users.fetch(member.user_id).catch(() => null);
+				if (!discordUser) continue;
+
+				const memberText = member.owner === 1
+					? `👑 __**GUILDMASTER**__\n${guildEmoji} ${discordUser.toString()}`
+					: member.vice_gm === 1
+						? `🛡️ __**VICE GUILDMASTER**__\n${guildEmoji} ${discordUser.toString()}`
+						: `${titleNameTicker === 0 ? `\n**__${guildInfo.guildmember_title || 'Member'}s__**\n` : ''}${guildEmoji} ${discordUser.toString()}`;
+
+				if (member.owner === 1) leader = discordUser.username;
+				if (member.vice_gm !== 1 && member.owner !== 1) titleNameTicker++;
+
+				memberList.push(`${memberText} \`[🪙 ${member.crowns.toLocaleString()}]\``);
+			}
+			catch (error) {
+				console.error('Error fetching/processing a member:', error);
+				if (error.code === 10007) {
+					db.prepare('DELETE FROM guildmember_tracking WHERE user_id = ?').run(member.user_id);
+				}
+				else {
+					memberList.push(`${guildEmoji} <@${member.user_id}> (Error)`);
+				}
+			}
+		}
+
+
+		// Build embed
+		const embed = new EmbedBuilder()
+			.setTitle(`${guildInfo.guild_name} [${guildInfo.guild_tag}]`)
+			.setDescription(guildInfo.about_text || 'No description set. Use `/guild settings about` to add one.')
+			.setColor(0x3498db)
+			.addFields(
+				{
+					name: ((guildInfo.is_open || 0) === 1) ? `🔓 Open to join, use command \`/guild join ${guildInfo.guild_tag}\`` : `🔒 Invite only, inquire with ${leader ? '__' + leader + '__, ' : ''}the Guildmaster`,
+					value: '\u200B',
+					inline: false,
+				},
+				{
+					name: 'Motto',
+					value: guildInfo.motto ? '*' + guildInfo.motto + '*' : 'Use `/guild settings motto` to add one.',
+					inline: true,
+				},
+				{
+					name: 'Shield Status',
+					value: shieldStatus,
+					inline: true,
+				},
+				{
+					name: 'Raid Stats',
+					value: [
+						`⚔️ Successful Raids: ${guildInfo.successful_raids || 0}`,
+						`☠️ Guilds Destroyed: ${guildInfo.guilds_destroyed || 0}`,
+						`👑 Crowns Stolen: ${guildInfo.crowns_stolen?.toLocaleString() || '0'}`,
+						`⌛ **Raid Cooldown:** ${raidCooldownStatus}`,
+					].join('\n'),
+					inline: true,
+				},
+				{
+					name: `Members (${members.length})`,
+					value: memberList.length > 0 ? memberList.slice(0, 15).join('\n') : 'No members found',
+					inline: false,
+				},
+				{
+					name: 'Stats & Defences',
+					value: [
+						`• Tier: ${tierEmojis[guildInfo.tier - 1]}`,
+						getTierBenefits(guildInfo.tier),
+					].join('\n'),
+					inline: true,
+				},
+				{
+					name: 'Wealth',
+					value: [
+						`🏦 Guild Vault: ${(isMember || isOwner) ? (guildInfo.balance.toLocaleString() + ' Crowns') : '❓ (Hidden)'}`,
+						`👥 Member Total: ${(totalWealth - guildInfo.balance).toLocaleString() || 0} Crowns`,
+						`💰 Combined Wealth: ${(isMember || isOwner) ? totalWealth.toLocaleString() + ' Crowns' : '❓ (Hidden)'}`,
+					].join('\n'),
+					inline: true,
+				},
+			);
+		if (isMember || isOwner) {
+			embed.addFields({
+				name: '⚠️ Treasury Status and Raid Vulnerability',
+				value: vulnerableStatus,
+				inline: false,
+			});
+		}
+
+		embed.setFooter({ text: `Guild Tag: ${guildInfo.guild_tag} • Created on ${new Date(guildInfo.created_at).toLocaleDateString()}` })
+			.setTimestamp();
+
+		await interaction.reply({ embeds: [embed] });
+	}
+	catch (error) {
+		console.error('Error in handleFullInfo:', error);
+		const errorEmbed = new EmbedBuilder()
+			.setColor(0xE74C3C)
+			.setTitle('❌ Error')
+			.setDescription('An error occurred while fetching guild info.');
+		await interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+}
 
 
 async function buildMainMenuEmbed(guildTag) {
@@ -1529,7 +1743,7 @@ async function buildMainMenuEmbed(guildTag) {
 	return { embeds: [embed], components: [primaryButtons, secondaryButtons] };
 }
 
-async function buildDetailEmbed(guildTag, view, interaction) {
+async function buildDetailEmbed(guildTag, view, interaction, parts) {
 	const guild = db.prepare('SELECT * FROM guild_list WHERE guild_tag = ?').get(guildTag);
 	if (!guild) return null;
 
@@ -1578,50 +1792,127 @@ async function buildDetailEmbed(guildTag, view, interaction) {
 		break;
 	}
 	case 'warfare': {
-		const tier = db.prepare('SELECT tier FROM guild_tiers WHERE guild_tag = ?').get(guildTag)?.tier || 1;
-		const raidStats = db.prepare('SELECT * FROM raid_leaderboard WHERE guild_tag = ?').get(guildTag) || {};
-		const cooldowns = db.prepare('SELECT shield_expiry FROM raid_cooldowns WHERE guild_tag = ?').get(guildTag);
+		const warfareInfo = db.prepare(`
+            SELECT
+                COALESCE(gt.tier, 1) as tier,
+                rl.successful_raids,
+				rl.guilds_destroyed,
+                rl.crowns_stolen,
+                rc.shield_expiry,
+                rc.last_raid_time
+            FROM guild_list gl
+            LEFT JOIN guild_tiers gt ON gt.guild_tag = gl.guild_tag
+			LEFT JOIN raid_leaderboard rl ON rl.guild_tag = gl.guild_tag
+            LEFT JOIN raid_cooldowns rc ON rc.guild_tag = gl.guild_tag
+            WHERE gl.guild_tag = ?
+        `).get(guildTag);
 
 		const now = new Date();
 		const creationDate = new Date(guild.created_at);
 		const daysSinceCreation = (now - creationDate) / (1000 * 60 * 60 * 24);
-		const shieldExpiry = cooldowns?.shield_expiry ? new Date(cooldowns.shield_expiry) : null;
+		const shieldExpiry = warfareInfo.shield_expiry ? new Date(warfareInfo.shield_expiry) : null;
 
 		const rawShieldStatus = shieldExpiry && shieldExpiry > now
 			? `🛡️ Active (expires <t:${Math.floor(shieldExpiry.getTime() / 1000)}:R>)`
 			: (daysSinceCreation < 7 ? `🆕 New Guild Protection (expires <t:${Math.floor((creationDate.getTime() + (7 * 24 * 60 * 60 * 1000)) / 1000)}:R>)` : '❌ No active shield');
 		const finalShieldStatus = isMember ? rawShieldStatus : '🛡️ ❓ Hidden';
 
+		let raidCooldownStatus = '❓ (Hidden)';
+		if (isMember) {
+			if (warfareInfo.last_raid_time) {
+				const lastRaid = new Date(warfareInfo.last_raid_time);
+				const nextRaidTime = new Date(lastRaid.getTime() + 24 * 60 * 60 * 1000);
+				raidCooldownStatus = (now < nextRaidTime)
+					? `🕰️ Can raid <t:${Math.floor(nextRaidTime.getTime() / 1000)}:R>`
+					: '✅ Ready to raid';
+			}
+			else {
+				raidCooldownStatus = '✅ Ready to raid';
+			}
+		}
 
 		embed.setTitle(`⚔️ Warfare & Defense of ${guild.guild_name}`)
 			.addFields(
 				{ name: 'Shield Status', value: finalShieldStatus, inline: false },
-				{ name: `Stats & Defences (Tier ${tier})`, value: getTierBenefits(tier), inline: false },
-				{ name: 'Raid Victories', value: `${raidStats.successful_raids || 0}`, inline: true },
-				{ name: 'Crowns Stolen', value: `${(raidStats.crowns_stolen || 0).toLocaleString()}`, inline: true },
-				{ name: 'Guilds Destroyed', value: `${raidStats.guilds_destroyed || 0}`, inline: true },
+				{ name: `Stats & Defences (Tier ${warfareInfo.tier})`, value: getTierBenefits(warfareInfo.tier), inline: false },
+				{
+					name: 'Raid Performance',
+					value: [
+						`⚔️ Successful Raids: **${warfareInfo.successful_raids || 0}**`,
+						`☠️ Guilds Destroyed: **${warfareInfo.guilds_destroyed || 0}**`,
+						`👑 Crowns Stolen: **${warfareInfo.crowns_stolen?.toLocaleString() || '0'}**`,
+						`⌛ Raid Cooldown: **${raidCooldownStatus}**`,
+					].join('\n'),
+					inline: false,
+				},
 			);
 		break;
 	}
 	case 'members': {
-		const memberList = db.prepare('SELECT user_id, owner, vice_gm FROM guildmember_tracking WHERE guild_tag = ? ORDER BY owner DESC, vice_gm DESC').all(guildTag);
+		// The page number is passed in from the button's custom ID
+		const page = parseInt(parts[4]) || 1;
+
+		const memberList = db.prepare(`
+			SELECT gmt.user_id, gmt.owner, gmt.vice_gm, COALESCE(ue.crowns, 0) as crowns
+			FROM guildmember_tracking gmt
+			LEFT JOIN user_economy ue ON gmt.user_id = ue.user_id
+			WHERE gmt.guild_tag = ?
+			ORDER BY gmt.owner DESC, gmt.vice_gm DESC, ue.crowns DESC
+		`).all(guildTag);
+
 		const memberStrings = await Promise.all(memberList.map(async (m) => {
-			const user = await interaction.client.users.fetch(m.user_id).catch(() => ({ username: 'Unknown User' }));
-			if (m.owner) return `👑 **Guildmaster:** ${user.username}`;
-			if (m.vice_gm) return `🛡️ **Vice-GM:** ${user.username}`;
-			return `• ${user.username}`;
+			const user = await interaction.client.users.fetch(m.user_id).catch(() => null);
+			if (!user) return '• *Unknown User*';
+
+			let rolePrefix = '•';
+			if (m.owner) rolePrefix = '👑 **GM:**';
+			if (m.vice_gm) rolePrefix = '🛡️ **VGM:**';
+
+			return `${rolePrefix} ${user.username} \`[🪙 ${m.crowns.toLocaleString()}]\``;
 		}));
+
+		const perPage = 10;
+		const totalPages = Math.ceil(memberStrings.length / perPage);
+		const start = (page - 1) * perPage;
+		const end = start + perPage;
+		const pageContent = memberStrings.slice(start, end);
+
 		embed.setTitle(`👥 Members of ${guild.guild_name} (${memberList.length})`)
-			.setDescription(memberStrings.join('\n') || 'This guild has no members.');
+			.setDescription(pageContent.join('\n') || 'This guild has no members.');
+
+		if (totalPages > 1) {
+			embed.setFooter({ text: `Page ${page}/${totalPages} | Viewing: ${view}` });
+
+			// Create new pagination buttons and add them to the existing navigation row
+			const paginationButtons = new ActionRowBuilder().addComponents(
+				new ButtonBuilder()
+					.setCustomId(`guild_info_members_${guildTag}_${page - 1}`)
+					.setLabel('◀️ Previous')
+					.setStyle(ButtonStyle.Secondary)
+					.setDisabled(page === 1),
+				new ButtonBuilder()
+					.setCustomId(`guild_info_members_${guildTag}_${page + 1}`)
+					.setLabel('Next ▶️')
+					.setStyle(ButtonStyle.Secondary)
+					.setDisabled(page === totalPages),
+			);
+			// This returns an array of two ActionRowBuilders
+			return { embeds: [embed], components: [navigationRow, paginationButtons] };
+		}
 		break;
 	}
-	case 'customizations': {
+	case 'customs': {
 		const emoji = db.prepare('SELECT emoji_name, emoji_id FROM guild_emojis WHERE guild_tag = ? AND is_default = 1').get(guildTag);
-		const sticker = db.prepare('SELECT sticker_name FROM guild_stickers WHERE guild_tag = ?').get(guildTag);
+		const sticker = db.prepare('SELECT sticker_name, sticker_id FROM guild_stickers WHERE guild_tag = ?').get(guildTag);
+		let stickerField = 'None set.';
+		if (sticker) {
+			const discordSticker = await interaction.guild.stickers.fetch(sticker.sticker_id).catch(() => null);
+			stickerField = discordSticker ? `Name: \`${discordSticker.name}\`\n*Preview sticker to see it!*` : 'Could not fetch sticker.';
+		}
 		embed.setTitle(`✨ Customizations for ${guild.guild_name}`)
 			.addFields(
 				{ name: 'Default Emoji', value: emoji ? `<:${emoji.emoji_name}:${emoji.emoji_id}> \`:${emoji.emoji_name}:\`` : 'None set.', inline: true },
-				{ name: 'Guild Sticker', value: sticker ? `\`${sticker.sticker_name}\`` : 'None set.', inline: true },
+				{ name: 'Guild Sticker', value: stickerField, inline: true },
 			);
 		break;
 	}
@@ -1653,16 +1944,22 @@ async function handleGuildInfoButton(interaction) {
 			await interaction.editReply(payload);
 			break;
 		}
+
+		// All cases that use the detail embed are grouped here for efficiency.
 		case 'lore':
 		case 'economy':
 		case 'warfare':
 		case 'members':
 		case 'customs': {
-			const payload = await buildDetailEmbed(guildTag, action, interaction);
+			// The 'parts' variable is passed to the builder.
+			// It will only be used by the 'members' case for pagination,
+			// and safely ignored by all other cases.
+			const payload = await buildDetailEmbed(guildTag, action, interaction, parts);
 			if (!payload) return interaction.editReply({ content: 'This guild no longer exists.', embeds: [], components: [] });
 			await interaction.editReply(payload);
 			break;
 		}
+
 		case 'join': {
 			const mockInteraction = {
 				...interaction,
@@ -1672,9 +1969,9 @@ async function handleGuildInfoButton(interaction) {
 				reply: (options) => interaction.followUp({ ...options, flags: [MessageFlags.Ephemeral] }),
 			};
 			await handleJoin(mockInteraction);
-			await interaction.editReply({ content: 'Join attempt processed. You will receive a separate confirmation message.', embeds: [], components: [] });
 			break;
 		}
+
 		case 'exit':
 			await interaction.deleteReply();
 			break;
@@ -1735,7 +2032,7 @@ async function handleBequeath(interaction) {
 				UPDATE guildmember_tracking
 				SET owner = 1
 				WHERE user_id = ? AND guild_tag = ?
-			`).run(1, newOwnerUser.id, currentGuild.guild_tag);
+			`).run(newOwnerUser.id, currentGuild.guild_tag);
 		})();
 
 		const bequeathEmbed = new EmbedBuilder()
@@ -4221,7 +4518,6 @@ module.exports = {
 				console.log('[RAID CONFIRM] Collector created');
 
 				collector.on('collect', async (i) => {
-					// This is now the ONLY place these button clicks are handled.
 					const logPrefix = `[RAID COLLECTOR | Raid ID: ${raidId} | User: ${i.user.username}]`;
 					console.log(`${logPrefix} Button interaction received. Custom ID: ${i.customId}`);
 
@@ -4231,25 +4527,20 @@ module.exports = {
 						const collectedRaidId = parts[2];
 						const side = action === 'join_attack' ? 'attacker' : 'defender';
 						const buttonUser = i.user;
-						// Get the full user object for better logging
 
 						console.log(`${logPrefix} Parsed Data: action=${action}, side=${side}, collectedRaidId=${collectedRaidId}`);
 
-						// Acknowledge the interaction immediately with an ephemeral (private) message
-						console.log(`${logPrefix} Deferring ephemeral reply...`);
 						await i.deferReply({ ephemeral: true });
-						console.log(`${logPrefix} Reply deferred successfully.`);
 
-						// --- Start of logic from handleAllianceJoin ---
 						console.log(`${logPrefix} Checking authorization for user ID: ${buttonUser.id}`);
 						const joiningGuildData = db.prepare(`
-            SELECT gmt.guild_tag, gl.guild_name, COALESCE(gt.tier, 1) as tier, COALESCE(ge.balance, 0) as balance
-            FROM guildmember_tracking gmt
-            JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
-            LEFT JOIN guild_tiers gt ON gmt.guild_tag = gt.guild_tag
-            LEFT JOIN guild_economy ge ON gmt.guild_tag = ge.guild_tag
-            WHERE gmt.user_id = ? AND (gmt.owner = 1 OR gmt.vice_gm = 1)
-        `).get(buttonUser.id);
+							SELECT gmt.guild_tag, gl.guild_name, COALESCE(gt.tier, 1) as tier, COALESCE(ge.balance, 0) as balance
+							FROM guildmember_tracking gmt
+							JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
+							LEFT JOIN guild_tiers gt ON gmt.guild_tag = gt.guild_tag
+							LEFT JOIN guild_economy ge ON gmt.guild_tag = ge.guild_tag
+							WHERE gmt.user_id = ? AND (gmt.owner = 1 OR gmt.vice_gm = 1)
+						`).get(buttonUser.id);
 
 						if (!joiningGuildData) {
 							console.log(`${logPrefix} Authorization FAILED. User is not owner or vice-gm.`);
@@ -4259,6 +4550,14 @@ module.exports = {
 						console.log(`${logPrefix} Authorization SUCCEEDED. User is in guild [${joiningGuildData.guild_tag}] with tier ${joiningGuildData.tier} and balance ${joiningGuildData.balance}.`);
 
 						const joiningGuildTag = joiningGuildData.guild_tag;
+
+						// Prevent the attacking guild from joining the defending side and vice versa
+						if ((joiningGuildTag === attackerTag && side === 'defender') || (joiningGuildTag === defenderTag && side === 'attacker')) {
+							console.log(`${logPrefix} Invalid side selection for guild [${joiningGuildTag}].`);
+							const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Invalid Action').setDescription('Your guild cannot join the opposing side of the war.');
+							return i.editReply({ embeds: [errorEmbed] });
+						}
+
 						console.log(`${logPrefix} Verifying if the raid is still active in the database...`);
 						const originalRaid = db.prepare('SELECT attacker_tag, defender_tag FROM raid_history WHERE id = ? AND success = -1').get(collectedRaidId);
 
@@ -4317,9 +4616,7 @@ module.exports = {
 						console.log(`${logPrefix} Sending success reply to the user...`);
 						await i.editReply({ embeds: [successEmbed] });
 						console.log(`${logPrefix} Success reply sent.`);
-						// --- End of logic from handleAllianceJoin ---
 
-						// --- Now, update the public war message ---
 						console.log(`${logPrefix} Fetching all current allies to update the public war message...`);
 						const allAllies = db.prepare(`
 							SELECT ara.side, gl.guild_name
@@ -4345,7 +4642,6 @@ module.exports = {
 					}
 					catch (error) {
 						console.error(`${logPrefix} CRITICAL ERROR during collection:`, error);
-						// Try to inform the user that something went wrong
 						if (!i.replied && !i.deferred) {
 							await i.reply({ content: 'An unexpected error occurred. The Innkeepers have been notified.', ephemeral: true }).catch(e => console.error(`${logPrefix} Failed to send initial error reply:`, e));
 						}
@@ -4637,7 +4933,10 @@ module.exports = {
 					option.setName('guild_tag')
 						.setDescription('Tag of the guild to look up')
 						.setRequired(true)
-						.setAutocomplete(true)))
+						.setAutocomplete(true))
+				.addBooleanOption(option =>
+					option.setName('full_view')
+						.setDescription('Display all guild info in a single message instead of the interactive menu.')))
 		.addSubcommand(subcommand =>
 			subcommand
 				.setName('join')
@@ -4907,11 +5206,19 @@ module.exports = {
 				await handlePayout(interaction);
 			}
 		}
+		else if (subcommand === 'info') {
+			const fullView = interaction.options.getBoolean('full_view');
+			if (fullView) {
+				await handleFullInfo(interaction);
+			}
+			else {
+				await handleInfo(interaction);
+			}
+		}
 		else if (subcommand === 'create') {await handleCreate(interaction);}
 		else if (subcommand === 'delete') {await handleDelete(interaction);}
 		else if (subcommand === 'leave') {await handleLeave(interaction);}
 		else if (subcommand === 'invite') {await handleInvite(interaction);}
-		else if (subcommand === 'info') {await handleInfo(interaction);}
 		else if (subcommand === 'bequeath') {await handleBequeath(interaction);}
 		else if (subcommand === 'list') {await handleList(interaction);}
 		else if (subcommand === 'join') {await handleJoin(interaction);}
