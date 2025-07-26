@@ -53,10 +53,13 @@ module.exports = {
 		if (!member) return 1.0;
 
 		// Check multipliers in order of priority
+		// 4.0X - Successful Raid Defender
 		let multiplier = 1.0;
-
+		if (member.roles.cache.has('1387473320093548724')) {
+			multiplier = 4.0;
+		}
 		// 3.0X - Member of the Week
-		if (member.roles.cache.has('1363537152658378793')) {
+		else if (member.roles.cache.has('1363537152658378793')) {
 			multiplier = 3.0;
 		}
 		// 2.5X - Previous Top Bumper

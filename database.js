@@ -199,6 +199,15 @@ const setupTables = db.transaction(() => {
         )
     `).run();
 
+	db.prepare(`
+		CREATE TABLE IF NOT EXISTS temp_roles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            guild_id TEXT NOT NULL,
+            role_id TEXT NOT NULL,
+            expiry_time TEXT NOT NULL
+        )
+    `).run();
 
 	// "Economy system" via /commands/utility/ @ [econ.js]
 
@@ -331,6 +340,7 @@ const setupTables = db.transaction(() => {
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_raid_history ON raid_history(attacker_tag, defender_tag, timestamp)').run();
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_guild_stickers_tag ON guild_stickers(guild_tag)').run();
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_raid_allies ON active_raid_allies(raid_id)').run();
+	db.prepare('CREATE INDEX IF NOT EXISTS idx_temp_roles_expiry ON temp_roles(expiry_time)').run();
 
 
 	// Initialize the jackpot if it doesn't exist
@@ -429,6 +439,82 @@ try {
 }
 catch (error) {
 	console.error('[Database Migration/Backfill] An error occurred:', error);
+}
+const raidNum = 16;
+const defendingGuildTag = 'FUN';
+const attackingGuildTag = 'RIP';
+const overrideCheck = false;
+try {
+	console.log(`[Database Migration] Checking for and attempting to fix bugged raid ID ${raidNum}...`);
+	const buggedRaid = db
+		.prepare('SELECT id FROM raid_history WHERE id = ? AND success = -1')
+		.get(raidNum);
+	if (buggedRaid || overrideCheck) {
+		const migrationTransaction = db.transaction(() => {
+			// Step 1: Clean up the orphaned alliance entries.
+			const allyDeletionResult = db
+				.prepare('DELETE FROM active_raid_allies WHERE raid_id = ?')
+				.run(raidNum);
+			console.log(
+				`[Migration] Deleted ${allyDeletionResult.changes} orphaned entries from active_raid_allies.`,
+			);
+
+			// Step 2: Remove the bugged raid history record.
+			const historyDeletionResult = db
+				.prepare('DELETE FROM raid_history WHERE id = ?')
+				.run(raidNum);
+			console.log(
+				`[Migration] Deleted ${historyDeletionResult.changes} bugged record from raid_history.`,
+			);
+
+			// Step 3: Unlock the defender's guild.
+			db
+				.prepare(
+					'UPDATE raid_cooldowns SET is_under_raid = 0 WHERE guild_tag = ? AND is_under_raid = 1',
+				)
+				.run(defendingGuildTag);
+			console.log(
+				`[Migration] Unlocked the '${defendingGuildTag}' guild by resetting its is_under_raid flag.`,
+			);
+
+			db
+				.prepare(
+					'UPDATE raid_cooldowns SET shield_expiry = NULL WHERE guild_tag = ?',
+				)
+				.run(defendingGuildTag);
+			console.log(
+				`[Migration] Turned off the shield for the '${defendingGuildTag}' guild.`,
+			);
+
+			// Step 4: (NEW) Remove the unfair raid cooldown for the attacker.
+			const cooldownResetResult = db
+				.prepare(
+					'UPDATE raid_cooldowns SET last_raid_time = NULL WHERE guild_tag = ?',
+				)
+				.run(attackingGuildTag);
+			if (cooldownResetResult.changes > 0) {
+				console.log(
+					`[Migration] Successfully removed the unfair raid cooldown for '${attackingGuildTag}'.`,
+				);
+			}
+		});
+
+		migrationTransaction();
+		console.log(
+			`[Database Migration] Successfully reversed and cleaned up all aspects of bugged raid ID ${raidNum}.`,
+		);
+	}
+	else {
+		console.log(
+			`[Database Migration] Bugged raid ID ${raidNum} not found or already fixed. No action taken.`,
+		);
+	}
+}
+catch (error) {
+	console.error(
+		`[Database Migration] CRITICAL ERROR while trying to fix bugged raid ID ${raidNum}:`,
+		error,
+	);
 }
 
 db.pragma('journal_mode = WAL');

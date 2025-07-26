@@ -288,7 +288,6 @@ module.exports = {
 						return;
 					}
 				}
-
 				// Handle all guild-related buttons by routing them to the 'guild' command file.
 				if (interaction.customId.startsWith('guild_') || interaction.customId.startsWith('raid_') || interaction.customId.startsWith('upgrade_') || interaction.customId.startsWith('shield_') || interaction.customId.startsWith('fundraise_') || interaction.customId.startsWith('raidmsg_')) {
 					if (!guildCommand) {
@@ -315,6 +314,7 @@ module.exports = {
 						else if (interaction.customId.startsWith('raidmsg_')) {
 							await guildCommand.buttons.handleRaidMessageButton(interaction);
 						}
+
 						console.log(`[Execute] Successfully handled a Guild Button (${interaction.customId}), requested by ${interaction.user.displayName}`);
 						return;
 					}
@@ -329,7 +329,6 @@ module.exports = {
 				}
 
 			}
-
 
 			const command = interaction.client.commands.get(interaction.commandName);
 

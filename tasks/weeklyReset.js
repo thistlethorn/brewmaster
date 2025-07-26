@@ -53,7 +53,13 @@ async function changeTB(client, removingPrevious, userId) {
 					const role = guild.roles.cache.get(TOP_BUMPER_ROLE);
 					if (!role) continue;
 
-					for (const member of role.members.values()) {
+					// Fetch all members before proceeding
+					await guild.members.fetch();
+					const membersWithRole = role.members;
+
+					if (membersWithRole.size === 0) continue;
+
+					for (const member of membersWithRole.values()) {
 						try {
 							await member.roles.remove(role);
 							console.log(`[weeklyReset] Removed Top Bumper role from ${member.user.tag}`);
@@ -70,7 +76,6 @@ async function changeTB(client, removingPrevious, userId) {
 			}
 		}
 		else if (userId) {
-			// Add role to new winner
 			for (const guild of client.guilds.cache.values()) {
 				try {
 					const role = guild.roles.cache.get(TOP_BUMPER_ROLE);
