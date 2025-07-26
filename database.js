@@ -55,7 +55,6 @@ const setupTables = db.transaction(() => {
             public_channel_id TEXT,
             role_id TEXT,
             is_open INTEGER DEFAULT 0,
-            about_text TEXT DEFAULT '',
             motto TEXT DEFAULT '',
             hook TEXT DEFAULT '',
             lore TEXT DEFAULT '',
@@ -460,7 +459,78 @@ try {
 catch (error) {
 	console.error('[Database Migration] Error altering guild_list for lore/hook:', error);
 }
+try {
+	console.log('[Database Migration] Checking for deprecated "about_text" column...');
+	const columns = db.prepare('PRAGMA table_info(guild_list)').all();
+	const hasAboutText = columns.some(col => col.name === 'about_text');
 
+	if (hasAboutText) {
+		console.log('[Database Migration] "about_text" column found. Beginning migration to "lore".');
+
+		// Temporarily disable foreign keys to allow table recreation
+		db.pragma('foreign_keys = OFF');
+
+		const migration = db.transaction(() => {
+			// Step 1: Backfill any empty 'lore' fields with data from 'about_text'.
+			const backfillResult = db.prepare(`
+                UPDATE guild_list 
+                SET lore = about_text 
+                WHERE (lore IS NULL OR lore = '') AND about_text IS NOT NULL AND about_text != ''
+            `).run();
+			console.log(`[Database Migration] Backfilled lore for ${backfillResult.changes} guilds.`);
+
+			// Step 2: Re-create the table without the 'about_text' column.
+			db.prepare('ALTER TABLE guild_list RENAME TO temp_guild_list').run();
+			console.log('[Database Migration] Renamed original table.');
+
+			// Create the new table with the final schema.
+			db.prepare(`
+                CREATE TABLE guild_list (
+                    guild_name TEXT,
+                    guild_tag TEXT PRIMARY KEY,
+                    channel_id TEXT,
+                    public_channel_id TEXT,
+                    role_id TEXT,
+                    is_open INTEGER DEFAULT 0,
+                    motto TEXT DEFAULT '',
+                    hook TEXT DEFAULT '',
+                    lore TEXT DEFAULT '',
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    guildmember_title TEXT DEFAULT 'Member',
+                    UNIQUE(guild_name)
+                )
+            `).run();
+			console.log('[Database Migration] Created new table schema.');
+
+			// Step 3: Copy the data from the old table to the new one.
+			db.prepare(`
+                INSERT INTO guild_list (guild_name, guild_tag, channel_id, public_channel_id, role_id, is_open, motto, hook, lore, created_at, guildmember_title)
+                SELECT guild_name, guild_tag, channel_id, public_channel_id, role_id, is_open, motto, hook, lore, created_at, guildmember_title
+                FROM temp_guild_list
+            `).run();
+			console.log('[Database Migration] Copied data to new table.');
+
+			// Step 4: Drop the temporary old table.
+			db.prepare('DROP TABLE temp_guild_list').run();
+			console.log('[Database Migration] Dropped temporary table. Migration complete.');
+		});
+
+		migration();
+
+		// Re-enable foreign keys
+		db.pragma('foreign_keys = ON');
+		console.log('[Database Migration] Foreign keys re-enabled.');
+
+	}
+	else {
+		console.log('[Database Migration] "about_text" column not found. No migration needed.');
+	}
+}
+catch (error) {
+	console.error('[Database Migration] CRITICAL ERROR during about_text -> lore migration:', error);
+	// Always try to re-enable foreign keys in case of an error
+	db.pragma('foreign_keys = ON');
+}
 const raidNum = 18;
 const defendingGuildTag = 'FUN';
 const attackingGuildTag = 'RIP';
