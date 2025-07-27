@@ -1455,7 +1455,7 @@ async function handleInfo(interaction) {
 			},
 			{
 				name: '📜 The Guild\'s Hook',
-				value: guildInfo.hook ? `*${guildInfo.hook}*` : 'This guild has not set a hook yet.',
+				value: guildInfo.hook ? `*${guildInfo.hook}*` : 'No hook set. Use `/guild settings hook` to add one (max 150 characters).',
 			},
 		);
 
@@ -1579,7 +1579,7 @@ async function handleFullInfo(interaction) {
 
 		const embed = new EmbedBuilder()
 			.setTitle(`${guildInfo.guild_name} [${guildInfo.guild_tag}]`)
-			.setDescription(guildInfo.hook || 'No hook set. Use `/guild settings hook` to add one.')
+			.setDescription(guildInfo.hook || 'No hook set. Use `/guild settings hook` to add one (max 150 characters).')
 			.setColor(0x3498db)
 			.addFields(
 				{ name: ((guildInfo.is_open || 0) === 1) ? '🔓 Open to join' : '🔒 Invite only', value: `Inquire with ${leader ? `__${leader}__` : 'the Guildmaster'}`, inline: false },
@@ -1708,7 +1708,7 @@ async function buildDetailEmbed(guildTag, view, interaction, parts) {
 	switch (view) {
 	case 'lore':
 		embed.setTitle(`📜 Lore of ${guild.guild_name}`)
-			.setDescription(guild.lore || '*This guild has not written its epic tale yet.*\n\nUse `/guild settings lore` to set it!');
+			.setDescription(guild.lore || '*This guild has not written its epic tale yet.*\n\nUse `/guild settings lore` to set it (4000 character limit)!');
 		break;
 
 	case 'economy': {
@@ -2200,6 +2200,13 @@ async function handleSettings(interaction, settingType) {
 		}
 		case 'hook': {
 			const text = interaction.options.getString('text');
+			if (text.length > 4000) {
+				errorEmbed.setDescription('Hook text cannot exceed 150 characters!');
+				return interaction.reply({
+					embeds: [errorEmbed],
+					flags: [MessageFlags.Ephemeral],
+				});
+			}
 			db.prepare('UPDATE guild_list SET hook = ? WHERE guild_tag = ?')
 				.run(text, guildData.guild_tag);
 			successEmbed.setTitle('✅ Hook Updated').setDescription(`Your guild's hook is now set:\n*_"${text}"_*`);
@@ -2210,6 +2217,13 @@ async function handleSettings(interaction, settingType) {
 		}
 		case 'lore': {
 			const text = interaction.options.getString('text');
+			if (text.length > 4000) {
+				errorEmbed.setDescription('Lore text cannot exceed 4000 characters!');
+				return interaction.reply({
+					embeds: [errorEmbed],
+					flags: [MessageFlags.Ephemeral],
+				});
+			}
 			db.prepare('UPDATE guild_list SET lore = ? WHERE guild_tag = ?')
 				.run(text, guildData.guild_tag);
 			successEmbed.setTitle('✅ Lore Updated').setDescription('Your guild\'s lore has been successfully updated.');
@@ -3412,6 +3426,17 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 		const defendingParticipants = allParticipants.filter(a => a.side === 'defender');
 		console.log(`[Raid Resolution LOG] [${raidId}] Sorted participants. Attackers: ${attackingParticipants.length}, Defenders: ${defendingParticipants.length}.`);
 
+
+		const attackerEmojis = attackingParticipants.map(participant => {
+			const defaultEmojiRecord = db.prepare('SELECT emoji_name, emoji_id FROM guild_emojis WHERE guild_tag = ? AND is_default = 1').get(participant.allied_guild_tag);
+			return defaultEmojiRecord ? `<:${defaultEmojiRecord.emoji_name}:${defaultEmojiRecord.emoji_id}>` : '⚔️';
+		});
+
+		const defenderEmojis = defendingParticipants.map(participant => {
+			const defaultEmojiRecord = db.prepare('SELECT emoji_name, emoji_id FROM guild_emojis WHERE guild_tag = ? AND is_default = 1').get(participant.allied_guild_tag);
+			return defaultEmojiRecord ? `<:${defaultEmojiRecord.emoji_name}:${defaultEmojiRecord.emoji_id}>` : '🛡️';
+		});
+
 		const now = new Date();
 		const raidCost = finalAttackerData.tier * 200;
 
@@ -3500,16 +3525,17 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 
 		let modifier = 0;
 		let attackerModifierText = '';
-		if (finalAttackerData.tier < finalDefenderData.tier) {
+		if (getTierPowerBonus(finalAttackerData.tier) < getTierPowerBonus(finalDefenderData.tier)) {
 			modifier = 3;
 			attackerModifierText = '- `+3` (Kingslayer Bonus - Attacking Higher Tier)\n';
 		}
-		else if (finalAttackerData.tier > finalDefenderData.tier) {
+		else if (getTierPowerBonus(finalAttackerData.tier) > getTierPowerBonus(finalDefenderData.tier)) {
 			modifier = -4;
 			attackerModifierText = '- `-4` (Bully Penalty - Attacking Lower Tier)\n';
 		}
 		const attackerRoll = Math.floor(Math.random() * 20) + 1;
 		const finalAttackPower = attackerRoll + attackerBasePower + attackerAllyPower + modifier;
+		const attackerModifierTotal = finalAttackPower - attackerRoll;
 		const finalDefensePower = defenderBasePower + defenderAllyPower;
 		const success = finalAttackPower >= finalDefensePower;
 
@@ -3521,8 +3547,8 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 			.filter(p => p.allied_guild_tag !== defenderTag)
 			.map(p => `- \`+${getTierPowerBonus(p.tier)}\` (${p.guild_name} - Supporting Tier Bonus)`)
 			.join('\n');
-		attackerModifierText += `${attackerTierList}\n- \`+${attackerBasePower}\` (Base Tier Power of Attacking Guild)\n**MODIFIERS TOTAL** = \`+${attackerAllyPower}\``;
-		const defenderModifierText = `${defenderTierList}\n**MODIFIERS TOTAL** = \`+${defenderAllyPower}\``;
+		attackerModifierText += `${attackerTierList}\n- \`+${attackerBasePower}\` (Base Tier Power of Attacking Guild)\n__**MODIFIERS TOTAL**__ = \`+${attackerModifierTotal}\``;
+		const defenderModifierText = `${defenderTierList}\n__**MODIFIERS TOTAL**__ = \`+${defenderAllyPower}\``;
 		// 3. Narrative Sequence with Separate Messages & Countdown Timers
 		const NARRATIVE_DELAY_MS = 60000;
 
@@ -3579,11 +3605,11 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 
 		// 4. Reveal Outcome and Finalize
 		let finalDescription, resultEmbed, announceEmbed, netLoot = 0, defenderGain = 0;
-		 const attackerParticipantList = attackingParticipants
-			.map(p => `> <@&${p.role_id}> (Tier ${p.tier})`)
+		const attackerParticipantList = attackingParticipants
+			.map((p, index) => `> ${attackerEmojis[index]} <@&${p.role_id}> (${tierEmojis[(p.tier || 1) - 1]})`)
 			.join('\n');
 		const defenderParticipantList = defendingParticipants
-			.map(p => `> <@&${p.role_id}> (Tier ${p.tier})`)
+			.map((p, index) => `> ${defenderEmojis[index]} <@&${p.role_id}> (${tierEmojis[(p.tier || 1) - 1]})`)
 			.join('\n');
 		if (success) {
 			finalDescription = replacePlaceholders(defenderMsgs.defending_failure || DEFAULT_RAID_MESSAGES.defending_failure) + '\n\n' + replacePlaceholders(attackerMsgs.raiding_victory || DEFAULT_RAID_MESSAGES.raiding_victory);
@@ -3654,9 +3680,9 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 				.setColor(0x2ECC71)
 				.setDescription(description)
 				.addFields(
-					{ name: 'Attacker Power Calculations', value: `Attacker Roll: **${attackerRoll}**\nAttacker Modifiers:\n${attackerModifierText}`, inline: true },
-					{ name: 'Guild Defence Calculations', value: `Guild AC: **${defenderBasePower}**\nDefender Modifiers:\n${defenderModifierText}`, inline: true },
-					{ name: 'Final Scores:', value: `Total Power: 💥 **${finalAttackPower}**\nOverall Resistance: 🛡️ **${finalDefensePower}**`, inline: false },
+					{ name: 'Attacker Power Calculations', value: `__Attacker Roll:__ **${attackerRoll}**\n__Attacker Modifiers:__\n${attackerModifierText}`, inline: true },
+					{ name: 'Guild Defence Calculations', value: `__Guild AC:__ **${defenderBasePower}**\n__Defender Modifiers:__\n${defenderModifierText}`, inline: true },
+					{ name: 'Overall Scores:', value: `Final Attacking Power: 💥 **${finalAttackPower}**\nFinal Defending Resistance: 🛡️ **${finalDefensePower}**`, inline: false },
 					{ name: '⚔️ Attackers', value: attackerParticipantList, inline: true },
 					{ name: '🛡️ Defenders', value: defenderParticipantList, inline: true },
 					spoilsField,
@@ -3669,7 +3695,7 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 				.addFields(
 					{ name: '⚔️ Victorious Alliance', value: attackerParticipantList, inline: false },
 					{ name: '🛡️ Defeated Coalition', value: defenderParticipantList, inline: false },
-					{ name: 'Final Scores:', value: `[${attackerTag}] Total Power: 💥 **${finalAttackPower}**\n[${defenderTag}] Overall Resistance: 🛡️ **${finalDefensePower}**`, inline: false },
+					{ name: 'Final Scores:', value: `\`[${attackerTag}]\` Total Power: 💥 **${finalAttackPower}** (Rolled \`${attackerRoll}\` + \`${attackerModifierTotal}\`)\n\`[${defenderTag}]\` Overall Resistance: 🛡️ **${finalDefensePower}** (AC of \`${defenderBasePower}\` + \`${defenderAllyPower}\` bonus)`, inline: false },
 				)
 				.setTimestamp();
 		}
@@ -3742,9 +3768,9 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 				.setColor(0x3498DB)
 				.setDescription(description)
 				.addFields(
-					{ name: 'Attacker Power Calculations', value: `Attacker Roll: **${attackerRoll}**\nAttacker Modifiers:\n${attackerModifierText}`, inline: true },
-					{ name: 'Guild Defence Calculations', value: `Guild AC: **${defenderBasePower}**\nDefender Modifiers:\n${defenderModifierText}`, inline: true },
-					{ name: 'Final Scores:', value: `Total Power: 💥 **${finalAttackPower}**\nOverall Resistance: 🛡️ **${finalDefensePower}**`, inline: false },
+					{ name: 'Attacker Power Calculations', value: `__Attacker Roll:__ **${attackerRoll}**\n__Attacker Modifiers:__\n${attackerModifierText}`, inline: true },
+					{ name: 'Guild Defence Calculations', value: `__Guild AC:__ **${defenderBasePower}**\n__Defender Modifiers:__\n${defenderModifierText}`, inline: true },
+					{ name: 'Overall Scores:', value: `Final Attacking Power: 💥 **${finalAttackPower}**\nFinal Defending Resistance: 🛡️ **${finalDefensePower}**`, inline: false },
 					{ name: '⚔️ Attackers', value: attackerParticipantList, inline: true },
 					{ name: '🛡️ Defenders', value: defenderParticipantList, inline: true },
 					compensationField,
@@ -3757,7 +3783,7 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 				.addFields(
 					{ name: '🛡️ Victorious Coalition', value: defenderParticipantList, inline: false },
 					{ name: '⚔️ Defeated Alliance', value: attackerParticipantList, inline: false },
-					{ name: 'Final Scores:', value: `[${attackerTag}] Total Power: 💥 **${finalAttackPower}**\n[${defenderTag}] Overall Resistance: 🛡️ **${finalDefensePower}**`, inline: false },
+					{ name: 'Final Scores:', value: `\`[${attackerTag}]\` Total Power: 💥 **${finalAttackPower}** (Rolled \`${attackerRoll}\` + \`${attackerModifierTotal}\`)\n\`[${defenderTag}]\` Overall Resistance: 🛡️ **${finalDefensePower}** (AC of \`${defenderBasePower}\` + \`${defenderAllyPower}\` bonus)`, inline: false },
 				)
 				.setTimestamp();
 		}
@@ -4764,6 +4790,7 @@ module.exports = {
 			}
 
 			const cost = TIER_DATA[currentTier].cost;
+			const newTier = currentTier + 1;
 
 			if (guildData.balance < cost) {
 				errorEmbed.setDescription('Your guild no longer has enough crowns to upgrade!');
@@ -4779,7 +4806,6 @@ module.exports = {
 					db.prepare('UPDATE guild_economy SET balance = balance - ? WHERE guild_tag = ?')
 						.run(cost, guildTag);
 
-					const newTier = currentTier + 1;
 					db.prepare(`
 				INSERT INTO guild_tiers (guild_tag, tier, last_upgrade_time)
 				VALUES (?, ?, ?)
@@ -5009,9 +5035,9 @@ module.exports = {
 						.setDescription('Set your guild\'s detailed backstory or lore.')
 						.addStringOption(option =>
 							option.setName('text')
-								.setDescription('The lore text (max 2000 chars).')
+								.setDescription('The lore text (max 4000 chars).')
 								.setRequired(true)
-								.setMaxLength(2000)))
+								.setMaxLength(4000)))
 				.addSubcommand(subcommand =>
 					subcommand
 						.setName('name')

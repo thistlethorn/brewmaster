@@ -351,6 +351,37 @@ const setupTables = db.transaction(() => {
 });
 
 setupTables();
+/*
+try {
+	// --- Step 1: Find all triggers in the database ---
+	console.log('Searching for triggers in the database...');
+
+	// Prepare the SQL query
+	const findTriggersStmt = db.prepare('SELECT name, sql FROM sqlite_master WHERE type=\'trigger\';');
+
+	// Execute it and get all results
+	const triggers = findTriggersStmt.all();
+
+	if (triggers.length > 0) {
+		console.log('\n--- FOUND TRIGGERS ---');
+		// Loop through the results and print them
+		triggers.forEach(trigger => {
+			console.log(`Name: ${trigger.name}`);
+			console.log(`SQL Definition: ${trigger.sql}`);
+			console.log('----------------------');
+		});
+		console.log('\nReview the SQL Definition for each trigger above. Look for any that reference "temp_guild_list".');
+		console.log('Once you find the name, update the triggerNameToDrop variable in this script and run it again.');
+
+	}
+	else {
+		console.log('--- No triggers found in the database. ---');
+	}
+}
+catch (error) {
+	console.error('Error searching for triggers:', error);
+}
+// migration scripts, uncomment them when needed
 
 try {
 	db.pragma('foreign_keys = ON;');
@@ -473,8 +504,8 @@ try {
 		const migration = db.transaction(() => {
 			// Step 1: Backfill any empty 'lore' fields with data from 'about_text'.
 			const backfillResult = db.prepare(`
-                UPDATE guild_list 
-                SET lore = about_text 
+                UPDATE guild_list
+                SET lore = about_text
                 WHERE (lore IS NULL OR lore = '') AND about_text IS NOT NULL AND about_text != ''
             `).run();
 			console.log(`[Database Migration] Backfilled lore for ${backfillResult.changes} guilds.`);
@@ -607,6 +638,6 @@ catch (error) {
 		error,
 	);
 }
-
+*/
 db.pragma('journal_mode = WAL');
 module.exports = db;
