@@ -65,7 +65,7 @@ function scheduleNextReminder() {
 async function sendReminder() {
 	if (isSendingReminder) return;
 	isSendingReminder = true;
-	const devDisableReminders = true;
+	const devDisableReminders = false;
 
 	if (!clientInstance) {
 		console.error('[Bump Reminder] Client not initialized');

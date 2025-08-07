@@ -562,6 +562,43 @@ catch (error) {
 	// Always try to re-enable foreign keys in case of an error
 	db.pragma('foreign_keys = ON');
 }
+
+try {
+    console.log('[Database Migration] Checking for orphaned guild member entries...');
+
+    const orphanCheckTransaction = db.transaction(() => {
+        // Find all guild member entries whose guild_tag does not exist in the main guild_list
+        const orphanedMembers = db.prepare(`
+            SELECT gmt.user_id, gmt.guild_tag
+            FROM guildmember_tracking AS gmt
+            LEFT JOIN guild_list AS gl ON gmt.guild_tag = gl.guild_tag
+            WHERE gl.guild_tag IS NULL
+        `).all();
+
+        if (orphanedMembers.length > 0) {
+            console.log(`[Database Migration] Found ${orphanedMembers.length} orphaned member(s). Cleaning them up...`);
+            orphanedMembers.forEach(member => {
+                console.log(`[Database Migration]   - Removing user ${member.user_id} from non-existent guild [${member.guild_tag}]`);
+            });
+
+            // Delete all entries from guildmember_tracking where the guild_tag doesn't exist in guild_list
+            const result = db.prepare(`
+                DELETE FROM guildmember_tracking
+                WHERE guild_tag NOT IN (SELECT guild_tag FROM guild_list)
+            `).run();
+
+            console.log(`[Database Migration] Successfully removed ${result.changes} orphaned entries. Database is now consistent.`);
+        } else {
+            console.log('[Database Migration] No orphaned guild member entries found. Database is clean.');
+        }
+    });
+
+    orphanCheckTransaction();
+
+} catch (error) {
+    console.error('[Database Migration] CRITICAL ERROR while cleaning up orphaned guild members:', error);
+}
+
 const raidNum = 18;
 const defendingGuildTag = 'FUN';
 const attackingGuildTag = 'RIP';
@@ -639,5 +676,44 @@ catch (error) {
 	);
 }
 */
+
+try {
+	console.log('[Database Migration] Checking for orphaned guild member entries...');
+
+	const orphanCheckTransaction = db.transaction(() => {
+		// Find all guild member entries whose guild_tag does not exist in the main guild_list
+		const orphanedMembers = db.prepare(`
+            SELECT gmt.user_id, gmt.guild_tag
+            FROM guildmember_tracking AS gmt
+            LEFT JOIN guild_list AS gl ON gmt.guild_tag = gl.guild_tag
+            WHERE gl.guild_tag IS NULL
+        `).all();
+
+		if (orphanedMembers.length > 0) {
+			console.log(`[Database Migration] Found ${orphanedMembers.length} orphaned member(s). Cleaning them up...`);
+			orphanedMembers.forEach(member => {
+				console.log(`[Database Migration]   - Removing user ${member.user_id} from non-existent guild [${member.guild_tag}]`);
+			});
+
+			// Delete all entries from guildmember_tracking where the guild_tag doesn't exist in guild_list
+			const result = db.prepare(`
+                DELETE FROM guildmember_tracking
+                WHERE guild_tag NOT IN (SELECT guild_tag FROM guild_list)
+            `).run();
+
+			console.log(`[Database Migration] Successfully removed ${result.changes} orphaned entries. Database is now consistent.`);
+		}
+		else {
+			console.log('[Database Migration] No orphaned guild member entries found. Database is clean.');
+		}
+	});
+
+	orphanCheckTransaction();
+
+}
+catch (error) {
+	console.error('[Database Migration] CRITICAL ERROR while cleaning up orphaned guild members:', error);
+}
+
 db.pragma('journal_mode = WAL');
 module.exports = db;

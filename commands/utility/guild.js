@@ -221,7 +221,7 @@ async function handleInvite(interaction) {
             gl.guild_name,
             gl.guild_tag,
             gl.motto,
-            gl.about_text,
+            gl.lore,
             COALESCE(gt.tier, 1) AS tier
         FROM guildmember_tracking gmt
         JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
@@ -260,7 +260,7 @@ async function handleInvite(interaction) {
 	const embed = new EmbedBuilder()
 		.setColor(0x3498db)
 		.setTitle(`⚔️ Guild Invitation: ${inviterGuild.guild_name} [${inviterGuild.guild_tag}]`)
-		.setDescription(inviterGuild.about_text || 'A promising guild is seeking new allies!')
+		.setDescription(inviterGuild.lore || 'A promising guild is seeking new allies!')
 		.setThumbnail('https://i.ibb.co/2YqsK07D/guild.jpg')
 		.addFields(
 			{ name: 'Motto', value: inviterGuild.motto ? `*${inviterGuild.motto}*` : 'No motto set.' },
@@ -330,7 +330,7 @@ async function handleCreate(interaction) {
 	const name = interaction.options.getString('name');
 	const tag = interaction.options.getString('tag').toUpperCase();
 	const userId = interaction.user.id;
-	const guildCategoryId = '1369829304053006346';
+	const guildCategoryId = '1396211786008756254';
 	const staffRoleId = '1354145856345083914';
 	const botsRoleId = '1362247491101262106';
 
@@ -362,12 +362,21 @@ async function handleCreate(interaction) {
 		errorEmbed.setDescription(`That guild name contains restricted terms. Please choose another name.\nAvoid terms like: ${RESERVED_TERMS.join(', ')}`);
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
-	// Check if user is already in a guild
+
+
 	const tagOfGuild = db.prepare('SELECT * FROM guildmember_tracking WHERE user_id = ?').get(userId);
 	if (tagOfGuild) {
 		const userGuild = db.prepare('SELECT * FROM guild_list WHERE guild_tag = ?').get(tagOfGuild.guild_tag);
-		errorEmbed.setDescription(`You're already in a guild, **${userGuild.guild_name} [${tagOfGuild.guild_tag}]**! Leave it first before creating a new one.`);
-		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+
+		if (!userGuild) {
+		// Cleanup: user is in a ghost guild
+			db.prepare('DELETE FROM guildmember_tracking WHERE user_id = ?').run(userId);
+			console.warn(`[Guild Fix] Removed ghost membership for user ${userId} in nonexistent guild [${tagOfGuild.guild_tag}]`);
+		}
+		else {
+			errorEmbed.setDescription(`You're already in a guild, **${userGuild.guild_name} [${tagOfGuild.guild_tag}]**! Leave it first before creating a new one.`);
+			return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		}
 	}
 
 	// Check if tag is already taken
@@ -2178,16 +2187,6 @@ async function handleSettings(interaction, settingType) {
 				flags: [MessageFlags.Ephemeral],
 			});
 		}
-		case 'about': {
-			const text = interaction.options.getString('text').slice(0, 1000);
-			db.prepare('UPDATE guild_list SET about_text = ? WHERE guild_tag = ?')
-				.run(text, guildData.guild_tag);
-			successEmbed.setTitle('✅ About Text Updated').setDescription('Your guild\'s "about" description has been changed.');
-			return interaction.reply({
-				embeds: [successEmbed],
-				flags: [MessageFlags.Ephemeral],
-			});
-		}
 		case 'motto': {
 			const text = interaction.options.getString('text').slice(0, 100);
 			db.prepare('UPDATE guild_list SET motto = ? WHERE guild_tag = ?')
@@ -2835,8 +2834,18 @@ async function handleJoin(interaction) {
 
 	try {
 		// Add role to user
+		const member = interaction.member ?? await interaction.guild.members.fetch(interaction.user.id);
+
+		// Add role to user
 		const role = await interaction.guild.roles.fetch(guildData.role_id);
-		if (role) await interaction.member.roles.add(role);
+		if (role && member) {
+			await member.roles.add(role);
+		}
+		else if (!member) {
+			// Handle case where member couldn't be fetched
+			errorEmbed.setDescription('An error occurred trying to find your profile on this server.');
+			return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		}
 
 		// Add to database
 		db.prepare(`
