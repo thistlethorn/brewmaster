@@ -112,18 +112,26 @@ module.exports = {
 				}
 				if (interaction.customId.startsWith('guild_show_lore_')) {
 					const guildTag = interaction.customId.split('_')[3];
-					const guild = db.prepare('SELECT guild_name, lore FROM guild_list WHERE guild_tag = ?').get(guildTag);
+					try {
+						const guild = db.prepare('SELECT guild_name, lore FROM guild_list WHERE guild_tag = ?').get(guildTag);
 
-					if (!guild || !guild.lore) {
-						return interaction.reply({ content: 'This guild has not written its lore yet.', flags: [MessageFlags.Ephemeral] });
+						if (!guild || !guild.lore) {
+							return interaction.reply({ content: 'This guild has not written its lore yet.', flags: [MessageFlags.Ephemeral] });
+						}
+
+						const loreEmbed = new EmbedBuilder()
+							.setColor(0x5865F2)
+							.setTitle(`📜 Lore of ${guild.guild_name}`)
+							.setDescription(guild.lore);
+
+						return interaction.reply({ embeds: [loreEmbed], flags: [MessageFlags.Ephemeral] });
+					} catch (error) {
+						console.error('[Error] Failed to fetch guild lore:', error);
+						return interaction.reply({ 
+							content: 'There was an error fetching the guild lore. Please try again later.', 
+							flags: [MessageFlags.Ephemeral] 
+						});
 					}
-
-					const loreEmbed = new EmbedBuilder()
-						.setColor(0x5865F2)
-						.setTitle(`📜 Lore of ${guild.guild_name}`)
-						.setDescription(guild.lore);
-
-					return interaction.reply({ embeds: [loreEmbed], flags: [MessageFlags.Ephemeral] });
 				}
 				if (interaction.customId.startsWith('daily_notify_')) {
 

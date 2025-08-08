@@ -12,6 +12,7 @@ const {
 	MessageFlags,
 } = require('discord.js');
 const db = require('../../database');
+const config = require('../../config.json');
 const RESERVED_TERMS = [
 	'admin', 'mod', 'staff', 'bot', 'everyone', 'here',
 	'discord', 'guild', 'system', 'owner', 'official',
@@ -21,23 +22,23 @@ const {
 	ONLY_CRESTS,
 } = require('../../utils/emoji');
 
+const { getTonyQuote } = require('../../utils/tonyDialogue.js');
 const { getTierBenefits, getTierData } = require('../../utils/getTierBenefits');
 const { scheduleRoleRemoval } = require('../../tasks/tempRoleManager');
 
 const TIER_DATA = getTierData();
 const tierEmojis = arrayTierEmoji();
-const GUILD_CREATION_WITHDRAWAL_LIMIT = 5000;
 
-const RAID_DEFENDER_ROLE_ID = '1387473320093548724';
-const DEFENDER_ROLE_DURATION_MS = 24 * 60 * 60 * 1000;
-const GUILD_VULNERABILITY_THRESHOLD = 200;
-const GUILD_RAID_MAX_STOLEN_PERCENT = 25;
-const GUILD_RAID_MIN_PER_MEMBER_PERCENT = 5;
-const GUILD_RAID_MAX_PER_MEMBER_CAP = 100;
+const GUILD_CREATION_WITHDRAWAL_LIMIT = config.guild.creationWithdrawalLimit;
+
+const RAID_DEFENDER_ROLE_ID = config.discord.raidDefenderRoleId;
+const DEFENDER_ROLE_DURATION_MS = config.guild.defenderRoleDurationMs;
+const GUILD_VULNERABILITY_THRESHOLD = config.guild.vulnerabilityThreshold;
+const GUILD_RAID_MAX_STOLEN_PERCENT = config.guild.raidMaxStolenPercent;
+const GUILD_RAID_MIN_PER_MEMBER_PERCENT = config.guild.raidMinPerMemberPercent;
+const GUILD_RAID_MAX_PER_MEMBER_CAP = config.guild.raidMaxPerMemberCap;
 // Alliance Raid constants (10 minutes)
-const ALLIANCE_RAID_DURATION_MS = 600000;
-// const ALLIANCE_RAID_DURATION_MS = 30000;
-// 30 seconds for testing
+const ALLIANCE_RAID_DURATION_MS = config.guild.allianceRaidDurationMs;
 
 // NEW: Helper function for creating delays
 const wait = (ms) => new Promise(res => setTimeout(res, ms));
@@ -164,8 +165,8 @@ async function handleLeave(interaction) {
 	if (!userGuild) {
 		const errorEmbed = new EmbedBuilder()
 			.setColor(0xE74C3C)
-			.setTitle('❌ Not in a Guild')
-			.setDescription('You must be a member of a guild to leave one.');
+			.setTitle(getTonyQuote('leave_notInGuild_title'))
+			.setDescription(getTonyQuote('leave_notInGuild_desc'));
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
 
@@ -173,8 +174,8 @@ async function handleLeave(interaction) {
 	if (userGuild.owner === 1) {
 		const ownerEmbed = new EmbedBuilder()
 			.setColor(0xE74C3C)
-			.setTitle('👑 Ownership Duty')
-			.setDescription(`You are the owner of **${userGuild.guild_name} [${userGuild.guild_tag}]**!\nYou must transfer ownership or delete the guild before you can leave.`);
+			.setTitle(getTonyQuote('leave_isOwner_title'))
+			.setDescription(getTonyQuote('leave_isOwner_desc', userGuild.guild_name, userGuild.guild_tag));
 		return interaction.reply({ embeds: [ownerEmbed], flags: [MessageFlags.Ephemeral] });
 	}
 
@@ -191,23 +192,23 @@ async function handleLeave(interaction) {
 
 		const leaveEmbed = new EmbedBuilder()
 			.setColor(0xE67E22)
-			.setTitle('👋 A Member has Departed')
-			.setDescription(`${interaction.user} has left the **${userGuild.guild_name} [${userGuild.guild_tag}]** guild.`)
+			.setTitle(getTonyQuote('leave_departed_title'))
+			.setDescription(getTonyQuote('leave_departed_desc', interaction.user, userGuild.guild_name, userGuild.guild_tag))
 			.setTimestamp();
 		await sendGuildAnnouncement(interaction.client, leaveEmbed);
 
 		const successEmbed = new EmbedBuilder()
 			.setColor(0x2ECC71)
-			.setTitle('✅ Left Guild')
-			.setDescription(`You have successfully left **${userGuild.guild_name} [${userGuild.guild_tag}]**.`);
+			.setTitle(getTonyQuote('leave_success_title'))
+			.setDescription(getTonyQuote('leave_success_desc', userGuild.guild_name, userGuild.guild_tag));
 		return interaction.reply({ embeds: [successEmbed], flags: [MessageFlags.Ephemeral] });
 	}
 	catch (error) {
 		console.error('Leave guild error:', error);
 		const errorEmbed = new EmbedBuilder()
 			.setColor(0xE74C3C)
-			.setTitle('❌ Error Leaving Guild')
-			.setDescription('An unexpected error occurred while trying to leave the guild. The Innkeepers have been notified.');
+			.setTitle(getTonyQuote('leave_error_title'))
+			.setDescription(getTonyQuote('leave_error_desc'));
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
 }
@@ -232,8 +233,8 @@ async function handleInvite(interaction) {
 	if (!inviterGuild) {
 		const errorEmbed = new EmbedBuilder()
 			.setColor(0xE74C3C)
-			.setTitle('❌ Not in a Guild')
-			.setDescription('You must be in a guild to be able to invite someone!');
+			.setTitle(getTonyQuote('invite_notInGuild_title'))
+			.setDescription(getTonyQuote('invite_notInGuild_desc'));
 		return interaction.reply({
 			embeds: [errorEmbed],
 			flags: [MessageFlags.Ephemeral],
@@ -245,8 +246,8 @@ async function handleInvite(interaction) {
 	if (targetInGuild) {
 		const errorEmbed = new EmbedBuilder()
 			.setColor(0xE74C3C)
-			.setTitle('❌ Already in a Guild')
-			.setDescription(`${targetUser} is already in a guild! They must leave their current guild first before accepting a new invitation.`);
+			.setTitle(getTonyQuote('invite_targetInGuild_title'))
+			.setDescription(getTonyQuote('invite_targetInGuild_desc', targetUser));
 		return interaction.reply({
 			embeds: [errorEmbed],
 			flags: [MessageFlags.Ephemeral],
@@ -259,8 +260,8 @@ async function handleInvite(interaction) {
 	// Create enhanced invite embed
 	const embed = new EmbedBuilder()
 		.setColor(0x3498db)
-		.setTitle(`⚔️ Guild Invitation: ${inviterGuild.guild_name} [${inviterGuild.guild_tag}]`)
-		.setDescription(inviterGuild.lore || 'A promising guild is seeking new allies!')
+		.setTitle(getTonyQuote('invite_embed_title', inviterGuild.guild_name, inviterGuild.guild_tag))
+		.setDescription(getTonyQuote('invite_embed_desc', inviterGuild.guild_name) || 'A promising guild is seeking new allies!')
 		.setThumbnail('https://i.ibb.co/2YqsK07D/guild.jpg')
 		.addFields(
 			{ name: 'Motto', value: inviterGuild.motto ? `*${inviterGuild.motto}*` : 'No motto set.' },
@@ -302,12 +303,12 @@ async function announceNewMember(client, newMember, guildData) {
 
 			const welcomeEmbed = new EmbedBuilder()
 				.setColor(0x2ECC71)
-				.setTitle('🎉 A New Hero Arrives! 🎉')
-				.setDescription(`Let's all give a warm welcome to our newest member, ${newMember.toString()}!`)
+				.setTitle(getTonyQuote('announce_newHero_title'))
+				.setDescription(getTonyQuote('announce_newHero_desc', newMember.toString()))
 				.setThumbnail(newMember.displayAvatarURL({ dynamic: true, size: 256 }))
 				.addFields({
 					name: `Welcome to ${guildData.guild_name}!`,
-					value: 'We\'re thrilled to have you with us in our public square!',
+					value: getTonyQuote('announce_newHero_value', guildData.guild_name),
 				})
 				.setTimestamp();
 			await channel.send({ embeds: [welcomeEmbed] });
@@ -316,8 +317,8 @@ async function announceNewMember(client, newMember, guildData) {
 		// --- Global Announcement (Unchanged) ---
 		const globalJoinEmbed = new EmbedBuilder()
 			.setColor(0x57F287)
-			.setTitle('✅ New Guild Member')
-			.setDescription(`${newMember.toString()} has joined the **${guildData.guild_name} [${guildData.guild_tag}]** guild!`)
+			.setTitle(getTonyQuote('announce_globalJoin_title'))
+			.setDescription(getTonyQuote('announce_globalJoin_desc', newMember.toString(), guildData.guild_name, guildData.guild_tag))
 			.setTimestamp();
 		await sendGuildAnnouncement(client, globalJoinEmbed);
 
@@ -330,25 +331,25 @@ async function handleCreate(interaction) {
 	const name = interaction.options.getString('name');
 	const tag = interaction.options.getString('tag').toUpperCase();
 	const userId = interaction.user.id;
-	const guildCategoryId = '1396211786008756254';
-	const staffRoleId = '1354145856345083914';
-	const botsRoleId = '1362247491101262106';
+	const guildCategoryId = config.discord.guildCategoryId;
+	const staffRoleId = config.discord.staffRoleId;
+	const botsRoleId = config.discord.botsRoleId;
 
-	const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Guild Creation Failed');
+	const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle(getTonyQuote('create_failed_title'));
 
 	// Validate guild tag
 	if (!/^[A-Z]{3}$/.test(tag)) {
-		errorEmbed.setDescription('Guild tag must be exactly 3 uppercase letters!');
+		errorEmbed.setDescription(getTonyQuote('create_badTag_desc'));
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
 
 	// Validate guild name (alphanumeric + spaces only)
 	if (!/^[a-zA-Z0-9 ]+$/.test(name)) {
-		errorEmbed.setDescription('Guild name can only contain letters, numbers, and spaces!');
+		errorEmbed.setDescription(getTonyQuote('create_badName_desc'));
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
 	if (name.length < 3 || name.length > 35) {
-		errorEmbed.setDescription('Guild name must be between 3 and 35 characters!');
+		errorEmbed.setDescription(getTonyQuote('create_badLength_desc'));
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
 
@@ -359,7 +360,7 @@ async function handleCreate(interaction) {
 	);
 
 	if (hasReservedTerm) {
-		errorEmbed.setDescription(`That guild name contains restricted terms. Please choose another name.\nAvoid terms like: ${RESERVED_TERMS.join(', ')}`);
+		errorEmbed.setDescription(getTonyQuote('create_reservedName_desc', RESERVED_TERMS.join(', ')));
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
 
@@ -374,7 +375,7 @@ async function handleCreate(interaction) {
 			console.warn(`[Guild Fix] Removed ghost membership for user ${userId} in nonexistent guild [${tagOfGuild.guild_tag}]`);
 		}
 		else {
-			errorEmbed.setDescription(`You're already in a guild, **${userGuild.guild_name} [${tagOfGuild.guild_tag}]**! Leave it first before creating a new one.`);
+			errorEmbed.setDescription(getTonyQuote('create_alreadyInGuild_desc', userGuild.guild_name, tagOfGuild.guild_tag));
 			return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 		}
 	}
@@ -382,7 +383,7 @@ async function handleCreate(interaction) {
 	// Check if tag is already taken
 	const existingGuild = db.prepare('SELECT * FROM guild_list WHERE guild_tag = ?').get(tag);
 	if (existingGuild) {
-		errorEmbed.setDescription(`The tag **[${tag}]** is already taken! Please choose a different one.`);
+		errorEmbed.setDescription(getTonyQuote('create_tagTaken_desc', tag));
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
 
@@ -497,8 +498,8 @@ async function handleCreate(interaction) {
 
 		const replyEmbed = new EmbedBuilder()
 			.setColor(0x2ECC71)
-			.setTitle(`🏰 Guild "${name}" [${tag}] Created!`)
-			.setDescription('Your new guild has been successfully established!')
+			.setTitle(getTonyQuote('create_success_title', name, tag))
+			.setDescription(getTonyQuote('create_success_desc', name))
 			.addFields(
 				{ name: 'Public Channel', value: `${publicChannel}`, inline: true },
 				{ name: 'Private Guildhall', value: `${privateChannel}`, inline: true },
@@ -508,14 +509,14 @@ async function handleCreate(interaction) {
 
 		const creationEmbed = new EmbedBuilder()
 			.setColor(0x2ECC71)
-			.setTitle('🏰 A New Guild has been Founded!')
-			.setDescription(`**${name} [${tag}]** has been established by the guildmaster ${interaction.user}! May their renown grow!`)
+			.setTitle(getTonyQuote('create_globalAnnounce_title'))
+			.setDescription(getTonyQuote('create_globalAnnounce_desc', name, tag, interaction.user))
 			.setTimestamp();
 
 		await sendGuildAnnouncement(interaction.client, creationEmbed);
 
 		// Welcome message in the new public channel
-		await publicChannel.send({ content: `Welcome, citizens, to the public square of **${name} [${tag}]**! This guild was founded by ${interaction.user}.` });
+		await publicChannel.send({ content: getTonyQuote('create_publicChannelWelcome', name, tag, interaction.user) });
 
 
 		return interaction.reply({ embeds: [replyEmbed], flags: [MessageFlags.Ephemeral] });
@@ -530,8 +531,8 @@ async function handleCreate(interaction) {
 
 		const finalErrorEmbed = new EmbedBuilder()
 			.setColor(0xE74C3C)
-			.setTitle('❌ Guild Creation Error')
-			.setDescription('An unexpected error occurred while creating your guild. Any partial resources have been cleaned up. Please try again later.');
+			.setTitle(getTonyQuote('create_error_title'))
+			.setDescription(getTonyQuote('create_error_desc'));
 		return interaction.reply({ embeds: [finalErrorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
 }
@@ -551,14 +552,14 @@ async function handleDelete(interaction) {
 	if (!userGuild) {
 		const errorEmbed = new EmbedBuilder()
 			.setColor(0xE74C3C)
-			.setTitle('❌ Action Not Allowed')
-			.setDescription('You must be the owner of a guild to delete it!');
+			.setTitle(getTonyQuote('delete_notAllowed_title'))
+			.setDescription(getTonyQuote('delete_notAllowed_desc'));
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
 	const confirmationEmbed = new EmbedBuilder()
 		.setColor(0xFEE75C)
-		.setTitle('⚠️ Confirm Deletion')
-		.setDescription(`Are you sure you want to permanently delete **${userGuild.guild_name} [${userGuild.guild_tag}]**?\n\nThis action will erase the guild's channels, role, and all associated data. **This cannot be undone.**`);
+		.setTitle(getTonyQuote('delete_confirm_title'))
+		.setDescription(getTonyQuote('delete_confirm_desc', userGuild.guild_name, userGuild.guild_tag));
 
 	// Create confirmation buttons
 	const row = new ActionRowBuilder().addComponents(
@@ -588,8 +589,8 @@ async function handleDelete(interaction) {
 		if (buttonInteraction.user.id !== userId) {
 			const notOwnerEmbed = new EmbedBuilder()
 				.setColor(0xE74C3C)
-				.setTitle('❌ Not for You')
-				.setDescription('Only the guild owner can confirm this action.');
+				.setTitle(getTonyQuote('delete_notForYou_title'))
+				.setDescription(getTonyQuote('delete_notForYou_desc'));
 			return buttonInteraction.reply({ embeds: [notOwnerEmbed], flags: [MessageFlags.Ephemeral] });
 		}
 
@@ -609,15 +610,15 @@ async function handleDelete(interaction) {
 
 				const deletionEmbed = new EmbedBuilder()
 					.setColor(0xE74C3C)
-					.setTitle('🗑️ A Guild has Disbanded')
-					.setDescription(`The guild **${userGuild.guild_name} [${userGuild.guild_tag}]** has been deleted by its owner. Its banners have been lowered for the last time.`)
+					.setTitle(getTonyQuote('delete_globalAnnounce_title'))
+					.setDescription(getTonyQuote('delete_globalAnnounce_desc', userGuild.guild_name, userGuild.guild_tag))
 					.setTimestamp();
 				await sendGuildAnnouncement(interaction.client, deletionEmbed);
 
 				const successEmbed = new EmbedBuilder()
 					.setColor(0x2ECC71)
-					.setTitle('🗑️ Guild Deleted')
-					.setDescription(`The guild **${userGuild.guild_name} [${userGuild.guild_tag}]** has been successfully deleted.`);
+					.setTitle(getTonyQuote('delete_success_title'))
+					.setDescription(getTonyQuote('delete_success_desc', userGuild.guild_name, userGuild.guild_tag));
 				await buttonInteraction.update({
 					embeds: [successEmbed],
 					components: [],
@@ -627,8 +628,8 @@ async function handleDelete(interaction) {
 				console.error('Guild deletion error:', error);
 				const errorEmbed = new EmbedBuilder()
 					.setColor(0xE74C3C)
-					.setTitle('❌ Deletion Error')
-					.setDescription('An unexpected error occurred while deleting your guild. Please try again later.');
+					.setTitle(getTonyQuote('delete_error_title'))
+					.setDescription(getTonyQuote('delete_error_desc'));
 				await buttonInteraction.update({
 					embeds: [errorEmbed],
 					components: [],
@@ -638,8 +639,8 @@ async function handleDelete(interaction) {
 		else if (buttonInteraction.customId === 'guild_delete_cancel') {
 			const cancelEmbed = new EmbedBuilder()
 				.setColor(0x3498DB)
-				.setTitle('🚫 Deletion Cancelled')
-				.setDescription('The guild deletion process has been cancelled.');
+				.setTitle(getTonyQuote('delete_cancelled_title'))
+				.setDescription(getTonyQuote('delete_cancelled_desc'));
 			await buttonInteraction.update({
 				embeds: [cancelEmbed],
 				components: [],
@@ -653,8 +654,8 @@ async function handleDelete(interaction) {
 		if (collected.size === 0) {
 			const timeoutEmbed = new EmbedBuilder()
 				.setColor(0xFEE75C)
-				.setTitle('⏱️ Timed Out')
-				.setDescription('Confirmation timed out. The guild was not deleted.');
+				.setTitle(getTonyQuote('delete_timeout_title'))
+				.setDescription(getTonyQuote('delete_timeout_desc'));
 			interaction.editReply({
 				embeds: [timeoutEmbed],
 				components: [],
@@ -854,22 +855,22 @@ async function processGuidedSetup(interaction, guildData) {
 	if (promptsQueue.length === 0) {
 		const finishedEmbed = new EmbedBuilder()
 			.setColor(0x2ECC71)
-			.setTitle('✅ All Set!')
-			.setDescription('All your raid messages are already customized! You can manage them with the "View & Manage All" option.');
+			.setTitle(getTonyQuote('raidmsg_allSet_title'))
+			.setDescription(getTonyQuote('raidmsg_allSet_desc'));
 		return interaction.update({ embeds: [finishedEmbed], components: [] });
 	}
 
 	const startEmbed = new EmbedBuilder()
 		.setColor(0x3498DB)
-		.setDescription('Starting the guided raid message configuration...');
+		.setDescription(getTonyQuote('raidmsg_guidedStart_desc'));
 	await interaction.update({ embeds: [startEmbed], components: [] });
 
 	const processQueue = async (index) => {
 		if (index >= promptsQueue.length) {
 			const completeEmbed = new EmbedBuilder()
 				.setColor(0x2ECC71)
-				.setTitle('✅ Configuration Complete!')
-				.setDescription('All default messages have been reviewed.');
+				.setTitle(getTonyQuote('raidmsg_complete_title'))
+				.setDescription(getTonyQuote('raidmsg_complete_desc'));
 			await interaction.followUp({ embeds: [completeEmbed], flags: [MessageFlags.Ephemeral] });
 			return;
 		}
@@ -910,21 +911,21 @@ async function processGuidedSetup(interaction, guildData) {
 				db.prepare(`UPDATE guild_raid_messages SET ${key} = ? WHERE guild_tag = ?`).run(newText, guildData.guild_tag);
 				await message.delete().catch(console.error);
 
-				const updatedEmbed = new EmbedBuilder().setColor(0x2ECC71).setDescription(`✅ **${title}** updated!`);
+				const updatedEmbed = new EmbedBuilder().setColor(0x2ECC71).setDescription(getTonyQuote('raidmsg_updated_desc', title));
 				await interaction.editReply({ embeds: [updatedEmbed], components: [] });
 			}
 			else {
 				if (collected.customId === 'exit_editor') {
-					const exitEmbed = new EmbedBuilder().setColor(0x3498DB).setDescription('Exiting the editor.');
+					const exitEmbed = new EmbedBuilder().setColor(0x3498DB).setDescription(getTonyQuote('raidmsg_exit_desc'));
 					await collected.update({ embeds: [exitEmbed], components: [] });
 					return;
 				}
-				const skippedEmbed = new EmbedBuilder().setColor(0x3498DB).setDescription('Skipped. Moving to the next message.');
+				const skippedEmbed = new EmbedBuilder().setColor(0x3498DB).setDescription(getTonyQuote('raidmsg_skipped_desc'));
 				await collected.update({ embeds: [skippedEmbed], components: [] });
 			}
 		}
 		catch (error) {
-			const timeoutEmbed = new EmbedBuilder().setColor(0xFEE75C).setDescription('⏱️ Timed out. Please start the command again.');
+			const timeoutEmbed = new EmbedBuilder().setColor(0xFEE75C).setDescription(getTonyQuote('raidmsg_timeout_desc'));
 			await interaction.editReply({ embeds: [timeoutEmbed], components: [] });
 			console.log(error);
 			return;
@@ -950,11 +951,11 @@ async function handleGuildFund(interaction) {
 		if (!userGuild) {
 			const embed = new EmbedBuilder()
 				.setColor(0xed4245)
-				.setTitle('❌ Failed to Fund Guild!')
+				.setTitle(getTonyQuote('fund_failed_title'))
 				.addFields(
 					{
-						name: '🏛️ You aren\'t in a guild!',
-						value: 'Join a guild first!',
+						name: getTonyQuote('fund_notInGuild_name'),
+						value: getTonyQuote('fund_notInGuild_value'),
 						inline: false,
 					},
 				);
@@ -963,11 +964,11 @@ async function handleGuildFund(interaction) {
 		if (userGuild.guild_tag !== guildTag) {
 			const embed = new EmbedBuilder()
 				.setColor(0xed4245)
-				.setTitle('❌ Failed to Fund Guild!')
+				.setTitle(getTonyQuote('fund_failed_title'))
 				.addFields(
 					{
-						name: '🏛️ You can only contribute to the guild you are in!',
-						value: `The guild tag you are trying to fund, \`[${guildTag}]\`, does not match the guild tag you are in, \`[${userGuild.guild_tag}]\`!`,
+						name: getTonyQuote('fund_wrongGuild_name'),
+						value: getTonyQuote('fund_wrongGuild_value', userGuild.guild_tag, guildTag),
 						inline: false,
 					},
 				);
@@ -983,16 +984,16 @@ async function handleGuildFund(interaction) {
 	if (userBalance < amount) {
 		const embed = new EmbedBuilder()
 			.setColor(0xed4245)
-			.setTitle('❌ Failed to Fund Guild!')
+			.setTitle(getTonyQuote('fund_failed_title'))
 			.addFields(
 				{
-					name: '💸 You can only fund your guild with Crowns than you own!',
-					value: `To fund ${amount} Crowns, you'd need **${(amount - userBalance)}** more Crowns!`,
+					name: getTonyQuote('fund_insufficient_name'),
+					value: getTonyQuote('fund_insufficient_value', amount, (amount - userBalance)),
 					inline: false,
 				},
 				{
 					name: '👑 Current Crown Balance:',
-					value: `${(userEcon?.crowns || 0)} Crowns`,
+					value: `${(userEcon?.crowns || 0).toLocaleString()} Crowns`,
 					inline: false,
 				},
 			);
@@ -1021,13 +1022,13 @@ async function handleGuildFund(interaction) {
 			.setTitle('💰 Westwind Royal Treasury 💰')
 			.addFields(
 				{
-					name: '🏛️ Funding Guild Success!',
-					value: `✅ You've contributed ${amount} Crowns to ${guildInfo.guild_name} (${guildTag})`,
+					name: getTonyQuote('fund_success_name'),
+					value: getTonyQuote('fund_success_value', amount, guildInfo.guild_name, guildTag),
 					inline: false,
 				},
 				{
 					name: '👑 **NEW** Crown Balance:',
-					value: `${userBalance - amount} Crowns`,
+					value: `${(userBalance - amount).toLocaleString()} Crowns`,
 					inline: false,
 				},
 			);
@@ -1041,8 +1042,8 @@ async function handleGuildFund(interaction) {
 			.setTitle('❌ Brewmaster Error!')
 			.addFields(
 				{
-					name: 'Guild Funding Error - Database Rolled Back.',
-					value: '❌ An error occurred while processing the guild funding transaction. Please try again later.',
+					name: getTonyQuote('fund_error_name'),
+					value: getTonyQuote('fund_error_value'),
 					inline: false,
 				},
 				{
@@ -4002,8 +4003,8 @@ module.exports = {
 				WHERE gf.message_id = ?
 			`).get(fundraiserId);
 
-			if (!fundraiser) {
-				errorEmbed.setTitle('🚫 Fundraiser Not Found').setDescription('This fundraiser no longer exists!');
+			if (!fundraiser || fundraiser.completed) {
+				errorEmbed.setTitle('🚫 Fundraiser Not Found').setDescription('This fundraiser no longer exists or has already been completed!');
 				return interaction.update({
 					embeds: [errorEmbed],
 					components: [],
@@ -4091,6 +4092,8 @@ module.exports = {
 				if (contributionAmount > upperLimit) {
 					contributionAmount = upperLimit;
 				}
+
+				let isNowComplete = false;
 				// Process contribution in transaction
 				db.transaction(() => {
 					// Deduct from user
@@ -4113,7 +4116,21 @@ module.exports = {
 						VALUES (?, ?, ?)
 						ON CONFLICT(fundraiser_id, user_id) DO UPDATE SET amount = amount + ?
 					`).run(fundraiserId, userId, contributionAmount, contributionAmount);
+
+					// ATOMIC COMPLETION CHECK
+					const completionResult = db.prepare(`
+						UPDATE guild_fundraisers
+						SET completed = 1
+						WHERE message_id = ?
+						  AND completed = 0
+						  AND current_amount >= target_amount
+					`).run(fundraiserId);
+
+					if (completionResult.changes > 0) {
+						isNowComplete = true;
+					}
 				})();
+
 
 				// Get updated fundraiser info
 				const updatedFundraiser = db.prepare(`
@@ -4138,12 +4155,7 @@ module.exports = {
 				await interaction.update({ embeds: [newEmbed] });
 
 				// Check if goal reached
-				if (updatedFundraiser.current_amount >= fundraiser.target_amount && !fundraiser.completed) {
-					// Mark as completed
-					db.prepare(`
-						UPDATE guild_fundraisers SET completed = 1 WHERE message_id = ?
-					`).run(fundraiserId);
-
+				if (isNowComplete) {
 					// Add funds to guild
 					db.prepare(`
 						INSERT INTO guild_economy (guild_tag, balance)
@@ -4202,7 +4214,6 @@ module.exports = {
 				});
 			}
 		},
-
 		async handleFundraiseCustomModal(interaction) {
 			const [,, fundraiserId] = interaction.customId.split('_');
 			const amount = parseInt(interaction.fields.getTextInputValue('amount'));

@@ -1,9 +1,10 @@
 const db = require('../database');
+const config = require('../config.json');
 
 // Constants
-const BUMP_CHANNEL_ID = '1354187940246327316';
-const BUMP_ROLE_ID = '1380398838333968436';
-const BUMP_COOLDOWN_MS = 2 * 60 * 60 * 1000;
+const BUMP_CHANNEL_ID = config.discord.bumpChannelId;
+const BUMP_ROLE_ID = config.discord.bumpRoleId;
+const BUMP_COOLDOWN_MS = config.bump.cooldownMs;
 
 let reminderTimeout = null;
 let clientInstance = null;
@@ -65,19 +66,22 @@ function scheduleNextReminder() {
 async function sendReminder() {
 	if (isSendingReminder) return;
 	isSendingReminder = true;
-	const devDisableReminders = false;
 
 	if (!clientInstance) {
 		console.error('[Bump Reminder] Client not initialized');
 		isSendingReminder = false;
 		return;
 	}
+
+	// Fetch the setting dynamically from the database
+	const setting = db.prepare('SELECT setting_value FROM bot_settings WHERE setting_key = ?').get('dev_disable_reminders');
+    const devDisableReminders = (setting && setting.setting_value === 'true');
+
 	if (!devDisableReminders) {
 		try {
 			const channel = await clientInstance.channels.fetch(BUMP_CHANNEL_ID).catch(console.error);
 			if (!channel) {
 				console.error('[Bump Reminder] Channel not found');
-				isSendingReminder = false;
 				return;
 			}
 
