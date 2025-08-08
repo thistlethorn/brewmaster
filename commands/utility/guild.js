@@ -2199,7 +2199,7 @@ async function handleSettings(interaction, settingType) {
 		}
 		case 'hook': {
 			const text = interaction.options.getString('text');
-			if (text.length > 4000) {
+			if (text.length > 150) {
 				errorEmbed.setDescription('Hook text cannot exceed 150 characters!');
 				return interaction.reply({
 					embeds: [errorEmbed],
