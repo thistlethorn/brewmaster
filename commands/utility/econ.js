@@ -357,7 +357,7 @@ async function handleDaily(interaction) {
 
 	// --- HANDLE SUCCESSFUL CLAIM ---
 	const newBalance = (userEcon?.crowns || 0) + payout;
-
+	const daysNeededForNextPrestige = 22 - currentStreak;
 	const prestigeText = currentPrestige > 0 ? ` [Prestige ${currentPrestige}]` : '';
 	let streakFooter;
 
@@ -368,7 +368,7 @@ async function handleDaily(interaction) {
 		streakFooter = 'Your streak was broken! You are back to Day 1.';
 	}
 	else if (currentStreak > 1) {
-		streakFooter = `You are on a ${currentStreak}-day streak! Keep it up! 🔥`;
+		streakFooter = `You are on a ${currentStreak}-day streak at Prestiege ${currentPrestige} (${daysNeededForNextPrestige} days more until next Prestige)! Keep it up! 🔥`;
 	}
 	else {
 		streakFooter = 'You claimed your first daily! Claim again tomorrow to start a streak!';
@@ -378,8 +378,8 @@ async function handleDaily(interaction) {
 		.setColor(0xF1C40F)
 		.setTitle(`💰 Daily Claim - Day ${currentStreak}${prestigeText} 💰`)
 		.addFields(
-			{ name: '🎉 You Received:', value: `**${payout.toLocaleString()}** Crowns!`, inline: false },
-			{ name: 'Breakdown:', value: `• Base: 20\n• Guild Bonus: ${guildBonus}\n• Prestige Bonus: ${prestigeBonus}\n• Daily Streak Bonus: **${streakBonus}**\n${multiplier > 1.0 ? `• **Multiplier: ${multiplier}x**` : ''}`, inline: false },
+			{ name: 'Breakdown:', value: `• Base: \`20 👑\`\n• Guild Bonus: \`${guildBonus} 👑\`\n• Prestige Level Bonus: \`${prestigeBonus} 👑\`\n• Daily Streak Bonus: \`${streakBonus} 👑\`\n${multiplier > 1.0 ? `• **Multiplier: ${multiplier}x**` : ''}`, inline: false },
+			{ name: '🎉 Total Received:', value: `**${payout.toLocaleString()}** Crowns!`, inline: false },
 			{ name: '👑 New Balance:', value: `**${newBalance.toLocaleString()}** Crowns`, inline: false },
 		)
 		.setFooter({ text: streakFooter });
