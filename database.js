@@ -289,7 +289,7 @@ const setupTables = db.transaction(() => {
 	db.prepare(`
         CREATE TABLE IF NOT EXISTS game_jackpot (
             id INTEGER PRIMARY KEY CHECK (id = 1),
-            amount INTEGER DEFAULT 2000
+            amount INTEGER DEFAULT 5000
         )
     `).run();
 

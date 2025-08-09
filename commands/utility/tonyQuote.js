@@ -116,12 +116,24 @@ async function handleSubmit(interaction) {
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
 
-	const userBalance = db.prepare('SELECT crowns FROM user_economy WHERE user_id = ?').get(userId)?.crowns || 0;
+	const userBalance = db.prepare(`
+        SELECT crowns 
+        FROM user_economy 
+        WHERE user_id = ?
+    `).get(userId)?.crowns || 0;
+
 	if (userBalance < TRIGGER_SUBMISSION_COST) {
-		errorEmbed.setDescription(`You don't have enough Crowns! This costs **${TRIGGER_SUBMISSION_COST} Crowns**, but you only have **${userBalance}**.`);
+		errorEmbed.setDescription(
+		    `You don't have enough Crowns! This costs **${TRIGGER_SUBMISSION_COST} Crowns**, but you only have **${userBalance}**.`);
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
 
+	db.prepare(`
+		INSERT INTO user_economy (user_id, crowns)
+		VALUES (?, 0)
+		ON CONFLICT(user_id) DO UPDATE
+		SET crowns = crowns - ?
+	`).run(userId, TRIGGER_SUBMISSION_COST);
 	try {
 		db.prepare('UPDATE user_economy SET crowns = crowns - ? WHERE user_id = ?').run(TRIGGER_SUBMISSION_COST, userId);
 
@@ -193,9 +205,11 @@ async function handleIdleSubmit(interaction) {
 	}
 
 	const userQuoteCount = db.prepare(`
-                                SELECT COUNT(*) as count FROM tony_quotes_active
-                                WHERE user_id = ? AND quote_type = 'idle'
-                            `).get(userId).count;
+        SELECT
+            (SELECT COUNT(*) FROM tony_quotes_active WHERE user_id = ?) +
+            (SELECT COUNT(*) FROM tony_quotes_pending WHERE user_id = ?)
+        AS count
+    `).get(userId, userId).count;
 	if (userQuoteCount >= MAX_USER_QUOTES) {
 		errorEmbed.setDescription(`You already have ${MAX_USER_QUOTES} active idle phrases, which is the maximum allowed.`);
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });

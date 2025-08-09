@@ -149,9 +149,11 @@ module.exports = {
 						triggerTx();
 
 						// Send Tony's reply
-						await message.channel.send(`*${chosenQuote.quote_text}*`);
-						await message.channel.send(`||-# <@${chosenQuote.user_id}>  earned 20 Crowns for this quote! • Want to submit your own? Use \`/tonyquote\` and earn 200 bonus crowns over time, for each!||`);
-
+						await message.channel.send({ content: `*${chosenQuote.quote_text}*`, allowedMentions: { parse: [] } });
+						await message.channel.send({
+							content: `||-# <@${chosenQuote.user_id}> earned 20 Crowns for this quote! • Want to submit your own? Use \`/tonyquote\` and earn 200 bonus crowns over time, for each!||`,
+							allowedMentions: { parse: [] },
+						});
 					}
 					catch (dbError) {
 						console.error('[Tony Quote Trigger] Database transaction failed:', dbError);

@@ -24,12 +24,14 @@ function setupIdleChatter(client) {
 function scheduleNextChatter() {
 	if (chatterTimeout) clearTimeout(chatterTimeout);
 
+	// Ensure the state row exists
+	db.prepare('INSERT OR IGNORE INTO tony_idle_chatter_state (id, next_chatter_time) VALUES (1, NULL)').run();
 	const state = db.prepare('SELECT next_chatter_time FROM tony_idle_chatter_state WHERE id = 1').get();
 
 	if (!state || !state.next_chatter_time) {
 		console.log('[Idle Chatter] No chatter time set. Scheduling first message.');
 		calculateAndSetNextTime();
-		// Re-call to schedule with the new time
+		// Re-call once to schedule with the new time (row now exists)
 		scheduleNextChatter();
 		return;
 	}
@@ -124,12 +126,16 @@ async function sendIdleMessage() {
 		calculateAndSetNextTime();
 		scheduleNextChatter();
 	}
-}
-
-function calculateAndSetNextTime() {
-	const randomDelay = Math.random() * MAX_ADDITIONAL_MS;
-	const nextTime = new Date(Date.now() + MIN_COOLDOWN_MS + randomDelay);
-	db.prepare('UPDATE tony_idle_chatter_state SET next_chatter_time = ? WHERE id = 1').run(nextTime.toISOString());
+	function calculateAndSetNextTime() {
+		const randomDelay = Math.random() * MAX_ADDITIONAL_MS;
+		const nextTime = new Date(Date.now() + MIN_COOLDOWN_MS + randomDelay);
+		db.prepare(`
+    INSERT INTO tony_idle_chatter_state (id, next_chatter_time)
+    VALUES (1, ?)
+    ON CONFLICT(id) DO UPDATE SET next_chatter_time = excluded.next_chatter_time
+  `).run(nextTime.toISOString());
+		console.log(`[Idle Chatter] New next chatter time set to: ${nextTime.toISOString()}`);
+	}
 	console.log(`[Idle Chatter] New next chatter time set to: ${nextTime.toISOString()}`);
 }
 

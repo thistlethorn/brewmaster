@@ -102,8 +102,8 @@ module.exports = {
 						return interaction.reply({ content: 'You are not authorized to perform this action.', flags: [MessageFlags.Ephemeral] });
 					}
 
-					const [, , action, id] = interaction.customId.split('_');
-					if (!action || !id || !/^\d+$/.test(id)) {
+					const [, , action, pendingId] = interaction.customId.split('_');
+					if (!action || !pendingId || !/^\d+$/.test(pendingId)) {
 						return interaction.reply({ content: 'Malformed interaction.', flags: [MessageFlags.Ephemeral] });
 					}
 
