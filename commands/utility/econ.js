@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, MessageFlags, ButtonStyle } = require('discord.js');
 const db = require('../../database');
 const { updateMultiplier } = require('../../utils/handleCrownRewards');
 const { scheduleDailyReminder } = require('../../tasks/dailyReminder');
@@ -269,6 +269,7 @@ function calculateDayBonus(streak) {
 async function handleDaily(interaction) {
 	const userId = interaction.user.id;
 	const now = new Date();
+	const nowIso = now.toISOString();
 
 	const userEcon = db.prepare('SELECT * FROM user_economy WHERE user_id = ?').get(userId);
 
@@ -281,61 +282,44 @@ async function handleDaily(interaction) {
 		const lastDaily = new Date(userEcon.last_daily);
 		const hoursSinceLastDaily = (now - lastDaily) / (1000 * 60 * 60);
 
-		// 1. COOLDOWN CHECK: Has it been 24 hours?
-		if (hoursSinceLastDaily < 24) {
-			const nextDaily = new Date(lastDaily.getTime() + 24 * 60 * 60 * 1000);
-			const embed = new EmbedBuilder()
-				.setColor(0xed4245)
-				.setTitle('❌ Not so fast, adventurer!')
-				.addFields({
-					name: 'You\'ve already claimed your daily income.',
-					value: `Your next claim is available <t:${Math.floor(nextDaily.getTime() / 1000)}:R>.`,
-				});
-			return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
-		}
-
-		// 2. STREAK CHECK: Was the last claim within the 48-hour window?
-		if (hoursSinceLastDaily < 48) {
-			// Streak continues
+		// Streak is checked here, but the 24h cooldown is handled by the database write.
+		if (hoursSinceLastDaily < 48 && hoursSinceLastDaily >= 24) {
 			currentStreak++;
+			// Streak continues
 		}
-		else {
-			// Streak is broken (more than 48 hours passed), reset
+		else if (hoursSinceLastDaily >= 48) {
 			currentStreak = 1;
 			streakBroken = true;
 		}
+		// If < 24h, the DB will prevent the claim, so we don't need an `else`.
 	}
 	else {
 		// First-ever daily claim
 		currentStreak = 1;
-		currentPrestige = 0;
 	}
 
 	let prestigedThisClaim = false;
-	// 3. PRESTIGE CHECK: Did we just hit day 22?
 	if (currentStreak > 21) {
 		currentPrestige++;
 		currentStreak = 1;
-
-		// Reset streak to Day 1 of the new prestige level
 		prestigedThisClaim = true;
 	}
 
-	// --- NEW BONUS CALCULATIONS ---
+	// --- BONUS & PAYOUT CALCULATIONS ---
 	const baseAmount = 20;
 	const guildInfo = db.prepare('SELECT gt.tier FROM guildmember_tracking gmt JOIN guild_tiers gt ON gmt.guild_tag = gt.guild_tag WHERE gmt.user_id = ?').get(userId);
 	const guildBonus = guildInfo ? guildInfo.tier * 5 : 0;
 	const prestigeBonus = currentPrestige * 10;
-	// Calculate the deterministic streak bonus using our new helper function
 	const streakBonus = calculateDayBonus(currentStreak);
-
-	// --- FINAL PAYOUT ---
 	const totalBase = baseAmount + guildBonus + prestigeBonus + streakBonus;
 	const multiplier = await updateMultiplier(userId, interaction.guild);
 	const payout = Math.floor(totalBase * multiplier);
 
-	// --- DATABASE UPDATE ---
-	db.prepare(`
+	// --- ATOMIC DATABASE UPDATE ---
+	// This statement attempts to INSERT a new record, but if a user_id already exists (ON CONFLICT),
+	// it will instead try to UPDATE. The UPDATE only succeeds if the WHERE condition is met,
+	// making the cooldown check atomic.
+	const stmt = db.prepare(`
         INSERT INTO user_economy (user_id, crowns, last_daily, multiplier, daily_streak, daily_prestige)
         VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id) DO UPDATE SET
@@ -344,9 +328,36 @@ async function handleDaily(interaction) {
             multiplier = ?,
             daily_streak = ?,
             daily_prestige = ?
-    `).run(userId, payout, now.toISOString(), multiplier, currentStreak, currentPrestige, payout, now.toISOString(), multiplier, currentStreak, currentPrestige);
+        WHERE (strftime('%s', ?) - strftime('%s', user_economy.last_daily)) >= 86400
+    `);
 
-	// --- RESPONSE EMBED ---
+	const info = stmt.run(
+		// For INSERT
+		userId, payout, nowIso, multiplier, currentStreak, currentPrestige,
+		// For UPDATE
+		payout, nowIso, multiplier, currentStreak, currentPrestige,
+		// For the WHERE clause
+		nowIso,
+
+	);
+
+	// --- HANDLE FAILED CLAIM (COOLDOWN) ---
+	if (info.changes === 0 && userEcon) {
+		const lastDaily = new Date(userEcon.last_daily);
+		const nextDaily = new Date(lastDaily.getTime() + 24 * 60 * 60 * 1000);
+		const embed = new EmbedBuilder()
+			.setColor(0xed4245)
+			.setTitle('❌ Not so fast, adventurer!')
+			.addFields({
+				name: 'You\'ve already claimed your daily income.',
+				value: `Your next claim is available <t:${Math.floor(nextDaily.getTime() / 1000)}:R>.`,
+			});
+		return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+	}
+
+	// --- HANDLE SUCCESSFUL CLAIM ---
+	const newBalance = (userEcon?.crowns || 0) + payout;
+
 	const prestigeText = currentPrestige > 0 ? ` [Prestige ${currentPrestige}]` : '';
 	let streakFooter;
 
@@ -369,7 +380,7 @@ async function handleDaily(interaction) {
 		.addFields(
 			{ name: '🎉 You Received:', value: `**${payout.toLocaleString()}** Crowns!`, inline: false },
 			{ name: 'Breakdown:', value: `• Base: 20\n• Guild Bonus: ${guildBonus}\n• Prestige Bonus: ${prestigeBonus}\n• Daily Streak Bonus: **${streakBonus}**\n${multiplier > 1.0 ? `• **Multiplier: ${multiplier}x**` : ''}`, inline: false },
-			{ name: '👑 New Balance:', value: `**${((userEcon?.crowns || 0) + payout).toLocaleString()}** Crowns`, inline: false },
+			{ name: '👑 New Balance:', value: `**${newBalance.toLocaleString()}** Crowns`, inline: false },
 		)
 		.setFooter({ text: streakFooter });
 
@@ -394,7 +405,6 @@ async function handleDaily(interaction) {
 		embed.setFooter({ text: `${streakFooter}\nWant a reminder when your next daily is ready?` });
 	}
 	else if (pingPref.opt_in_status === 1) {
-		// User is already opted-in, so schedule their next reminder
 		scheduleDailyReminder(interaction.client, userId, now);
 	}
 

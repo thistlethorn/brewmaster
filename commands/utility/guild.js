@@ -41,7 +41,7 @@ const GUILD_RAID_MAX_PER_MEMBER_CAP = config.guild.raidMaxPerMemberCap;
 const ALLIANCE_RAID_DURATION_MS = config.guild.allianceRaidDurationMs;
 
 // Originally starting this at 15 but may change the upper limit later.
-const NUMBER_OF_GUILDS_LIMIT = config.guild.maxAmountOfGuildsExisting;
+const NUMBER_OF_GUILDS_LIMIT = Number(config.guild?.maxAmountOfGuildsExisting) || 15;
 
 
 // NEW: Helper function for creating delays
@@ -1013,7 +1013,7 @@ async function handleGuildFund(interaction) {
 				},
 				{
 					name: '👑 **NEW** Crown Balance:',
-					value: `${updatedUserBalance} Crowns`,
+					value: `${updatedUserBalance.toLocaleString()} Crowns`,
 					inline: false,
 				},
 			);
@@ -1299,7 +1299,7 @@ async function handleDues(interaction) {
 	const announcementEmbed = new EmbedBuilder()
 		.setColor(0x3498DB)
 		.setTitle('📢 Guild Announcement!')
-		.setDescription(`The Guildmaster, ${interaction.user}, has begun the weekly dues collection!`);
+		.setDescription(`The Guildmaster, ${interaction.user}, has begun the daily dues collection!`);
 	await guildChannel.send({ embeds: [announcementEmbed] });
 
 	// Get all guild members
@@ -4398,31 +4398,21 @@ module.exports = {
 				const isPrimaryDefender = joiningGuildTag === originalRaid.defender_tag;
 				console.log(`[ALLIANCE JOIN] Primary attacker? ${isPrimaryAttacker}, Primary defender? ${isPrimaryDefender}`);
 
-				let joinCost = 0;
+
 				let successMessage;
 
 				if (isPrimaryAttacker || isPrimaryDefender) {
-					joinCost = 0;
+
 					successMessage = `Your guild has officially joined as the ${isPrimaryAttacker ? 'leading attacker' : 'primary defender'}!`;
 					console.log('[ALLIANCE JOIN] Primary participant joining for free');
 				}
 				else {
-					joinCost = Math.floor(0.5 * joiningGuildData.tier * 200);
-					console.log(`[ALLIANCE JOIN] Ally cost calculated: ${joinCost}`);
-					if (joiningGuildData.balance < joinCost) {
-						console.log('[ALLIANCE JOIN] Insufficient funds');
-						const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Insufficient Funds').setDescription(`Your guild vault needs **${joinCost.toLocaleString()}** Crowns to join this war, but you only have **${joiningGuildData.balance.toLocaleString()}**.`);
-						return interaction.editReply({ embeds: [errorEmbed] });
-					}
-					successMessage = `Your guild, **${joiningGuildData.guild_name}**, has paid **${joinCost.toLocaleString()}** Crowns and joined the war as a **${side}**!`;
+
+					successMessage = `Your guild, **${joiningGuildData.guild_name}**, has joined the war as a **${side}** for FREE!`;
 				}
 
 				console.log('[ALLIANCE JOIN] Starting transaction');
 				db.transaction(() => {
-					if (joinCost > 0) {
-						console.log(`[ALLIANCE JOIN] Deducting ${joinCost} from ${joiningGuildTag}`);
-						db.prepare('UPDATE guild_economy SET balance = balance - ? WHERE guild_tag = ?').run(joinCost, joiningGuildTag);
-					}
 					console.log(`[ALLIANCE JOIN] Adding ${joiningGuildTag} to raid ${raidId} as ${side}`);
 					db.prepare('INSERT INTO active_raid_allies (raid_id, allied_guild_tag, side) VALUES (?, ?, ?)').run(raidId, joiningGuildTag, side);
 				})();
