@@ -2,6 +2,9 @@ const Database = require('better-sqlite3');
 const path = require('path');
 
 const db = new Database(path.join(__dirname, 'bump_data.db'));
+db.pragma('foreign_keys = ON');
+db.pragma('journal_mode = WAL');
+
 
 // Initialize tables in one transaction
 const setupTables = db.transaction(() => {
@@ -130,6 +133,14 @@ const setupTables = db.transaction(() => {
             sticker_id TEXT NOT NULL,
             sticker_name TEXT NOT NULL,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(guild_tag) REFERENCES guild_list(guild_tag) ON DELETE CASCADE
+        )
+    `).run();
+
+	db.prepare(`
+        CREATE TABLE IF NOT EXISTS guild_daily_dues (
+            guild_tag TEXT PRIMARY KEY,
+            last_dues_date TEXT NOT NULL,
             FOREIGN KEY(guild_tag) REFERENCES guild_list(guild_tag) ON DELETE CASCADE
         )
     `).run();
@@ -366,6 +377,4 @@ const setupTables = db.transaction(() => {
 
 setupTables();
 
-
-db.pragma('journal_mode = WAL');
 module.exports = db;

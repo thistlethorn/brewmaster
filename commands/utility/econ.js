@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, MessageFlags, ButtonStyle } = require('discord.js');
 const db = require('../../database');
 const { updateMultiplier } = require('../../utils/handleCrownRewards');
 const { scheduleDailyReminder } = require('../../tasks/dailyReminder');
@@ -234,72 +234,92 @@ async function handleDevRemove(interaction, user, amount) {
 		await interaction.reply({ embeds: [embed] });
 	}
 }
+
+/**
+ * Calculates the cumulative daily streak bonus based on brackets.
+ * @param {number} streak The current day streak (1-21).
+ * @returns {number} The total accumulated bonus for that streak.
+ */
+function calculateDayBonus(streak) {
+	if (streak <= 0) return 0;
+	// Days 1-7 give +1 each
+	// Days 8-14 give +3 each
+	// Days 15-21 give +7 each
+	const brackets = [
+		{ days: 7, bonus: 1 },
+		{ days: 7, bonus: 3 },
+		{ days: 7, bonus: 7 },
+	];
+
+	let totalBonus = 0;
+	let daysRemaining = streak;
+
+	for (const bracket of brackets) {
+		if (daysRemaining <= 0) break;
+
+		// Calculate how many days of the streak fall into the current bracket
+		const daysInThisBracket = Math.min(daysRemaining, bracket.days);
+		totalBonus += daysInThisBracket * bracket.bonus;
+		daysRemaining -= daysInThisBracket;
+	}
+
+	return totalBonus;
+}
+
 async function handleDaily(interaction) {
 	const userId = interaction.user.id;
 	const now = new Date();
+	const nowIso = now.toISOString();
 
 	const userEcon = db.prepare('SELECT * FROM user_economy WHERE user_id = ?').get(userId);
 
-	// --- STREAK & PRESTIGE LOGIC (SIMPLIFIED) ---
+	// --- STREAK & PRESTIGE LOGIC ---
 	let currentStreak = userEcon?.daily_streak || 0;
 	let currentPrestige = userEcon?.daily_prestige || 0;
+	let streakBroken = false;
 
 	if (userEcon?.last_daily) {
 		const lastDaily = new Date(userEcon.last_daily);
 		const hoursSinceLastDaily = (now - lastDaily) / (1000 * 60 * 60);
 
-		// 1. COOLDOWN CHECK: Has it been 24 hours?
-		if (hoursSinceLastDaily < 24) {
-			const nextDaily = new Date(lastDaily.getTime() + 24 * 60 * 60 * 1000);
-			const embed = new EmbedBuilder()
-				.setColor(0xed4245)
-				.setTitle('❌ Not so fast, adventurer!')
-				.addFields({
-					name: 'You\'ve already claimed your daily income.',
-					value: `Your next claim is available <t:${Math.floor(nextDaily.getTime() / 1000)}:R>.`,
-				});
-			return interaction.reply({ embeds: [embed] });
-		}
-
-		// 2. STREAK CHECK: Was the last claim within the 48-hour window?
-		if (hoursSinceLastDaily < 48) {
-			// Streak continues
+		// Streak is checked here, but the 24h cooldown is handled by the database write.
+		if (hoursSinceLastDaily < 48 && hoursSinceLastDaily >= 24) {
 			currentStreak++;
+			// Streak continues
 		}
-		else {
-			// Streak is broken (more than 48 hours passed), reset
+		else if (hoursSinceLastDaily >= 48) {
 			currentStreak = 1;
-			// Don't reset prestige, it's a permanent achievement
+			streakBroken = true;
 		}
+		// If < 24h, the DB will prevent the claim, so we don't need an `else`.
 	}
 	else {
 		// First-ever daily claim
 		currentStreak = 1;
-		currentPrestige = 0;
 	}
 
-	// 3. PRESTIGE CHECK: Did we just hit day 22?
+	let prestigedThisClaim = false;
 	if (currentStreak > 21) {
 		currentPrestige++;
 		currentStreak = 1;
-		// Reset streak to Day 1 of the new prestige level
+		prestigedThisClaim = true;
 	}
 
-	// --- BONUS CALCULATIONS ---
+	// --- BONUS & PAYOUT CALCULATIONS ---
 	const baseAmount = 20;
 	const guildInfo = db.prepare('SELECT gt.tier FROM guildmember_tracking gmt JOIN guild_tiers gt ON gmt.guild_tag = gt.guild_tag WHERE gmt.user_id = ?').get(userId);
 	const guildBonus = guildInfo ? guildInfo.tier * 5 : 0;
 	const prestigeBonus = currentPrestige * 10;
-	const maxRoll = currentStreak + currentPrestige;
-	const streakRoll = Math.floor(Math.random() * (maxRoll + 1));
-
-	// --- FINAL PAYOUT ---
-	const totalBase = baseAmount + guildBonus + prestigeBonus + streakRoll;
+	const streakBonus = calculateDayBonus(currentStreak);
+	const totalBase = baseAmount + guildBonus + prestigeBonus + streakBonus;
 	const multiplier = await updateMultiplier(userId, interaction.guild);
 	const payout = Math.floor(totalBase * multiplier);
 
-	// --- DATABASE UPDATE ---
-	db.prepare(`
+	// --- ATOMIC DATABASE UPDATE ---
+	// This statement attempts to INSERT a new record, but if a user_id already exists (ON CONFLICT),
+	// it will instead try to UPDATE. The UPDATE only succeeds if the WHERE condition is met,
+	// making the cooldown check atomic.
+	const stmt = db.prepare(`
         INSERT INTO user_economy (user_id, crowns, last_daily, multiplier, daily_streak, daily_prestige)
         VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id) DO UPDATE SET
@@ -308,18 +328,59 @@ async function handleDaily(interaction) {
             multiplier = ?,
             daily_streak = ?,
             daily_prestige = ?
-    `).run(userId, payout, now.toISOString(), multiplier, currentStreak, currentPrestige, payout, now.toISOString(), multiplier, currentStreak, currentPrestige);
+        WHERE (strftime('%s', ?) - strftime('%s', user_economy.last_daily)) >= 86400
+    `);
 
-	// --- RESPONSE EMBED ---
+	const info = stmt.run(
+		// For INSERT
+		userId, payout, nowIso, multiplier, currentStreak, currentPrestige,
+		// For UPDATE
+		payout, nowIso, multiplier, currentStreak, currentPrestige,
+		// For the WHERE clause
+		nowIso,
+
+	);
+
+	// --- HANDLE FAILED CLAIM (COOLDOWN) ---
+	if (info.changes === 0 && userEcon) {
+		const lastDaily = new Date(userEcon.last_daily);
+		const nextDaily = new Date(lastDaily.getTime() + 24 * 60 * 60 * 1000);
+		const embed = new EmbedBuilder()
+			.setColor(0xed4245)
+			.setTitle('❌ Not so fast, adventurer!')
+			.addFields({
+				name: 'You\'ve already claimed your daily income.',
+				value: `Your next claim is available <t:${Math.floor(nextDaily.getTime() / 1000)}:R>.`,
+			});
+		return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+	}
+
+	// --- HANDLE SUCCESSFUL CLAIM ---
+	const newBalance = (userEcon?.crowns || 0) + payout;
+
 	const prestigeText = currentPrestige > 0 ? ` [Prestige ${currentPrestige}]` : '';
-	const streakFooter = currentStreak > 1 ? `You are on a ${currentStreak}-day streak! Keep it up! 🔥` : 'Claim again tomorrow to start a streak!';
+	let streakFooter;
+
+	if (prestigedThisClaim) {
+		streakFooter = `⭐ You've reached Prestige ${currentPrestige}! Your streak resets to Day 1 with new power!`;
+	}
+	else if (streakBroken) {
+		streakFooter = 'Your streak was broken! You are back to Day 1.';
+	}
+	else if (currentStreak > 1) {
+		streakFooter = `You are on a ${currentStreak}-day streak! Keep it up! 🔥`;
+	}
+	else {
+		streakFooter = 'You claimed your first daily! Claim again tomorrow to start a streak!';
+	}
+
 	const embed = new EmbedBuilder()
 		.setColor(0xF1C40F)
 		.setTitle(`💰 Daily Claim - Day ${currentStreak}${prestigeText} 💰`)
 		.addFields(
-			{ name: '🎉 You Received:', value: `**${payout}** Crowns!`, inline: false },
-			{ name: 'Breakdown:', value: `• Base: 20\n• Guild Bonus: ${guildBonus}\n• Prestige Bonus: ${prestigeBonus}\n• Streak Roll: **${streakRoll}** (out of ${maxRoll})\n${multiplier > 1 ? `• **Multiplier: ${multiplier}x**` : ''}`, inline: false },
-			{ name: '👑 New Balance:', value: `${(userEcon?.crowns || 0) + payout} Crowns`, inline: false },
+			{ name: '🎉 You Received:', value: `**${payout.toLocaleString()}** Crowns!`, inline: false },
+			{ name: 'Breakdown:', value: `• Base: 20\n• Guild Bonus: ${guildBonus}\n• Prestige Bonus: ${prestigeBonus}\n• Daily Streak Bonus: **${streakBonus}**\n${multiplier > 1.0 ? `• **Multiplier: ${multiplier}x**` : ''}`, inline: false },
+			{ name: '👑 New Balance:', value: `**${newBalance.toLocaleString()}** Crowns`, inline: false },
 		)
 		.setFooter({ text: streakFooter });
 
@@ -344,7 +405,6 @@ async function handleDaily(interaction) {
 		embed.setFooter({ text: `${streakFooter}\nWant a reminder when your next daily is ready?` });
 	}
 	else if (pingPref.opt_in_status === 1) {
-		// User is already opted-in, so schedule their next reminder
 		scheduleDailyReminder(interaction.client, userId, now);
 	}
 
