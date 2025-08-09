@@ -102,9 +102,10 @@ module.exports = {
 						return interaction.reply({ content: 'You are not authorized to perform this action.', flags: [MessageFlags.Ephemeral] });
 					}
 
-					const parts = interaction.customId.split('_');
-					const action = parts[2];
-					const pendingId = parts[3];
+					const [, , action, id] = interaction.customId.split('_');
+					if (!action || !id || !/^\d+$/.test(id)) {
+						return interaction.reply({ content: 'Malformed interaction.', flags: [MessageFlags.Ephemeral] });
+					}
 
 					const pendingQuote = db.prepare('SELECT * FROM tony_quotes_pending WHERE id = ?').get(pendingId);
 					if (!pendingQuote) {

@@ -104,11 +104,15 @@ async function handleSubmit(interaction) {
 	}
 
 	const userQuoteCount = db.prepare(`
-                                        SELECT COUNT(*) as count FROM tony_quotes_active
-                                        WHERE user_id = ? AND quote_type = 'trigger'
+                                        SELECT COUNT(*) AS count
+                                        FROM (
+                                            SELECT 1 FROM tony_quotes_active WHERE user_id = ? AND quote_type = 'trigger'
+                                            UNION ALL
+                                            SELECT 1 FROM tony_quotes_pending WHERE user_id = ? AND quote_type = 'trigger'
+                                        )
                             `).get(userId).count;
 	if (userQuoteCount >= MAX_USER_QUOTES) {
-		errorEmbed.setDescription(`You already have ${MAX_USER_QUOTES} active trigger quotes, which is the maximum allowed.`);
+		errorEmbed.setDescription(`You already have ${MAX_USER_QUOTES} active & pending trigger quotes, which is the maximum allowed.`);
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
 

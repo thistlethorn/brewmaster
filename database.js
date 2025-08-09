@@ -47,7 +47,9 @@ const setupTables = db.transaction(() => {
             user_id TEXT NOT NULL,
             approval_message_id TEXT NOT NULL,
             submitted_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            quote_type TEXT DEFAULT 'trigger' NOT NULL
+            quote_type TEXT DEFAULT 'trigger' NOT NULL,
+            CHECK (quote_type IN ('trigger','idle')),
+            UNIQUE(approval_message_id)
         )
     `).run();
 
@@ -59,7 +61,8 @@ const setupTables = db.transaction(() => {
             user_id TEXT NOT NULL,
             times_triggered INTEGER DEFAULT 0,
             last_triggered_at TEXT,
-            quote_type TEXT DEFAULT 'trigger' NOT NULL
+            quote_type TEXT DEFAULT 'trigger' NOT NULL,
+            CHECK (quote_type IN ('trigger','idle'))
         )
     `).run();
 

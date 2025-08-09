@@ -1,8 +1,8 @@
 const db = require('../database');
 const sendMessageToChannel = require('../utils/sendMessageToChannel');
 
-const IDLE_CHATTER_CHANNEL_ID = '1353623582411984931';
-
+const config = require('../config.json');
+const IDLE_CHATTER_CHANNEL_ID = config.discord?.idleChatterChannelId;
 // 1 hour
 const MIN_COOLDOWN_MS = 60 * 60 * 1000;
 // 1 hour
@@ -37,6 +37,8 @@ function scheduleNextChatter() {
 	const nextChatterTime = new Date(state.next_chatter_time);
 	if (isNaN(nextChatterTime.getTime())) {
 		console.error('[Idle Chatter] Invalid next chatter time in database:', state.next_chatter_time);
+		calculateAndSetNextTime();
+		scheduleNextChatter();
 		return;
 	}
 
