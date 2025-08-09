@@ -992,7 +992,7 @@ async function handleGuildFund(interaction) {
 		db.prepare(`
 				INSERT INTO guild_economy (guild_tag,balance)
 				VALUES (?,?)
-				ON CONFLICT(guild_tag) DO UPDATE SET balance = balance + ?
+				ON CONFLICT(guild_tag) DO UPDATE SET balance = COALESCE(balance,0) + ?
 			`).run(gTag, amt, amt);
 	});
 
