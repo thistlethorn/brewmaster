@@ -3032,7 +3032,7 @@ async function handleRaidAutocomplete(interaction) {
 
 /**
 * Autocomplete handler for /guild fund -> guild_tag option.
-* Returns up to 25 guilds matching tag or name.
+* Returns up to 15 guilds matching tag or name.
 * @param {import('discord.js').AutocompleteInteraction} interaction
 * @returns {Promise<void>}
 */
