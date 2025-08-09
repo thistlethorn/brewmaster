@@ -40,6 +40,10 @@ const GUILD_RAID_MAX_PER_MEMBER_CAP = config.guild.raidMaxPerMemberCap;
 // Alliance Raid constants (10 minutes)
 const ALLIANCE_RAID_DURATION_MS = config.guild.allianceRaidDurationMs;
 
+// Originally starting this at 15 but may change the upper limit later.
+const NUMBER_OF_GUILDS_LIMIT = config.guild.maxAmountOfGuildsExisting;
+
+
 // NEW: Helper function for creating delays
 const wait = (ms) => new Promise(res => setTimeout(res, ms));
 
@@ -995,6 +999,9 @@ async function handleGuildFund(interaction) {
 	try {
 		fundTxn(userId, guildTag, amount);
 
+		const postTransactionMemberCrownValue = db.prepare('SELECT crowns FROM user_economy WHERE user_id = ?').get(userId);
+		const updatedUserBalance = postTransactionMemberCrownValue?.crowns || 0;
+
 		const embed = new EmbedBuilder()
 			.setColor(0xF1C40F)
 			.setTitle('💰 Treasury Contribution 💰')
@@ -1006,7 +1013,7 @@ async function handleGuildFund(interaction) {
 				},
 				{
 					name: '👑 **NEW** Crown Balance:',
-					value: `${(userBalance - amount).toLocaleString()} Crowns`,
+					value: `${updatedUserBalance} Crowns`,
 					inline: false,
 				},
 			);
@@ -2895,7 +2902,7 @@ async function handleJoinAutocomplete(interaction) {
         FROM guild_list 
         WHERE is_open = 1
         AND (guild_tag LIKE ? OR guild_name LIKE ?)
-        LIMIT 25
+        LIMIT ${NUMBER_OF_GUILDS_LIMIT}
     `).all(`%${focusedValue}%`, `%${focusedValue}%`);
 
 	await interaction.respond(
@@ -3002,7 +3009,7 @@ async function handleRaidAutocomplete(interaction) {
             WHERE (gl.guild_tag LIKE ? OR gl.guild_name LIKE ?)
             ${userGuild ? 'AND gl.guild_tag != ?' : ''}
             ORDER BY gl.guild_name
-            LIMIT 25
+            LIMIT ${NUMBER_OF_GUILDS_LIMIT}
         `).all(
 			`%${focusedValue}%`,
 			`%${focusedValue}%`,
@@ -3033,12 +3040,11 @@ async function handleFundAutocomplete(interaction) {
 	try {
 		const focusedValue = interaction.options.getFocused();
 
-		// Setting limit to 15 as that is the hard cap of guilds on the server at one time.
 		const guilds = db.prepare(`
 			SELECT guild_tag, guild_name
 			FROM guild_list
 			WHERE guild_tag LIKE ? OR guild_name LIKE ?
-			LIMIT 15
+			LIMIT ${NUMBER_OF_GUILDS_LIMIT}
 		    `).all(`%${focusedValue}%`, `%${focusedValue}%`);
 		await interaction.respond(
 			guilds.map(guild => ({
@@ -3058,7 +3064,7 @@ async function handleInfoAutocomplete(interaction) {
         SELECT guild_tag, guild_name 
         FROM guild_list 
         WHERE guild_tag LIKE ? OR guild_name LIKE ?
-        LIMIT 25
+        LIMIT ${NUMBER_OF_GUILDS_LIMIT}
     `).all(`%${focusedValue}%`, `%${focusedValue}%`);
 
 	await interaction.respond(

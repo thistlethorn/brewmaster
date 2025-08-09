@@ -6,17 +6,25 @@ async function setupDailyReset(client) {
 	// Runs at 00:00 UTC every day
 	scheduleJob('0 0 * * *', async () => {
 		try {
-			// Clear user activity counts
-			db.prepare(`
+
+			db.transaction(() => {
+				db.prepare(`
                 UPDATE user_activity 
                 SET normal_messages = 0
                 WHERE normal_messages > 0
             `).run();
+				console.log(`[dailyReset] User activity counts cleared at ${new Date().toISOString()}`);
 
-			console.log(`[dailyReset] User activity counts cleared at ${new Date().toISOString()}`);
+			})();
 
-			db.prepare('DELETE FROM guild_daily_dues').run();
-			console.log(`[dailyReset] Guild dues tracker cleared at ${new Date().toISOString()}`);
+			db.transaction(() => {
+				db.prepare('DELETE FROM guild_daily_dues').run();
+				console.log(`[dailyReset] Guild dues tracker cleared at ${new Date().toISOString()}`);
+
+
+			})();
+			// Clear user activity counts
+
 
 			// Remove active chatter role from everyone and update multipliers
 			const ACTIVE_CHATTER_ROLE = '1382521995656302632';
