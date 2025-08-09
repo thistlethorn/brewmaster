@@ -1232,9 +1232,16 @@ async function handleDues(interaction) {
 		});
 	}
 	const today = new Date().toISOString().slice(0, 10);
-	const lastDues = db.prepare('SELECT last_dues_date FROM guild_daily_dues WHERE guild_tag = ?').get(guildData.guild_tag);
+	const duesCheckStmt = db.prepare(`
+		INSERT INTO guild_daily_dues (guild_tag, last_dues_date)
+		VALUES (?, ?)
+		ON CONFLICT(guild_tag) DO NOTHING
+	`);
+	const info = duesCheckStmt.run(guildData.guild_tag, today);
 
-	if (lastDues && lastDues.last_dues_date === today) {
+	// Inserting first, then checking this to prevent race conditions from forming
+
+	if (info.changes === 0) {
 		const errorEmbed = new EmbedBuilder()
 			.setColor(0xFEE75C)
 			.setTitle('💰 Dues Already Collected')
@@ -1244,7 +1251,6 @@ async function handleDues(interaction) {
 			flags: [MessageFlags.Ephemeral],
 		});
 	}
-
 	// Fetch the guild's dedicated public channel
 	let guildChannel;
 	try {
@@ -1423,7 +1429,6 @@ async function handleDues(interaction) {
 	addLogFields(finalEmbed, resultsLog, 'Final Contribution Log');
 	finalEmbed.setFooter({ text: 'Dues collected by the Guildmaster are 1% of every member\'s balance.' });
 	await duesMessage.edit({ embeds: [finalEmbed] });
-	db.prepare('INSERT OR REPLACE INTO guild_daily_dues (guild_tag, last_dues_date) VALUES (?, ?)').run(guildData.guild_tag, today);
 }
 
 async function handleInfo(interaction) {
