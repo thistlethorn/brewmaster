@@ -943,7 +943,6 @@ async function handleGuildFund(interaction) {
 	const guildTag = interaction.options.getString('guild_tag').toUpperCase();
 	const amount = interaction.options.getInteger('amount');
 
-	// --- NEW: Check if guild exists ---
 	const guildInfo = db.prepare('SELECT guild_name FROM guild_list WHERE guild_tag = ?').get(guildTag);
 	if (!guildInfo) {
 		const embed = new EmbedBuilder()
@@ -979,8 +978,12 @@ async function handleGuildFund(interaction) {
 	// Perform the transaction
 	db.prepare('BEGIN TRANSACTION').run();
 	try {
-		// Deduct from user
-		db.prepare('UPDATE user_economy SET crowns = crowns - ? WHERE user_id = ?').run(amount, userId);
+		// Deduct from user atomically (prevents race-condition overdrafts)
+		const userDeduction = db.prepare('UPDATE user_economy SET crowns = crowns - ? WHERE user_id = ? AND crowns >= ?').run(amount, userId, amount);
+
+		if (userDeduction.changes === 0) {
+			throw new Error('Insufficient funds at commit time');
+		}
 
 		// Add to guild
 		db.prepare(`
@@ -1243,7 +1246,7 @@ async function handleDues(interaction) {
 		`);
 	const info = upsert.run(guildData.guild_tag, today);
 
-	// Inserting first, then checking this to prevent race conditions from forming
+	// Conditional upsert: if no row changed, dues were already collected today (race-safe)
 
 	if (info.changes === 0) {
 		const errorEmbed = new EmbedBuilder()
@@ -1346,34 +1349,34 @@ async function handleDues(interaction) {
 		const luckRoll = Math.random();
 		let scenario;
 		let investmentChange;
-		let resultMessage;
+
 		const pickOutcome = (s, ok) => ok ? s.success : s.failure;
+		let isSuccess = false;
 
 		if (luckRoll < 0.01) {
 			if (shuffledUltra.length === 0) shuffledUltra = shuffleArray(ULTRA_RARE_DUES_SCENARIOS);
 			scenario = shuffledUltra.pop();
 			investmentChange = Math.floor(contribution * (5 + Math.random() * 5));
-			resultMessage = scenario.success;
+			isSuccess = true;
 		}
 		else if (luckRoll < 0.05) {
 			if (shuffledRare.length === 0) shuffledRare = shuffleArray(RARE_DUES_SCENARIOS);
 			scenario = shuffledRare.pop();
 			investmentChange = Math.floor(contribution * (1.5 + Math.random() * 1.5));
-			resultMessage = scenario.success;
+			isSuccess = true;
 		}
 		else {
 			if (shuffledCommon.length === 0) shuffledCommon = shuffleArray(DUES_SCENARIOS);
 			scenario = shuffledCommon.pop();
-			const isSuccess = Math.random() < 0.6;
+			isSuccess = Math.random() < 0.6;
 			if (isSuccess) {
 				investmentChange = Math.floor(contribution * (0.2 + Math.random() * 0.6));
-				resultMessage = pickOutcome(scenario, isSuccess);
 			}
 			else {
 				investmentChange = -Math.floor(contribution * (0.1 + Math.random() * 0.4));
-				resultMessage = pickOutcome(scenario, isSuccess);
 			}
 		}
+		const resultMessage = pickOutcome(scenario, isSuccess);
 
 		const baseMessage = scenario.base
 			.replace('{user}', memberUser)
