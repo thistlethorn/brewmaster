@@ -1,5 +1,5 @@
 // events/interactionCreate.js
-const { Events, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { Events, EmbedBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { handleMotwEntry } = require('../utils/handleMotwGiveaway');
 const { scheduleDailyReminder, sendReminder } = require('../tasks/dailyReminder');
 const { updateMultiplier } = require('../utils/handleCrownRewards');
@@ -77,7 +77,7 @@ module.exports = {
 						console.error('[Error] Gamble modal interaction error:', error);
 						await interaction.reply({
 							content: 'There was an error processing your bet.',
-							ephemeral: true,
+							flags: [MessageFlags.Ephemeral],
 						});
 						return;
 					}
@@ -96,7 +96,7 @@ module.exports = {
 						console.error('[Error] Fundraiser modal interaction error:', error);
 						await interaction.reply({
 							content: 'There was an error processing your custom contribution.',
-							ephemeral: true,
+							flags: [MessageFlags.Ephemeral],
 						});
 						return;
 					}
@@ -105,6 +105,34 @@ module.exports = {
 			// Handle button interactions first
 			if (interaction.isButton()) {
 				// --- DAILY NOTIFICATION BUTTON HANDLER ---
+				if (interaction.customId.startsWith('guild_info_')) {
+					if (guildCommand && typeof guildCommand.buttons?.handleGuildInfoButton === 'function') {
+						return guildCommand.buttons.handleGuildInfoButton(interaction);
+					}
+				}
+				if (interaction.customId.startsWith('guild_show_lore_')) {
+					const guildTag = interaction.customId.split('_')[3];
+					try {
+						const guild = db.prepare('SELECT guild_name, lore FROM guild_list WHERE guild_tag = ?').get(guildTag);
+
+						if (!guild || !guild.lore) {
+							return interaction.reply({ content: 'This guild has not written its lore yet.', flags: [MessageFlags.Ephemeral] });
+						}
+
+						const loreEmbed = new EmbedBuilder()
+							.setColor(0x5865F2)
+							.setTitle(`📜 Lore of ${guild.guild_name}`)
+							.setDescription(guild.lore);
+
+						return interaction.reply({ embeds: [loreEmbed], flags: [MessageFlags.Ephemeral] });
+					} catch (error) {
+						console.error('[Error] Failed to fetch guild lore:', error);
+						return interaction.reply({ 
+							content: 'There was an error fetching the guild lore. Please try again later.', 
+							flags: [MessageFlags.Ephemeral] 
+						});
+					}
+				}
 				if (interaction.customId.startsWith('daily_notify_')) {
 
 					const parts = interaction.customId.split('_');
@@ -160,7 +188,7 @@ module.exports = {
 							await interaction.reply({
 								content: '👋 That daily claim message isn\'t yours, but you can set your own notification preferences here!',
 								components: [row],
-								ephemeral: true,
+								flags: [MessageFlags.Ephemeral],
 							});
 						}
 						return;
@@ -262,7 +290,7 @@ module.exports = {
 							console.error('[Error] Gamble button interaction error:', error);
 							await interaction.reply({
 								content: 'There was an error processing this game action.',
-								ephemeral: true,
+								flags: [MessageFlags.Ephemeral],
 							});
 							return;
 						}
@@ -283,7 +311,7 @@ module.exports = {
 						console.error('[Error] Cancel button interaction error:', error);
 						await interaction.reply({
 							content: 'There was an error cancelling this action.',
-							ephemeral: true,
+							flags: [MessageFlags.Ephemeral],
 						});
 						return;
 					}
@@ -322,7 +350,7 @@ module.exports = {
 						console.error(`[Error] Button interaction error for ${interaction.customId}:`, error);
 						await interaction.reply({
 							content: 'There was an error processing this button interaction.',
-							ephemeral: true,
+							flags: [MessageFlags.Ephemeral],
 						});
 						return;
 					}
@@ -351,13 +379,13 @@ module.exports = {
 				if (interaction.replied || interaction.deferred) {
 					await interaction.followUp({
 						content: errorMessage,
-						ephemeral: true,
+						flags: [MessageFlags.Ephemeral],
 					});
 				}
 				else {
 					await interaction.reply({
 						content: errorMessage,
-						ephemeral: true,
+						flags: [MessageFlags.Ephemeral],
 					});
 				}
 			}

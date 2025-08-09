@@ -29,3 +29,6 @@ package.json
 testing/
 deploy-commands.js
 admin/
+rebuild_table.js
+check_fkeys.js
+token.json

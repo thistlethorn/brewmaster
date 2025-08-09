@@ -12,6 +12,7 @@ const {
 	MessageFlags,
 } = require('discord.js');
 const db = require('../../database');
+const config = require('../../config.json');
 const RESERVED_TERMS = [
 	'admin', 'mod', 'staff', 'bot', 'everyone', 'here',
 	'discord', 'guild', 'system', 'owner', 'official',
@@ -21,20 +22,23 @@ const {
 	ONLY_CRESTS,
 } = require('../../utils/emoji');
 
+const { getTonyQuote } = require('../../utils/tonyDialogue.js');
 const { getTierBenefits, getTierData } = require('../../utils/getTierBenefits');
 const { scheduleRoleRemoval } = require('../../tasks/tempRoleManager');
 
 const TIER_DATA = getTierData();
 const tierEmojis = arrayTierEmoji();
-const GUILD_CREATION_WITHDRAWAL_LIMIT = 5000;
 
-const RAID_DEFENDER_ROLE_ID = '1387473320093548724';
-const DEFENDER_ROLE_DURATION_MS = 24 * 60 * 60 * 1000;
+const GUILD_CREATION_WITHDRAWAL_LIMIT = config.guild.creationWithdrawalLimit;
 
+const RAID_DEFENDER_ROLE_ID = config.discord.raidDefenderRoleId;
+const DEFENDER_ROLE_DURATION_MS = config.guild.defenderRoleDurationMs;
+const GUILD_VULNERABILITY_THRESHOLD = config.guild.vulnerabilityThreshold;
+const GUILD_RAID_MAX_STOLEN_PERCENT = config.guild.raidMaxStolenPercent;
+const GUILD_RAID_MIN_PER_MEMBER_PERCENT = config.guild.raidMinPerMemberPercent;
+const GUILD_RAID_MAX_PER_MEMBER_CAP = config.guild.raidMaxPerMemberCap;
 // Alliance Raid constants (10 minutes)
-const ALLIANCE_RAID_DURATION_MS = 600000;
-// const ALLIANCE_RAID_DURATION_MS = 30000;
-// 30 seconds for testing
+const ALLIANCE_RAID_DURATION_MS = config.guild.allianceRaidDurationMs;
 
 // NEW: Helper function for creating delays
 const wait = (ms) => new Promise(res => setTimeout(res, ms));
@@ -161,8 +165,8 @@ async function handleLeave(interaction) {
 	if (!userGuild) {
 		const errorEmbed = new EmbedBuilder()
 			.setColor(0xE74C3C)
-			.setTitle('❌ Not in a Guild')
-			.setDescription('You must be a member of a guild to leave one.');
+			.setTitle(getTonyQuote('leave_notInGuild_title'))
+			.setDescription(getTonyQuote('leave_notInGuild_desc'));
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
 
@@ -170,8 +174,8 @@ async function handleLeave(interaction) {
 	if (userGuild.owner === 1) {
 		const ownerEmbed = new EmbedBuilder()
 			.setColor(0xE74C3C)
-			.setTitle('👑 Ownership Duty')
-			.setDescription(`You are the owner of **${userGuild.guild_name} [${userGuild.guild_tag}]**!\nYou must transfer ownership or delete the guild before you can leave.`);
+			.setTitle(getTonyQuote('leave_isOwner_title'))
+			.setDescription(getTonyQuote('leave_isOwner_desc', userGuild.guild_name, userGuild.guild_tag));
 		return interaction.reply({ embeds: [ownerEmbed], flags: [MessageFlags.Ephemeral] });
 	}
 
@@ -188,23 +192,23 @@ async function handleLeave(interaction) {
 
 		const leaveEmbed = new EmbedBuilder()
 			.setColor(0xE67E22)
-			.setTitle('👋 A Member has Departed')
-			.setDescription(`${interaction.user} has left the **${userGuild.guild_name} [${userGuild.guild_tag}]** guild.`)
+			.setTitle(getTonyQuote('leave_departed_title'))
+			.setDescription(getTonyQuote('leave_departed_desc', interaction.user, userGuild.guild_name, userGuild.guild_tag))
 			.setTimestamp();
 		await sendGuildAnnouncement(interaction.client, leaveEmbed);
 
 		const successEmbed = new EmbedBuilder()
 			.setColor(0x2ECC71)
-			.setTitle('✅ Left Guild')
-			.setDescription(`You have successfully left **${userGuild.guild_name} [${userGuild.guild_tag}]**.`);
+			.setTitle(getTonyQuote('leave_success_title'))
+			.setDescription(getTonyQuote('leave_success_desc', userGuild.guild_name, userGuild.guild_tag));
 		return interaction.reply({ embeds: [successEmbed], flags: [MessageFlags.Ephemeral] });
 	}
 	catch (error) {
 		console.error('Leave guild error:', error);
 		const errorEmbed = new EmbedBuilder()
 			.setColor(0xE74C3C)
-			.setTitle('❌ Error Leaving Guild')
-			.setDescription('An unexpected error occurred while trying to leave the guild. The Innkeepers have been notified.');
+			.setTitle(getTonyQuote('leave_error_title'))
+			.setDescription(getTonyQuote('leave_error_desc'));
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
 }
@@ -218,7 +222,7 @@ async function handleInvite(interaction) {
             gl.guild_name,
             gl.guild_tag,
             gl.motto,
-            gl.about_text,
+            gl.lore,
             COALESCE(gt.tier, 1) AS tier
         FROM guildmember_tracking gmt
         JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
@@ -229,8 +233,8 @@ async function handleInvite(interaction) {
 	if (!inviterGuild) {
 		const errorEmbed = new EmbedBuilder()
 			.setColor(0xE74C3C)
-			.setTitle('❌ Not in a Guild')
-			.setDescription('You must be in a guild to be able to invite someone!');
+			.setTitle(getTonyQuote('invite_notInGuild_title'))
+			.setDescription(getTonyQuote('invite_notInGuild_desc'));
 		return interaction.reply({
 			embeds: [errorEmbed],
 			flags: [MessageFlags.Ephemeral],
@@ -242,8 +246,8 @@ async function handleInvite(interaction) {
 	if (targetInGuild) {
 		const errorEmbed = new EmbedBuilder()
 			.setColor(0xE74C3C)
-			.setTitle('❌ Already in a Guild')
-			.setDescription(`${targetUser} is already in a guild! They must leave their current guild first before accepting a new invitation.`);
+			.setTitle(getTonyQuote('invite_targetInGuild_title'))
+			.setDescription(getTonyQuote('invite_targetInGuild_desc', targetUser));
 		return interaction.reply({
 			embeds: [errorEmbed],
 			flags: [MessageFlags.Ephemeral],
@@ -256,8 +260,8 @@ async function handleInvite(interaction) {
 	// Create enhanced invite embed
 	const embed = new EmbedBuilder()
 		.setColor(0x3498db)
-		.setTitle(`⚔️ Guild Invitation: ${inviterGuild.guild_name} [${inviterGuild.guild_tag}]`)
-		.setDescription(inviterGuild.about_text || 'A promising guild is seeking new allies!')
+		.setTitle(getTonyQuote('invite_embed_title', inviterGuild.guild_name, inviterGuild.guild_tag))
+		.setDescription(getTonyQuote('invite_embed_desc', inviterGuild.guild_name) || 'A promising guild is seeking new allies!')
 		.setThumbnail('https://i.ibb.co/2YqsK07D/guild.jpg')
 		.addFields(
 			{ name: 'Motto', value: inviterGuild.motto ? `*${inviterGuild.motto}*` : 'No motto set.' },
@@ -299,12 +303,12 @@ async function announceNewMember(client, newMember, guildData) {
 
 			const welcomeEmbed = new EmbedBuilder()
 				.setColor(0x2ECC71)
-				.setTitle('🎉 A New Hero Arrives! 🎉')
-				.setDescription(`Let's all give a warm welcome to our newest member, ${newMember.toString()}!`)
+				.setTitle(getTonyQuote('announce_newHero_title'))
+				.setDescription(getTonyQuote('announce_newHero_desc', newMember.toString()))
 				.setThumbnail(newMember.displayAvatarURL({ dynamic: true, size: 256 }))
 				.addFields({
 					name: `Welcome to ${guildData.guild_name}!`,
-					value: 'We\'re thrilled to have you with us in our public square!',
+					value: getTonyQuote('announce_newHero_value', guildData.guild_name),
 				})
 				.setTimestamp();
 			await channel.send({ embeds: [welcomeEmbed] });
@@ -313,8 +317,8 @@ async function announceNewMember(client, newMember, guildData) {
 		// --- Global Announcement (Unchanged) ---
 		const globalJoinEmbed = new EmbedBuilder()
 			.setColor(0x57F287)
-			.setTitle('✅ New Guild Member')
-			.setDescription(`${newMember.toString()} has joined the **${guildData.guild_name} [${guildData.guild_tag}]** guild!`)
+			.setTitle(getTonyQuote('announce_globalJoin_title'))
+			.setDescription(getTonyQuote('announce_globalJoin_desc', newMember.toString(), guildData.guild_name, guildData.guild_tag))
 			.setTimestamp();
 		await sendGuildAnnouncement(client, globalJoinEmbed);
 
@@ -327,25 +331,25 @@ async function handleCreate(interaction) {
 	const name = interaction.options.getString('name');
 	const tag = interaction.options.getString('tag').toUpperCase();
 	const userId = interaction.user.id;
-	const guildCategoryId = '1369829304053006346';
-	const staffRoleId = '1354145856345083914';
-	const botsRoleId = '1362247491101262106';
+	const guildCategoryId = config.discord.guildCategoryId;
+	const staffRoleId = config.discord.staffRoleId;
+	const botsRoleId = config.discord.botsRoleId;
 
-	const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Guild Creation Failed');
+	const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle(getTonyQuote('create_failed_title'));
 
 	// Validate guild tag
 	if (!/^[A-Z]{3}$/.test(tag)) {
-		errorEmbed.setDescription('Guild tag must be exactly 3 uppercase letters!');
+		errorEmbed.setDescription(getTonyQuote('create_badTag_desc'));
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
 
 	// Validate guild name (alphanumeric + spaces only)
 	if (!/^[a-zA-Z0-9 ]+$/.test(name)) {
-		errorEmbed.setDescription('Guild name can only contain letters, numbers, and spaces!');
+		errorEmbed.setDescription(getTonyQuote('create_badName_desc'));
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
 	if (name.length < 3 || name.length > 35) {
-		errorEmbed.setDescription('Guild name must be between 3 and 35 characters!');
+		errorEmbed.setDescription(getTonyQuote('create_badLength_desc'));
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
 
@@ -356,21 +360,30 @@ async function handleCreate(interaction) {
 	);
 
 	if (hasReservedTerm) {
-		errorEmbed.setDescription(`That guild name contains restricted terms. Please choose another name.\nAvoid terms like: ${RESERVED_TERMS.join(', ')}`);
+		errorEmbed.setDescription(getTonyQuote('create_reservedName_desc', RESERVED_TERMS.join(', ')));
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
-	// Check if user is already in a guild
+
+
 	const tagOfGuild = db.prepare('SELECT * FROM guildmember_tracking WHERE user_id = ?').get(userId);
 	if (tagOfGuild) {
 		const userGuild = db.prepare('SELECT * FROM guild_list WHERE guild_tag = ?').get(tagOfGuild.guild_tag);
-		errorEmbed.setDescription(`You're already in a guild, **${userGuild.guild_name} [${tagOfGuild.guild_tag}]**! Leave it first before creating a new one.`);
-		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+
+		if (!userGuild) {
+		// Cleanup: user is in a ghost guild
+			db.prepare('DELETE FROM guildmember_tracking WHERE user_id = ?').run(userId);
+			console.warn(`[Guild Fix] Removed ghost membership for user ${userId} in nonexistent guild [${tagOfGuild.guild_tag}]`);
+		}
+		else {
+			errorEmbed.setDescription(getTonyQuote('create_alreadyInGuild_desc', userGuild.guild_name, tagOfGuild.guild_tag));
+			return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		}
 	}
 
 	// Check if tag is already taken
 	const existingGuild = db.prepare('SELECT * FROM guild_list WHERE guild_tag = ?').get(tag);
 	if (existingGuild) {
-		errorEmbed.setDescription(`The tag **[${tag}]** is already taken! Please choose a different one.`);
+		errorEmbed.setDescription(getTonyQuote('create_tagTaken_desc', tag));
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
 
@@ -485,8 +498,8 @@ async function handleCreate(interaction) {
 
 		const replyEmbed = new EmbedBuilder()
 			.setColor(0x2ECC71)
-			.setTitle(`🏰 Guild "${name}" [${tag}] Created!`)
-			.setDescription('Your new guild has been successfully established!')
+			.setTitle(getTonyQuote('create_success_title', name, tag))
+			.setDescription(getTonyQuote('create_success_desc', name))
 			.addFields(
 				{ name: 'Public Channel', value: `${publicChannel}`, inline: true },
 				{ name: 'Private Guildhall', value: `${privateChannel}`, inline: true },
@@ -496,14 +509,14 @@ async function handleCreate(interaction) {
 
 		const creationEmbed = new EmbedBuilder()
 			.setColor(0x2ECC71)
-			.setTitle('🏰 A New Guild has been Founded!')
-			.setDescription(`**${name} [${tag}]** has been established by the guildmaster ${interaction.user}! May their renown grow!`)
+			.setTitle(getTonyQuote('create_globalAnnounce_title'))
+			.setDescription(getTonyQuote('create_globalAnnounce_desc', name, tag, interaction.user))
 			.setTimestamp();
 
 		await sendGuildAnnouncement(interaction.client, creationEmbed);
 
 		// Welcome message in the new public channel
-		await publicChannel.send({ content: `Welcome, citizens, to the public square of **${name} [${tag}]**! This guild was founded by ${interaction.user}.` });
+		await publicChannel.send({ content: getTonyQuote('create_publicChannelWelcome', name, tag, interaction.user) });
 
 
 		return interaction.reply({ embeds: [replyEmbed], flags: [MessageFlags.Ephemeral] });
@@ -518,8 +531,8 @@ async function handleCreate(interaction) {
 
 		const finalErrorEmbed = new EmbedBuilder()
 			.setColor(0xE74C3C)
-			.setTitle('❌ Guild Creation Error')
-			.setDescription('An unexpected error occurred while creating your guild. Any partial resources have been cleaned up. Please try again later.');
+			.setTitle(getTonyQuote('create_error_title'))
+			.setDescription(getTonyQuote('create_error_desc'));
 		return interaction.reply({ embeds: [finalErrorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
 }
@@ -539,14 +552,14 @@ async function handleDelete(interaction) {
 	if (!userGuild) {
 		const errorEmbed = new EmbedBuilder()
 			.setColor(0xE74C3C)
-			.setTitle('❌ Action Not Allowed')
-			.setDescription('You must be the owner of a guild to delete it!');
+			.setTitle(getTonyQuote('delete_notAllowed_title'))
+			.setDescription(getTonyQuote('delete_notAllowed_desc'));
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
 	const confirmationEmbed = new EmbedBuilder()
 		.setColor(0xFEE75C)
-		.setTitle('⚠️ Confirm Deletion')
-		.setDescription(`Are you sure you want to permanently delete **${userGuild.guild_name} [${userGuild.guild_tag}]**?\n\nThis action will erase the guild's channels, role, and all associated data. **This cannot be undone.**`);
+		.setTitle(getTonyQuote('delete_confirm_title'))
+		.setDescription(getTonyQuote('delete_confirm_desc', userGuild.guild_name, userGuild.guild_tag));
 
 	// Create confirmation buttons
 	const row = new ActionRowBuilder().addComponents(
@@ -576,8 +589,8 @@ async function handleDelete(interaction) {
 		if (buttonInteraction.user.id !== userId) {
 			const notOwnerEmbed = new EmbedBuilder()
 				.setColor(0xE74C3C)
-				.setTitle('❌ Not for You')
-				.setDescription('Only the guild owner can confirm this action.');
+				.setTitle(getTonyQuote('delete_notForYou_title'))
+				.setDescription(getTonyQuote('delete_notForYou_desc'));
 			return buttonInteraction.reply({ embeds: [notOwnerEmbed], flags: [MessageFlags.Ephemeral] });
 		}
 
@@ -597,15 +610,15 @@ async function handleDelete(interaction) {
 
 				const deletionEmbed = new EmbedBuilder()
 					.setColor(0xE74C3C)
-					.setTitle('🗑️ A Guild has Disbanded')
-					.setDescription(`The guild **${userGuild.guild_name} [${userGuild.guild_tag}]** has been deleted by its owner. Its banners have been lowered for the last time.`)
+					.setTitle(getTonyQuote('delete_globalAnnounce_title'))
+					.setDescription(getTonyQuote('delete_globalAnnounce_desc', userGuild.guild_name, userGuild.guild_tag))
 					.setTimestamp();
 				await sendGuildAnnouncement(interaction.client, deletionEmbed);
 
 				const successEmbed = new EmbedBuilder()
 					.setColor(0x2ECC71)
-					.setTitle('🗑️ Guild Deleted')
-					.setDescription(`The guild **${userGuild.guild_name} [${userGuild.guild_tag}]** has been successfully deleted.`);
+					.setTitle(getTonyQuote('delete_success_title'))
+					.setDescription(getTonyQuote('delete_success_desc', userGuild.guild_name, userGuild.guild_tag));
 				await buttonInteraction.update({
 					embeds: [successEmbed],
 					components: [],
@@ -615,8 +628,8 @@ async function handleDelete(interaction) {
 				console.error('Guild deletion error:', error);
 				const errorEmbed = new EmbedBuilder()
 					.setColor(0xE74C3C)
-					.setTitle('❌ Deletion Error')
-					.setDescription('An unexpected error occurred while deleting your guild. Please try again later.');
+					.setTitle(getTonyQuote('delete_error_title'))
+					.setDescription(getTonyQuote('delete_error_desc'));
 				await buttonInteraction.update({
 					embeds: [errorEmbed],
 					components: [],
@@ -626,8 +639,8 @@ async function handleDelete(interaction) {
 		else if (buttonInteraction.customId === 'guild_delete_cancel') {
 			const cancelEmbed = new EmbedBuilder()
 				.setColor(0x3498DB)
-				.setTitle('🚫 Deletion Cancelled')
-				.setDescription('The guild deletion process has been cancelled.');
+				.setTitle(getTonyQuote('delete_cancelled_title'))
+				.setDescription(getTonyQuote('delete_cancelled_desc'));
 			await buttonInteraction.update({
 				embeds: [cancelEmbed],
 				components: [],
@@ -641,8 +654,8 @@ async function handleDelete(interaction) {
 		if (collected.size === 0) {
 			const timeoutEmbed = new EmbedBuilder()
 				.setColor(0xFEE75C)
-				.setTitle('⏱️ Timed Out')
-				.setDescription('Confirmation timed out. The guild was not deleted.');
+				.setTitle(getTonyQuote('delete_timeout_title'))
+				.setDescription(getTonyQuote('delete_timeout_desc'));
 			interaction.editReply({
 				embeds: [timeoutEmbed],
 				components: [],
@@ -842,22 +855,22 @@ async function processGuidedSetup(interaction, guildData) {
 	if (promptsQueue.length === 0) {
 		const finishedEmbed = new EmbedBuilder()
 			.setColor(0x2ECC71)
-			.setTitle('✅ All Set!')
-			.setDescription('All your raid messages are already customized! You can manage them with the "View & Manage All" option.');
+			.setTitle(getTonyQuote('raidmsg_allSet_title'))
+			.setDescription(getTonyQuote('raidmsg_allSet_desc'));
 		return interaction.update({ embeds: [finishedEmbed], components: [] });
 	}
 
 	const startEmbed = new EmbedBuilder()
 		.setColor(0x3498DB)
-		.setDescription('Starting the guided raid message configuration...');
+		.setDescription(getTonyQuote('raidmsg_guidedStart_desc'));
 	await interaction.update({ embeds: [startEmbed], components: [] });
 
 	const processQueue = async (index) => {
 		if (index >= promptsQueue.length) {
 			const completeEmbed = new EmbedBuilder()
 				.setColor(0x2ECC71)
-				.setTitle('✅ Configuration Complete!')
-				.setDescription('All default messages have been reviewed.');
+				.setTitle(getTonyQuote('raidmsg_complete_title'))
+				.setDescription(getTonyQuote('raidmsg_complete_desc'));
 			await interaction.followUp({ embeds: [completeEmbed], flags: [MessageFlags.Ephemeral] });
 			return;
 		}
@@ -898,21 +911,21 @@ async function processGuidedSetup(interaction, guildData) {
 				db.prepare(`UPDATE guild_raid_messages SET ${key} = ? WHERE guild_tag = ?`).run(newText, guildData.guild_tag);
 				await message.delete().catch(console.error);
 
-				const updatedEmbed = new EmbedBuilder().setColor(0x2ECC71).setDescription(`✅ **${title}** updated!`);
+				const updatedEmbed = new EmbedBuilder().setColor(0x2ECC71).setDescription(getTonyQuote('raidmsg_updated_desc', title));
 				await interaction.editReply({ embeds: [updatedEmbed], components: [] });
 			}
 			else {
 				if (collected.customId === 'exit_editor') {
-					const exitEmbed = new EmbedBuilder().setColor(0x3498DB).setDescription('Exiting the editor.');
+					const exitEmbed = new EmbedBuilder().setColor(0x3498DB).setDescription(getTonyQuote('raidmsg_exit_desc'));
 					await collected.update({ embeds: [exitEmbed], components: [] });
 					return;
 				}
-				const skippedEmbed = new EmbedBuilder().setColor(0x3498DB).setDescription('Skipped. Moving to the next message.');
+				const skippedEmbed = new EmbedBuilder().setColor(0x3498DB).setDescription(getTonyQuote('raidmsg_skipped_desc'));
 				await collected.update({ embeds: [skippedEmbed], components: [] });
 			}
 		}
 		catch (error) {
-			const timeoutEmbed = new EmbedBuilder().setColor(0xFEE75C).setDescription('⏱️ Timed out. Please start the command again.');
+			const timeoutEmbed = new EmbedBuilder().setColor(0xFEE75C).setDescription(getTonyQuote('raidmsg_timeout_desc'));
 			await interaction.editReply({ embeds: [timeoutEmbed], components: [] });
 			console.log(error);
 			return;
@@ -938,11 +951,11 @@ async function handleGuildFund(interaction) {
 		if (!userGuild) {
 			const embed = new EmbedBuilder()
 				.setColor(0xed4245)
-				.setTitle('❌ Failed to Fund Guild!')
+				.setTitle(getTonyQuote('fund_failed_title'))
 				.addFields(
 					{
-						name: '🏛️ You aren\'t in a guild!',
-						value: 'Join a guild first!',
+						name: getTonyQuote('fund_notInGuild_name'),
+						value: getTonyQuote('fund_notInGuild_value'),
 						inline: false,
 					},
 				);
@@ -951,11 +964,11 @@ async function handleGuildFund(interaction) {
 		if (userGuild.guild_tag !== guildTag) {
 			const embed = new EmbedBuilder()
 				.setColor(0xed4245)
-				.setTitle('❌ Failed to Fund Guild!')
+				.setTitle(getTonyQuote('fund_failed_title'))
 				.addFields(
 					{
-						name: '🏛️ You can only contribute to the guild you are in!',
-						value: `The guild tag you are trying to fund, \`[${guildTag}]\`, does not match the guild tag you are in, \`[${userGuild.guild_tag}]\`!`,
+						name: getTonyQuote('fund_wrongGuild_name'),
+						value: getTonyQuote('fund_wrongGuild_value', userGuild.guild_tag, guildTag),
 						inline: false,
 					},
 				);
@@ -971,16 +984,16 @@ async function handleGuildFund(interaction) {
 	if (userBalance < amount) {
 		const embed = new EmbedBuilder()
 			.setColor(0xed4245)
-			.setTitle('❌ Failed to Fund Guild!')
+			.setTitle(getTonyQuote('fund_failed_title'))
 			.addFields(
 				{
-					name: '💸 You can only fund your guild with Crowns than you own!',
-					value: `To fund ${amount} Crowns, you'd need **${(amount - userBalance)}** more Crowns!`,
+					name: getTonyQuote('fund_insufficient_name'),
+					value: getTonyQuote('fund_insufficient_value', amount, (amount - userBalance)),
 					inline: false,
 				},
 				{
 					name: '👑 Current Crown Balance:',
-					value: `${(userEcon?.crowns || 0)} Crowns`,
+					value: `${(userEcon?.crowns || 0).toLocaleString()} Crowns`,
 					inline: false,
 				},
 			);
@@ -1009,13 +1022,13 @@ async function handleGuildFund(interaction) {
 			.setTitle('💰 Westwind Royal Treasury 💰')
 			.addFields(
 				{
-					name: '🏛️ Funding Guild Success!',
-					value: `✅ You've contributed ${amount} Crowns to ${guildInfo.guild_name} (${guildTag})`,
+					name: getTonyQuote('fund_success_name'),
+					value: getTonyQuote('fund_success_value', amount, guildInfo.guild_name, guildTag),
 					inline: false,
 				},
 				{
 					name: '👑 **NEW** Crown Balance:',
-					value: `${userBalance - amount} Crowns`,
+					value: `${(userBalance - amount).toLocaleString()} Crowns`,
 					inline: false,
 				},
 			);
@@ -1029,8 +1042,8 @@ async function handleGuildFund(interaction) {
 			.setTitle('❌ Brewmaster Error!')
 			.addFields(
 				{
-					name: 'Guild Funding Error - Database Rolled Back.',
-					value: '❌ An error occurred while processing the guild funding transaction. Please try again later.',
+					name: getTonyQuote('fund_error_name'),
+					value: getTonyQuote('fund_error_value'),
 					inline: false,
 				},
 				{
@@ -1422,6 +1435,50 @@ async function handleDues(interaction) {
 }
 
 async function handleInfo(interaction) {
+	const guildTag = interaction.options.getString('guild_tag').toUpperCase();
+
+	const guildInfo = db.prepare(`
+        SELECT guild_name, hook
+        FROM guild_list
+        WHERE guild_tag = ?
+    `).get(guildTag);
+
+	if (!guildInfo) {
+		const errorEmbed = new EmbedBuilder()
+			.setColor(0xE74C3C)
+			.setTitle('❌ Not Found')
+			.setDescription('No guild found with that tag!');
+		return interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
+
+	const hookEmbed = new EmbedBuilder()
+		.setColor(0x5865F2)
+		.setTitle(`Info on ${guildInfo.guild_name} [${guildTag}]`)
+		.setDescription('Click the button below to learn more about this guild!')
+		.addFields(
+			{
+				name: '❓ What are Guilds?',
+				value: 'Guilds are player-run factions. You can join one to team up with others, participate in raids, earn Crowns, and climb the leaderboards!',
+			},
+			{
+				name: '📜 The Guild\'s Hook',
+				value: guildInfo.hook ? `*${guildInfo.hook}*` : 'No hook set. Use `/guild settings hook` to add one (max 150 characters).',
+			},
+		);
+
+	const row = new ActionRowBuilder().addComponents(
+		new ButtonBuilder()
+			.setCustomId(`guild_info_main_${guildTag}`)
+			.setLabel('📖 Learn More')
+			.setStyle(ButtonStyle.Primary),
+	);
+
+	await interaction.reply({ embeds: [hookEmbed], components: [row] });
+}
+async function handleFullInfo(interaction) {
 	try {
 		const guildTag = interaction.options.getString('guild_tag').toUpperCase();
 
@@ -1437,204 +1494,448 @@ async function handleInfo(interaction) {
 				rl.guilds_destroyed,
                 rl.crowns_stolen
             FROM guild_list gl
-            LEFT JOIN guild_economy ge ON gl.guild_tag = ge.guild_tag
-            LEFT JOIN guild_tiers gt ON gl.guild_tag = gt.guild_tag
-            LEFT JOIN raid_cooldowns rc ON gl.guild_tag = rc.guild_tag
-            LEFT JOIN raid_leaderboard rl ON gl.guild_tag = rl.guild_tag
+            LEFT JOIN guild_economy ge ON ge.guild_tag = gl.guild_tag
+            LEFT JOIN guild_tiers gt ON gt.guild_tag = gl.guild_tag
+			LEFT JOIN raid_cooldowns rc ON rc.guild_tag = gl.guild_tag
+            LEFT JOIN raid_leaderboard rl ON rl.guild_tag = gl.guild_tag
             WHERE gl.guild_tag = ?
         `).get(guildTag);
 
 		if (!guildInfo) {
-			const errorEmbed = new EmbedBuilder()
-				.setColor(0xE74C3C)
-				.setTitle('❌ Not Found')
-				.setDescription('No guild found with that tag!');
-			return interaction.reply({
-				embeds: [errorEmbed],
-				flags: [MessageFlags.Ephemeral],
-			});
+			const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Not Found').setDescription('No guild found with that tag!');
+			return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 		}
-		// Check if the user is a member of the guild
+
 		const memberData = db.prepare('SELECT owner, vice_gm FROM guildmember_tracking WHERE user_id = ? AND guild_tag = ?').get(interaction.user.id, guildTag);
 		const isMember = !!memberData;
 		const isOwner = memberData?.owner === 1;
 
-
-		// Check if guild is in vulnerable state
-		const isVulnerable = guildInfo.balance < 200;
+		const isVulnerable = guildInfo.balance < GUILD_VULNERABILITY_THRESHOLD;
 		const vulnerableStatus = isVulnerable
-			? '🚨 **VULNERABLE STATE** 🚨\n__Your guild treasury has less than **200 Crowns**!__\n' +
-              '• Raiders will steal **25% from each member** (uncapped) instead of the usual capped 5% (100 per member MAX)\n' +
-              '• Your vault will be targeted for a flat **25%** of its balance, ignoring your tier\'s normal damage reduction.\n' +
+			? `🚨 **VULNERABLE STATE** 🚨\n__Your guild treasury has less than **${GUILD_VULNERABILITY_THRESHOLD} Crowns**!__\n` +
+              `• Raiders will steal **${GUILD_RAID_MAX_STOLEN_PERCENT}% from each member** (uncapped) instead of the usual capped ${GUILD_RAID_MIN_PER_MEMBER_PERCENT}% (${GUILD_RAID_MAX_PER_MEMBER_CAP} per member MAX)\n` +
+              `• Your vault will be targeted for a flat **${GUILD_RAID_MAX_STOLEN_PERCENT}%** of its balance, ignoring your tier's normal damage reduction.\n` +
 			  '• If your treasury is successfully raided and drops to __0 or less__ crowns, it will be **PERMANENTLY DESTROYED**.\n' +
 			  '• __**Consider funding your guild**__ with `/guild fund`, `/guild fundraise`, or `/guild dues` to exit this vulnerable state!'
 			: '✅ **Safe Treasury**\nYour guild has sufficient funds to withstand a raid without being destroyed.';
 
-		// Get all members with their balances
 		const members = db.prepare(`
-            SELECT 
-                gmt.user_id, 
-                gmt.owner,
-                gmt.vice_gm,
-                COALESCE(ue.crowns, 0) AS crowns
+            SELECT gmt.user_id, gmt.owner, gmt.vice_gm, COALESCE(ue.crowns, 0) AS crowns
             FROM guildmember_tracking gmt
             LEFT JOIN user_economy ue ON gmt.user_id = ue.user_id
             WHERE gmt.guild_tag = ?
             ORDER BY gmt.owner DESC, gmt.vice_gm DESC, ue.crowns DESC
         `).all(guildInfo.guild_tag);
 
-		// Calculate total guild wealth (vault + member balances)
 		const totalWealth = members.reduce((sum, member) => sum + member.crowns, guildInfo.balance);
-
 		const now = new Date();
 		const creationDate = new Date(guildInfo.created_at);
 		const daysSinceCreation = (now - creationDate) / (1000 * 60 * 60 * 24);
-
 		const shieldExpiry = guildInfo.shield_expiry ? new Date(guildInfo.shield_expiry) : null;
 		const rawShieldStatus = shieldExpiry && shieldExpiry > now
 			? `🛡️ Active (expires <t:${Math.floor(shieldExpiry.getTime() / 1000)}:R>)`
 			: (daysSinceCreation < 7 ? `🆕 New Guild Protection (expires <t:${Math.floor((creationDate.getTime() + (7 * 24 * 60 * 60 * 1000)) / 1000)}:R>)` : '❌ No active shield');
 		const shieldStatus = (isMember || isOwner) ? rawShieldStatus : '🛡️ ❓ (Hidden)';
 
-		const defaultEmojiRecord = db.prepare(`
-            SELECT emoji_name, emoji_id FROM guild_emojis 
-            WHERE guild_tag = ? AND is_default = 1
-        `).get(guildTag);
-
-		// Step 3: Construct the final emoji string, with a fallback
-		const guildEmoji = defaultEmojiRecord
-			? `<:${defaultEmojiRecord.emoji_name}:${defaultEmojiRecord.emoji_id}>`
-			: '🗡️';
-			// Default fallback emoji is dagger
-
-		// Fetch member details and format member list
+		const defaultEmojiRecord = db.prepare('SELECT emoji_name, emoji_id FROM guild_emojis WHERE guild_tag = ? AND is_default = 1').get(guildTag);
+		const guildEmoji = defaultEmojiRecord ? `<:${defaultEmojiRecord.emoji_name}:${defaultEmojiRecord.emoji_id}>` : '•';
 		const memberList = [];
 		let titleNameTicker = 0;
 		let leader = 'the Guildmaster';
+
+		for (const member of members) {
+			try {
+				const discordMember = await interaction.guild.members.fetch(member.user_id).catch(() => null);
+				if (!discordMember) {
+					db.prepare('DELETE FROM guildmember_tracking WHERE user_id = ?').run(member.user_id);
+					continue;
+				}
+
+				let memberText;
+				if (member.owner === 1) {
+					memberText = `👑 __**GUILDMASTER**__\n${guildEmoji} ${discordMember.toString()}/${discordMember.displayName}`;
+					leader = discordMember.displayName;
+				}
+				else if (member.vice_gm === 1) {
+					memberText = `🛡️ __**VICE GUILDMASTER**__\n${guildEmoji} ${discordMember.toString()}/${discordMember.displayName}`;
+				}
+				else {
+					// Logic for custom title display
+					const titleHeader = titleNameTicker === 0 ? `\n**__${guildInfo.guildmember_title || 'Members'}__**\n` : '';
+					memberText = `${titleHeader}${guildEmoji} ${discordMember.toString()}/${discordMember.displayName}`;
+					titleNameTicker++;
+				}
+				memberList.push(`${memberText}\n\`[🪙 ${member.crowns.toLocaleString()}]\` Crowns`);
+			}
+			catch (error) {
+				console.error(`Error processing member ${member.user_id}:`, error);
+				memberList.push(`• <@${member.user_id}> \`[🪙 ${member.crowns.toLocaleString()}]\` (Error fetching)`);
+			}
+		}
 
 		let raidCooldownStatus = '❓ (Hidden)';
 		if (isMember) {
 			if (guildInfo.last_raid_time) {
 				const lastRaid = new Date(guildInfo.last_raid_time);
 				const nextRaidTime = new Date(lastRaid.getTime() + 24 * 60 * 60 * 1000);
-				if (now < nextRaidTime) {
-					raidCooldownStatus = `🕰️ Can raid <t:${Math.floor(nextRaidTime.getTime() / 1000)}:R>`;
-				}
-				else {
-					raidCooldownStatus = '✅ Ready to raid';
-				}
+				raidCooldownStatus = now < nextRaidTime
+					? `🕰️ Can raid <t:${Math.floor(nextRaidTime.getTime() / 1000)}:R>`
+					: '✅ Ready to raid';
 			}
 			else {
 				raidCooldownStatus = '✅ Ready to raid';
 			}
 		}
 
-		for (const member of members) {
-			try {
-				const discordMember = await interaction.guild.members.fetch(member.user_id).catch(() => null);
-				// Use the fetched variables
-				const memberText = member.owner === 1
-					? `👑 __**GUILDMASTER**__\n• ${discordMember.toString()}`
-					: member.vice_gm === 1
-						? `🛡️ __**VICE GUILDMASTER**__\n• ${discordMember.toString()}`
-					// Use the new guildEmoji variable and the title from guildInfo
-						: `${titleNameTicker < 3 ? `\n**${guildEmoji} __${guildInfo.guildmember_title}__**\n` : ''}• ${discordMember.toString()}`;
-
-				if (member.owner === 1) leader = discordMember.displayName;
-				titleNameTicker++;
-				memberList.push(`${memberText}/${discordMember.displayName}\n\`[🪙 ${member.crowns.toLocaleString()}]\` Crowns`);
-			}
-			catch (error) {
-				if (error.code === 10007 || !interaction.guild.members.cache.has(member.user_id)) {
-					// Clean up left members
-					db.transaction(() => {
-						db.prepare('DELETE FROM guildmember_tracking WHERE user_id = ?').run(member.user_id);
-					})();
-				}
-				else {
-					memberList.push(`• <@${member.user_id}> (🪙 ${member.crowns.toLocaleString()}) (error fetching)`);
-				}
-			}
-		}
-
-		// Build embed
 		const embed = new EmbedBuilder()
 			.setTitle(`${guildInfo.guild_name} [${guildInfo.guild_tag}]`)
-			.setDescription(guildInfo.about_text || 'No description set. Use `/guild settings about` to add one.')
+			.setDescription(guildInfo.hook || 'No hook set. Use `/guild settings hook` to add one (max 150 characters).')
 			.setColor(0x3498db)
 			.addFields(
-				{
-					name: ((guildInfo.is_open || 0) === 1) ? `🔓 Open to join, use command \`/guild join ${guildInfo.guild_tag}\`` : `🔒 Invite only, inquire with ${leader ? '__' + leader + '__, ' : ''}the Guildmaster`,
-					value: '\u200B',
-					inline: false,
-				},
-				{
-					name: 'Motto',
-					value: guildInfo.motto ? '*' + guildInfo.motto + '*' : 'Use `/guild settings motto` to add one.',
-					inline: true,
-				},
-				{
-					name: 'Shield Status',
-					value: shieldStatus,
-					inline: true,
-				},
-				{
-					name: 'Raid Stats',
-					value: [
-						`⚔️ Successful Raids: ${guildInfo.successful_raids || 0}`,
-						`☠️ Guilds Destroyed: ${guildInfo.guilds_destroyed || 0}`,
-						`👑 Crowns Stolen: ${guildInfo.crowns_stolen?.toLocaleString() || '0'}`,
-						`⌛ **Raid Cooldown:** ${raidCooldownStatus}`,
-					].join('\n'),
-					inline: true,
-				},
-				{
-					name: `Members (${members.length})`,
-					value: memberList.length > 0 ? memberList.slice(0, 15).join('\n') : 'No members found',
-					inline: false,
-				},
-				{
-					name: 'Stats & Defences',
-					value: [
-
-						`• Tier: ${tierEmojis[guildInfo.tier - 1]}`,
-						getTierBenefits(guildInfo.tier),
-					].join('\n'),
-					inline: true,
-				},
-				{
-					name: 'Wealth',
-					value: [
-						`🏦 Guild Vault: ${(isMember || isOwner) ? (guildInfo.balance.toLocaleString() + ' Crowns') : '❓ (Hidden)'}`,
-						`👥 Member Total: ${(totalWealth - guildInfo.balance).toLocaleString() || 0} Crowns`,
-						`💰 Combined Wealth: ${(isMember || isOwner) ? totalWealth.toLocaleString() + ' Crowns' : '❓ (Hidden)'}`,
-					].join('\n'),
-					inline: true,
-				},
+				{ name: ((guildInfo.is_open || 0) === 1) ? '🔓 Open to join' : '🔒 Invite only', value: `Inquire with ${leader ? `__${leader}__` : 'the Guildmaster'}`, inline: false },
+				{ name: 'Motto', value: guildInfo.motto ? `*"${guildInfo.motto}"*` : 'None set.', inline: true },
+				{ name: 'Shield Status', value: shieldStatus, inline: true },
+				{ name: 'Raid Stats', value: `⚔️ Raids: **${guildInfo.successful_raids || 0}**\n☠️ Destroyed: **${guildInfo.guilds_destroyed || 0}**\n👑 Stolen: **${guildInfo.crowns_stolen?.toLocaleString() || '0'}**\n⌛ Cooldown: **${raidCooldownStatus}**`, inline: true },
+				{ name: `Members (${members.length})`, value: memberList.length > 0 ? memberList.slice(0, 15).join('\n') : 'No members found', inline: false },
+				{ name: 'Stats & Defences', value: `• Tier: ${tierEmojis[guildInfo.tier - 1]}\n${getTierBenefits(guildInfo.tier)}`, inline: true },
+				{ name: 'Wealth', value: `🏦 Vault: ${(isMember || isOwner) ? `**${guildInfo.balance.toLocaleString()}**` : '❓'}\n👥 Member Total: **${(totalWealth - guildInfo.balance).toLocaleString()}**\n💰 Combined: ${(isMember || isOwner) ? `**${totalWealth.toLocaleString()}**` : '❓'}`, inline: true },
 			);
+
 		if (isMember || isOwner) {
-			embed.addFields({
-				name: '⚠️ Treasury Status and Raid Vulnerability',
-				value: vulnerableStatus,
-				inline: false,
-			});
+			embed.addFields({ name: '⚠️ Treasury Status', value: vulnerableStatus, inline: false });
 		}
 
-		embed.setFooter({ text: `Guild Tag: ${guildInfo.guild_tag} • Created on ${new Date(guildInfo.created_at).toLocaleDateString()}` })
-			.setTimestamp();
+		embed.setFooter({ text: `Guild Tag: ${guildInfo.guild_tag} • Created on ${new Date(guildInfo.created_at).toLocaleDateString()}` }).setTimestamp();
 
-		await interaction.reply({ embeds: [embed] });
+		const row = new ActionRowBuilder().addComponents(
+			new ButtonBuilder()
+				.setCustomId(`guild_show_lore_${guildTag}`)
+				.setLabel('📜 Show Lore')
+				.setStyle(ButtonStyle.Secondary),
+		);
+
+		await interaction.reply({ embeds: [embed], components: [row] });
 	}
 	catch (error) {
-		console.error('Error in handleInfo:', error);
-		const errorEmbed = new EmbedBuilder()
-			.setColor(0xE74C3C)
-			.setTitle('❌ Error')
-			.setDescription('An error occurred while fetching guild info.');
-		await interaction.reply({
-			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+		console.error('Error in handleFullInfo:', error);
+		const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Error').setDescription('An error occurred while fetching guild info.');
+		await interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+	}
+}
+
+
+async function buildMainMenuEmbed(guildTag) {
+	const guild = db.prepare(`
+		SELECT gl.guild_name, gl.guild_tag, gl.is_open, COALESCE(gt.tier, 1) as tier
+		FROM guild_list gl
+		LEFT JOIN guild_tiers gt ON gl.guild_tag = gt.guild_tag
+		WHERE gl.guild_tag = ?
+	`).get(guildTag);
+
+	if (!guild) return null;
+
+	const embed = new EmbedBuilder()
+		.setColor(0x3498DB)
+		.setTitle(`${tierEmojis[guild.tier - 1]} Main Menu: ${guild.guild_name} [${guild.guild_tag}]`)
+		.setDescription('Select a button below to view detailed information about this guild.')
+		.setThumbnail('https://i.ibb.co/2YqsK07D/guild.jpg')
+		.setFooter({ text: 'This menu is only visible to you.' });
+
+	const primaryButtons = new ActionRowBuilder().addComponents(
+		new ButtonBuilder()
+			.setCustomId(`guild_info_join_${guild.guild_tag}`)
+			.setLabel(guild.is_open ? 'Join Guild' : 'Invite Only')
+			.setStyle(ButtonStyle.Success)
+			.setDisabled(!guild.is_open)
+			.setEmoji('✅'),
+		new ButtonBuilder()
+			.setCustomId(`guild_info_lore_${guild.guild_tag}`)
+			.setLabel('View Lore')
+			.setStyle(ButtonStyle.Secondary)
+			.setEmoji('📜'),
+		new ButtonBuilder()
+			.setCustomId(`guild_info_economy_${guild.guild_tag}`)
+			.setLabel('View Economy')
+			.setStyle(ButtonStyle.Secondary)
+			.setEmoji('💰'),
+		new ButtonBuilder()
+			.setCustomId(`guild_info_warfare_${guild.guild_tag}`)
+			.setLabel('View Warfare')
+			.setStyle(ButtonStyle.Secondary)
+			.setEmoji('⚔️'),
+	);
+
+	const secondaryButtons = new ActionRowBuilder().addComponents(
+		new ButtonBuilder()
+			.setCustomId(`guild_info_members_${guild.guild_tag}`)
+			.setLabel('View Members')
+			.setStyle(ButtonStyle.Secondary)
+			.setEmoji('👥'),
+		new ButtonBuilder()
+			.setCustomId(`guild_info_customs_${guild.guild_tag}`)
+			.setLabel('View Customizations')
+			.setStyle(ButtonStyle.Secondary)
+			.setEmoji('✨'),
+		new ButtonBuilder()
+			.setCustomId(`guild_info_exit_${guild.guild_tag}`)
+			.setLabel('Exit')
+			.setStyle(ButtonStyle.Danger)
+			.setEmoji('❌'),
+	);
+
+	return { embeds: [embed], components: [primaryButtons, secondaryButtons] };
+}
+
+async function buildDetailEmbed(guildTag, view, interaction, parts) {
+	const guild = db.prepare('SELECT * FROM guild_list WHERE guild_tag = ?').get(guildTag);
+	if (!guild) return null;
+
+	const embed = new EmbedBuilder()
+		.setColor(0x1ABC9C)
+		.setFooter({ text: `Viewing: ${view} | This menu is only visible to you.` });
+
+	const navigationRow = new ActionRowBuilder().addComponents(
+		new ButtonBuilder()
+			.setCustomId(`guild_info_join_${guild.guild_tag}`)
+			.setLabel(guild.is_open ? 'Join Guild' : 'Invite Only')
+			.setStyle(ButtonStyle.Success)
+			.setDisabled(!guild.is_open)
+			.setEmoji('✅'),
+		new ButtonBuilder()
+			.setCustomId(`guild_info_home_${guildTag}`)
+			.setLabel('Go Home')
+			.setStyle(ButtonStyle.Secondary)
+			.setEmoji('↩️'),
+		new ButtonBuilder()
+			.setCustomId(`guild_info_exit_${guild.guild_tag}`)
+			.setLabel('Exit')
+			.setStyle(ButtonStyle.Danger)
+			.setEmoji('❌'),
+	);
+
+	const isMember = db.prepare('SELECT 1 FROM guildmember_tracking WHERE user_id = ? AND guild_tag = ?').get(interaction.user.id, guildTag);
+
+	switch (view) {
+	case 'lore':
+		embed.setTitle(`📜 Lore of ${guild.guild_name}`)
+			.setDescription(guild.lore || '*This guild has not written its epic tale yet.*\n\nUse `/guild settings lore` to set it (4000 character limit)!');
+		break;
+
+	case 'economy': {
+		const economy = db.prepare('SELECT balance FROM guild_economy WHERE guild_tag = ?').get(guildTag);
+		const members = db.prepare('SELECT COALESCE(SUM(ue.crowns), 0) as total_crowns FROM guildmember_tracking gmt LEFT JOIN user_economy ue ON gmt.user_id = ue.user_id WHERE gmt.guild_tag = ?').get(guildTag);
+		const guildBalance = economy?.balance || 0;
+		const memberBalance = members?.total_crowns || 0;
+		embed.setTitle(`💰 Economy of ${guild.guild_name}`)
+			.addFields(
+				{ name: '🏦 Guild Vault', value: isMember ? `${guildBalance.toLocaleString()} Crowns` : '❓ Hidden', inline: true },
+				{ name: '👥 Members\' Pockets', value: `${memberBalance.toLocaleString()} Crowns`, inline: true },
+				{ name: '💰 Combined Wealth', value: isMember ? `${(guildBalance + memberBalance).toLocaleString()} Crowns` : '❓ Hidden', inline: true },
+			);
+		break;
+	}
+	case 'warfare': {
+		const warfareInfo = db.prepare(`
+            SELECT
+                COALESCE(gt.tier, 1) as tier,
+                rl.successful_raids,
+				rl.guilds_destroyed,
+                rl.crowns_stolen,
+                rc.shield_expiry,
+                rc.last_raid_time
+            FROM guild_list gl
+            LEFT JOIN guild_tiers gt ON gt.guild_tag = gl.guild_tag
+			LEFT JOIN raid_leaderboard rl ON rl.guild_tag = gl.guild_tag
+            LEFT JOIN raid_cooldowns rc ON rc.guild_tag = gl.guild_tag
+            WHERE gl.guild_tag = ?
+        `).get(guildTag);
+
+		const now = new Date();
+		const creationDate = new Date(guild.created_at);
+		const daysSinceCreation = (now - creationDate) / (1000 * 60 * 60 * 24);
+		const shieldExpiry = warfareInfo.shield_expiry ? new Date(warfareInfo.shield_expiry) : null;
+
+		const rawShieldStatus = shieldExpiry && shieldExpiry > now
+			? `🛡️ Active (expires <t:${Math.floor(shieldExpiry.getTime() / 1000)}:R>)`
+			: (daysSinceCreation < 7 ? `🆕 New Guild Protection (expires <t:${Math.floor((creationDate.getTime() + (7 * 24 * 60 * 60 * 1000)) / 1000)}:R>)` : '❌ No active shield');
+		const finalShieldStatus = isMember ? rawShieldStatus : '🛡️ ❓ Hidden';
+
+		let raidCooldownStatus = '❓ (Hidden)';
+		if (isMember) {
+			if (warfareInfo.last_raid_time) {
+				const lastRaid = new Date(warfareInfo.last_raid_time);
+				const nextRaidTime = new Date(lastRaid.getTime() + 24 * 60 * 60 * 1000);
+				raidCooldownStatus = (now < nextRaidTime)
+					? `🕰️ Can raid <t:${Math.floor(nextRaidTime.getTime() / 1000)}:R>`
+					: '✅ Ready to raid';
+			}
+			else {
+				raidCooldownStatus = '✅ Ready to raid';
+			}
+		}
+
+		embed.setTitle(`⚔️ Warfare & Defense of ${guild.guild_name}`)
+			.addFields(
+				{ name: 'Shield Status', value: finalShieldStatus, inline: false },
+				{ name: `Stats & Defences (Tier ${warfareInfo.tier})`, value: getTierBenefits(warfareInfo.tier), inline: false },
+				{
+					name: 'Raid Performance',
+					value: [
+						`⚔️ Successful Raids: **${warfareInfo.successful_raids || 0}**`,
+						`☠️ Guilds Destroyed: **${warfareInfo.guilds_destroyed || 0}**`,
+						`👑 Crowns Stolen: **${warfareInfo.crowns_stolen?.toLocaleString() || '0'}**`,
+						`⌛ Raid Cooldown: **${raidCooldownStatus}**`,
+					].join('\n'),
+					inline: false,
+				},
+			);
+		break;
+	}
+	case 'members': {
+		const page = parseInt(parts[4]) || 1;
+
+		const memberList = db.prepare(`
+			SELECT gmt.user_id, gmt.owner, gmt.vice_gm, COALESCE(ue.crowns, 0) as crowns
+			FROM guildmember_tracking gmt
+			LEFT JOIN user_economy ue ON gmt.user_id = ue.user_id
+			WHERE gmt.guild_tag = ?
+			ORDER BY gmt.owner DESC, gmt.vice_gm DESC, ue.crowns DESC
+		`).all(guildTag);
+
+		// We need to fetch guild members asynchronously, so we do it before creating the strings.
+		await interaction.guild.members.fetch({ user: memberList.map(m => m.user_id) }).catch((e) => {console.log(e);});
+
+		const memberStrings = memberList.map(m => {
+			const discordMember = interaction.guild.members.cache.get(m.user_id);
+			if (!discordMember) {
+				return '• *Unknown or Left Server*';
+			}
+			const defaultEmojiRecord = db.prepare(`
+            SELECT emoji_name, emoji_id FROM guild_emojis 
+            WHERE guild_tag = ? AND is_default = 1
+        `).get(guildTag);
+
+			let rolePrefix = defaultEmojiRecord
+				? `<:${defaultEmojiRecord.emoji_name}:${defaultEmojiRecord.emoji_id}>`
+				: '•';
+			if (m.owner) rolePrefix = '👑 **GM:**';
+			if (m.vice_gm) rolePrefix = '🛡️ **VGM:**';
+
+			return `${rolePrefix} ${discordMember.toString()}/${discordMember.displayName} \`[🪙 ${m.crowns.toLocaleString()}]\``;
 		});
+
+		const perPage = 10;
+		const totalPages = Math.ceil(memberStrings.length / perPage);
+		const start = (page - 1) * perPage;
+		const end = start + perPage;
+		const pageContent = memberStrings.slice(start, end);
+
+		embed.setTitle(`👥 Members of ${guild.guild_name} (${memberList.length})`)
+			.setDescription(pageContent.join('\n') || 'This guild has no members.');
+
+		if (totalPages > 1) {
+			embed.setFooter({ text: `Page ${page}/${totalPages} | Viewing: ${view}` });
+
+			const paginationButtons = new ActionRowBuilder().addComponents(
+				new ButtonBuilder()
+					.setCustomId(`guild_info_members_${guildTag}_${page - 1}`)
+					.setLabel('◀️ Previous')
+					.setStyle(ButtonStyle.Secondary)
+					.setDisabled(page === 1),
+				new ButtonBuilder()
+					.setCustomId(`guild_info_members_${guildTag}_${page + 1}`)
+					.setLabel('Next ▶️')
+					.setStyle(ButtonStyle.Secondary)
+					.setDisabled(page === totalPages),
+			);
+			return { embeds: [embed], components: [navigationRow, paginationButtons] };
+		}
+		break;
+	}
+	case 'customs': {
+		const emoji = db.prepare('SELECT emoji_name, emoji_id FROM guild_emojis WHERE guild_tag = ? AND is_default = 1').get(guildTag);
+		const sticker = db.prepare('SELECT sticker_name, sticker_id FROM guild_stickers WHERE guild_tag = ?').get(guildTag);
+		let stickerField = 'None set.';
+		if (sticker) {
+			const discordSticker = await interaction.guild.stickers.fetch(sticker.sticker_id).catch(() => null);
+			stickerField = discordSticker ? `Name: \`${discordSticker.name}\`\n*Preview sticker to see it!*` : 'Could not fetch sticker.';
+		}
+		embed.setTitle(`✨ Customizations for ${guild.guild_name}`)
+			.addFields(
+				{ name: 'Default Emoji', value: emoji ? `<:${emoji.emoji_name}:${emoji.emoji_id}> \`:${emoji.emoji_name}:\`` : 'None set.', inline: true },
+				{ name: 'Guild Sticker', value: stickerField, inline: true },
+			);
+		break;
+	}
+	}
+
+	return { embeds: [embed], components: [navigationRow] };
+}
+
+async function handleGuildInfoButton(interaction) {
+	const parts = interaction.customId.split('_');
+	const action = parts[2];
+	const guildTag = parts[3];
+
+	try {
+		if (action === 'main') {
+			const payload = await buildMainMenuEmbed(guildTag);
+			if (!payload) {
+				return interaction.reply({ content: 'This guild no longer exists.', flags: [MessageFlags.Ephemeral] });
+			}
+			return interaction.reply({ ...payload, flags: [MessageFlags.Ephemeral] });
+		}
+
+		await interaction.deferUpdate();
+
+		switch (action) {
+		case 'home': {
+			const payload = await buildMainMenuEmbed(guildTag);
+			if (!payload) return interaction.editReply({ content: 'This guild no longer exists.', embeds: [], components: [] });
+			await interaction.editReply(payload);
+			break;
+		}
+
+		// All cases that use the detail embed are grouped here for efficiency.
+		case 'lore':
+		case 'economy':
+		case 'warfare':
+		case 'members':
+		case 'customs': {
+			// The 'parts' variable is passed to the builder.
+			// It will only be used by the 'members' case for pagination,
+			// and safely ignored by all other cases.
+			const payload = await buildDetailEmbed(guildTag, action, interaction, parts);
+			if (!payload) return interaction.editReply({ content: 'This guild no longer exists.', embeds: [], components: [] });
+			await interaction.editReply(payload);
+			break;
+		}
+
+		case 'join': {
+			const mockInteraction = {
+				...interaction,
+				options: { getString: () => guildTag },
+				client: interaction.client,
+				member: interaction.member,
+				reply: (options) => interaction.followUp({ ...options, flags: [MessageFlags.Ephemeral] }),
+			};
+			await handleJoin(mockInteraction);
+			break;
+		}
+
+		case 'exit':
+			await interaction.deleteReply();
+			break;
+		}
+	}
+	catch (error) {
+		console.error(`Error in handleGuildInfoButton (action: ${action}):`, error);
+		if (!interaction.replied && !interaction.deferred) {
+			await interaction.reply({ content: 'An error occurred while building this menu.', flags: [MessageFlags.Ephemeral] });
+		}
+		else {
+			await interaction.followUp({ content: 'An error occurred while building this menu.', flags: [MessageFlags.Ephemeral] });
+		}
 	}
 }
 async function handleBequeath(interaction) {
@@ -1682,7 +1983,7 @@ async function handleBequeath(interaction) {
 				UPDATE guildmember_tracking
 				SET owner = 1
 				WHERE user_id = ? AND guild_tag = ?
-			`).run(1, newOwnerUser.id, currentGuild.guild_tag);
+			`).run(newOwnerUser.id, currentGuild.guild_tag);
 		})();
 
 		const bequeathEmbed = new EmbedBuilder()
@@ -1887,21 +2188,45 @@ async function handleSettings(interaction, settingType) {
 				flags: [MessageFlags.Ephemeral],
 			});
 		}
-		case 'about': {
-			const text = interaction.options.getString('text').slice(0, 1000);
-			db.prepare('UPDATE guild_list SET about_text = ? WHERE guild_tag = ?')
-				.run(text, guildData.guild_tag);
-			successEmbed.setTitle('✅ About Text Updated').setDescription('Your guild\'s "about" description has been changed.');
-			return interaction.reply({
-				embeds: [successEmbed],
-				flags: [MessageFlags.Ephemeral],
-			});
-		}
 		case 'motto': {
 			const text = interaction.options.getString('text').slice(0, 100);
 			db.prepare('UPDATE guild_list SET motto = ? WHERE guild_tag = ?')
 				.run(text, guildData.guild_tag);
 			successEmbed.setTitle('✅ Motto Updated').setDescription(`Your new guild motto is now: *"${text}"*`);
+			return interaction.reply({
+				embeds: [successEmbed],
+				flags: [MessageFlags.Ephemeral],
+			});
+		}
+		case 'hook': {
+			const text = interaction.options.getString('text');
+			if (text.length > 150) {
+				errorEmbed.setDescription('Hook text cannot exceed 150 characters!');
+				return interaction.reply({
+					embeds: [errorEmbed],
+					flags: [MessageFlags.Ephemeral],
+				});
+			}
+			db.prepare('UPDATE guild_list SET hook = ? WHERE guild_tag = ?')
+				.run(text, guildData.guild_tag);
+			successEmbed.setTitle('✅ Hook Updated').setDescription(`Your guild's hook is now set:\n*_"${text}"_*`);
+			return interaction.reply({
+				embeds: [successEmbed],
+				flags: [MessageFlags.Ephemeral],
+			});
+		}
+		case 'lore': {
+			const text = interaction.options.getString('text');
+			if (text.length > 4000) {
+				errorEmbed.setDescription('Lore text cannot exceed 4000 characters!');
+				return interaction.reply({
+					embeds: [errorEmbed],
+					flags: [MessageFlags.Ephemeral],
+				});
+			}
+			db.prepare('UPDATE guild_list SET lore = ? WHERE guild_tag = ?')
+				.run(text, guildData.guild_tag);
+			successEmbed.setTitle('✅ Lore Updated').setDescription('Your guild\'s lore has been successfully updated.');
 			return interaction.reply({
 				embeds: [successEmbed],
 				flags: [MessageFlags.Ephemeral],
@@ -2510,8 +2835,18 @@ async function handleJoin(interaction) {
 
 	try {
 		// Add role to user
+		const member = interaction.member ?? await interaction.guild.members.fetch(interaction.user.id);
+
+		// Add role to user
 		const role = await interaction.guild.roles.fetch(guildData.role_id);
-		if (role) await interaction.member.roles.add(role);
+		if (role && member) {
+			await member.roles.add(role);
+		}
+		else if (!member) {
+			// Handle case where member couldn't be fetched
+			errorEmbed.setDescription('An error occurred trying to find your profile on this server.');
+			return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		}
 
 		// Add to database
 		db.prepare(`
@@ -3101,6 +3436,17 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 		const defendingParticipants = allParticipants.filter(a => a.side === 'defender');
 		console.log(`[Raid Resolution LOG] [${raidId}] Sorted participants. Attackers: ${attackingParticipants.length}, Defenders: ${defendingParticipants.length}.`);
 
+
+		const attackerEmojis = attackingParticipants.map(participant => {
+			const defaultEmojiRecord = db.prepare('SELECT emoji_name, emoji_id FROM guild_emojis WHERE guild_tag = ? AND is_default = 1').get(participant.allied_guild_tag);
+			return defaultEmojiRecord ? `<:${defaultEmojiRecord.emoji_name}:${defaultEmojiRecord.emoji_id}>` : '⚔️';
+		});
+
+		const defenderEmojis = defendingParticipants.map(participant => {
+			const defaultEmojiRecord = db.prepare('SELECT emoji_name, emoji_id FROM guild_emojis WHERE guild_tag = ? AND is_default = 1').get(participant.allied_guild_tag);
+			return defaultEmojiRecord ? `<:${defaultEmojiRecord.emoji_name}:${defaultEmojiRecord.emoji_id}>` : '🛡️';
+		});
+
 		const now = new Date();
 		const raidCost = finalAttackerData.tier * 200;
 
@@ -3189,16 +3535,17 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 
 		let modifier = 0;
 		let attackerModifierText = '';
-		if (finalAttackerData.tier < finalDefenderData.tier) {
+		if (getTierPowerBonus(finalAttackerData.tier) < getTierPowerBonus(finalDefenderData.tier)) {
 			modifier = 3;
 			attackerModifierText = '- `+3` (Kingslayer Bonus - Attacking Higher Tier)\n';
 		}
-		else if (finalAttackerData.tier > finalDefenderData.tier) {
+		else if (getTierPowerBonus(finalAttackerData.tier) > getTierPowerBonus(finalDefenderData.tier)) {
 			modifier = -4;
 			attackerModifierText = '- `-4` (Bully Penalty - Attacking Lower Tier)\n';
 		}
 		const attackerRoll = Math.floor(Math.random() * 20) + 1;
 		const finalAttackPower = attackerRoll + attackerBasePower + attackerAllyPower + modifier;
+		const attackerModifierTotal = finalAttackPower - attackerRoll;
 		const finalDefensePower = defenderBasePower + defenderAllyPower;
 		const success = finalAttackPower >= finalDefensePower;
 
@@ -3210,8 +3557,8 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 			.filter(p => p.allied_guild_tag !== defenderTag)
 			.map(p => `- \`+${getTierPowerBonus(p.tier)}\` (${p.guild_name} - Supporting Tier Bonus)`)
 			.join('\n');
-		attackerModifierText += `${attackerTierList}\n- \`+${attackerBasePower}\` (Base Tier Power of Attacking Guild)\n**MODIFIERS TOTAL** = \`+${attackerAllyPower}\``;
-		const defenderModifierText = `${defenderTierList}\n**MODIFIERS TOTAL** = \`+${defenderAllyPower}\``;
+		attackerModifierText += `${attackerTierList}\n- \`+${attackerBasePower}\` (Base Tier Power of Attacking Guild)\n__**MODIFIERS TOTAL**__ = \`+${attackerModifierTotal}\``;
+		const defenderModifierText = `${defenderTierList}\n__**MODIFIERS TOTAL**__ = \`+${defenderAllyPower}\``;
 		// 3. Narrative Sequence with Separate Messages & Countdown Timers
 		const NARRATIVE_DELAY_MS = 60000;
 
@@ -3268,11 +3615,11 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 
 		// 4. Reveal Outcome and Finalize
 		let finalDescription, resultEmbed, announceEmbed, netLoot = 0, defenderGain = 0;
-		 const attackerParticipantList = attackingParticipants
-			.map(p => `> <@&${p.role_id}> (Tier ${p.tier})`)
+		const attackerParticipantList = attackingParticipants
+			.map((p, index) => `> ${attackerEmojis[index]} <@&${p.role_id}> (${tierEmojis[(p.tier || 1) - 1]})`)
 			.join('\n');
 		const defenderParticipantList = defendingParticipants
-			.map(p => `> <@&${p.role_id}> (Tier ${p.tier})`)
+			.map((p, index) => `> ${defenderEmojis[index]} <@&${p.role_id}> (${tierEmojis[(p.tier || 1) - 1]})`)
 			.join('\n');
 		if (success) {
 			finalDescription = replacePlaceholders(defenderMsgs.defending_failure || DEFAULT_RAID_MESSAGES.defending_failure) + '\n\n' + replacePlaceholders(attackerMsgs.raiding_victory || DEFAULT_RAID_MESSAGES.raiding_victory);
@@ -3343,9 +3690,9 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 				.setColor(0x2ECC71)
 				.setDescription(description)
 				.addFields(
-					{ name: 'Attacker Power Calculations', value: `Attacker Roll: **${attackerRoll}**\nAttacker Modifiers:\n${attackerModifierText}`, inline: true },
-					{ name: 'Guild Defence Calculations', value: `Guild AC: **${defenderBasePower}**\nDefender Modifiers:\n${defenderModifierText}`, inline: true },
-					{ name: 'Final Scores:', value: `Total Power: 💥 **${finalAttackPower}**\nOverall Resistance: 🛡️ **${finalDefensePower}**`, inline: false },
+					{ name: 'Attacker Power Calculations', value: `__Attacker Roll:__ **${attackerRoll}**\n__Attacker Modifiers:__\n${attackerModifierText}`, inline: true },
+					{ name: 'Guild Defence Calculations', value: `__Guild AC:__ **${defenderBasePower}**\n__Defender Modifiers:__\n${defenderModifierText}`, inline: true },
+					{ name: 'Overall Scores:', value: `Final Attacking Power: 💥 **${finalAttackPower}**\nFinal Defending Resistance: 🛡️ **${finalDefensePower}**`, inline: false },
 					{ name: '⚔️ Attackers', value: attackerParticipantList, inline: true },
 					{ name: '🛡️ Defenders', value: defenderParticipantList, inline: true },
 					spoilsField,
@@ -3358,7 +3705,7 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 				.addFields(
 					{ name: '⚔️ Victorious Alliance', value: attackerParticipantList, inline: false },
 					{ name: '🛡️ Defeated Coalition', value: defenderParticipantList, inline: false },
-					{ name: 'Final Scores:', value: `[${attackerTag}] Total Power: 💥 **${finalAttackPower}**\n[${defenderTag}] Overall Resistance: 🛡️ **${finalDefensePower}**`, inline: false },
+					{ name: 'Final Scores:', value: `\`[${attackerTag}]\` Total Power: 💥 **${finalAttackPower}** (Rolled \`${attackerRoll}\` + \`${attackerModifierTotal}\`)\n\`[${defenderTag}]\` Overall Resistance: 🛡️ **${finalDefensePower}** (AC of \`${defenderBasePower}\` + \`${defenderAllyPower}\` bonus)`, inline: false },
 				)
 				.setTimestamp();
 		}
@@ -3431,9 +3778,9 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 				.setColor(0x3498DB)
 				.setDescription(description)
 				.addFields(
-					{ name: 'Attacker Power Calculations', value: `Attacker Roll: **${attackerRoll}**\nAttacker Modifiers:\n${attackerModifierText}`, inline: true },
-					{ name: 'Guild Defence Calculations', value: `Guild AC: **${defenderBasePower}**\nDefender Modifiers:\n${defenderModifierText}`, inline: true },
-					{ name: 'Final Scores:', value: `Total Power: 💥 **${finalAttackPower}**\nOverall Resistance: 🛡️ **${finalDefensePower}**`, inline: false },
+					{ name: 'Attacker Power Calculations', value: `__Attacker Roll:__ **${attackerRoll}**\n__Attacker Modifiers:__\n${attackerModifierText}`, inline: true },
+					{ name: 'Guild Defence Calculations', value: `__Guild AC:__ **${defenderBasePower}**\n__Defender Modifiers:__\n${defenderModifierText}`, inline: true },
+					{ name: 'Overall Scores:', value: `Final Attacking Power: 💥 **${finalAttackPower}**\nFinal Defending Resistance: 🛡️ **${finalDefensePower}**`, inline: false },
 					{ name: '⚔️ Attackers', value: attackerParticipantList, inline: true },
 					{ name: '🛡️ Defenders', value: defenderParticipantList, inline: true },
 					compensationField,
@@ -3446,7 +3793,7 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 				.addFields(
 					{ name: '🛡️ Victorious Coalition', value: defenderParticipantList, inline: false },
 					{ name: '⚔️ Defeated Alliance', value: attackerParticipantList, inline: false },
-					{ name: 'Final Scores:', value: `[${attackerTag}] Total Power: 💥 **${finalAttackPower}**\n[${defenderTag}] Overall Resistance: 🛡️ **${finalDefensePower}**`, inline: false },
+					{ name: 'Final Scores:', value: `\`[${attackerTag}]\` Total Power: 💥 **${finalAttackPower}** (Rolled \`${attackerRoll}\` + \`${attackerModifierTotal}\`)\n\`[${defenderTag}]\` Overall Resistance: 🛡️ **${finalDefensePower}** (AC of \`${defenderBasePower}\` + \`${defenderAllyPower}\` bonus)`, inline: false },
 				)
 				.setTimestamp();
 		}
@@ -3486,6 +3833,7 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 module.exports = {
 	category: 'utility',
 	buttons: {
+		handleGuildInfoButton,
 		async handleRaidMessageButton(interaction) {
 			const closedEmbed = new EmbedBuilder().setColor(0x3498DB).setDescription('Raid message editor closed.');
 			if (interaction.customId === 'raidmsg_close_editor') {
@@ -3655,8 +4003,8 @@ module.exports = {
 				WHERE gf.message_id = ?
 			`).get(fundraiserId);
 
-			if (!fundraiser) {
-				errorEmbed.setTitle('🚫 Fundraiser Not Found').setDescription('This fundraiser no longer exists!');
+			if (!fundraiser || fundraiser.completed) {
+				errorEmbed.setTitle('🚫 Fundraiser Not Found').setDescription('This fundraiser no longer exists or has already been completed!');
 				return interaction.update({
 					embeds: [errorEmbed],
 					components: [],
@@ -3744,6 +4092,8 @@ module.exports = {
 				if (contributionAmount > upperLimit) {
 					contributionAmount = upperLimit;
 				}
+
+				let isNowComplete = false;
 				// Process contribution in transaction
 				db.transaction(() => {
 					// Deduct from user
@@ -3766,7 +4116,21 @@ module.exports = {
 						VALUES (?, ?, ?)
 						ON CONFLICT(fundraiser_id, user_id) DO UPDATE SET amount = amount + ?
 					`).run(fundraiserId, userId, contributionAmount, contributionAmount);
+
+					// ATOMIC COMPLETION CHECK
+					const completionResult = db.prepare(`
+						UPDATE guild_fundraisers
+						SET completed = 1
+						WHERE message_id = ?
+						  AND completed = 0
+						  AND current_amount >= target_amount
+					`).run(fundraiserId);
+
+					if (completionResult.changes > 0) {
+						isNowComplete = true;
+					}
 				})();
+
 
 				// Get updated fundraiser info
 				const updatedFundraiser = db.prepare(`
@@ -3791,12 +4155,7 @@ module.exports = {
 				await interaction.update({ embeds: [newEmbed] });
 
 				// Check if goal reached
-				if (updatedFundraiser.current_amount >= fundraiser.target_amount && !fundraiser.completed) {
-					// Mark as completed
-					db.prepare(`
-						UPDATE guild_fundraisers SET completed = 1 WHERE message_id = ?
-					`).run(fundraiserId);
-
+				if (isNowComplete) {
 					// Add funds to guild
 					db.prepare(`
 						INSERT INTO guild_economy (guild_tag, balance)
@@ -3855,7 +4214,6 @@ module.exports = {
 				});
 			}
 		},
-
 		async handleFundraiseCustomModal(interaction) {
 			const [,, fundraiserId] = interaction.customId.split('_');
 			const amount = parseInt(interaction.fields.getTextInputValue('amount'));
@@ -4147,7 +4505,6 @@ module.exports = {
 				console.log('[RAID CONFIRM] Collector created');
 
 				collector.on('collect', async (i) => {
-					// This is now the ONLY place these button clicks are handled.
 					const logPrefix = `[RAID COLLECTOR | Raid ID: ${raidId} | User: ${i.user.username}]`;
 					console.log(`${logPrefix} Button interaction received. Custom ID: ${i.customId}`);
 
@@ -4157,25 +4514,20 @@ module.exports = {
 						const collectedRaidId = parts[2];
 						const side = action === 'join_attack' ? 'attacker' : 'defender';
 						const buttonUser = i.user;
-						// Get the full user object for better logging
 
 						console.log(`${logPrefix} Parsed Data: action=${action}, side=${side}, collectedRaidId=${collectedRaidId}`);
 
-						// Acknowledge the interaction immediately with an ephemeral (private) message
-						console.log(`${logPrefix} Deferring ephemeral reply...`);
-						await i.deferReply({ ephemeral: true });
-						console.log(`${logPrefix} Reply deferred successfully.`);
+						await i.deferReply({ flags: [MessageFlags.Ephemeral] });
 
-						// --- Start of logic from handleAllianceJoin ---
 						console.log(`${logPrefix} Checking authorization for user ID: ${buttonUser.id}`);
 						const joiningGuildData = db.prepare(`
-            SELECT gmt.guild_tag, gl.guild_name, COALESCE(gt.tier, 1) as tier, COALESCE(ge.balance, 0) as balance
-            FROM guildmember_tracking gmt
-            JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
-            LEFT JOIN guild_tiers gt ON gmt.guild_tag = gt.guild_tag
-            LEFT JOIN guild_economy ge ON gmt.guild_tag = ge.guild_tag
-            WHERE gmt.user_id = ? AND (gmt.owner = 1 OR gmt.vice_gm = 1)
-        `).get(buttonUser.id);
+							SELECT gmt.guild_tag, gl.guild_name, COALESCE(gt.tier, 1) as tier, COALESCE(ge.balance, 0) as balance
+							FROM guildmember_tracking gmt
+							JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
+							LEFT JOIN guild_tiers gt ON gmt.guild_tag = gt.guild_tag
+							LEFT JOIN guild_economy ge ON gmt.guild_tag = ge.guild_tag
+							WHERE gmt.user_id = ? AND (gmt.owner = 1 OR gmt.vice_gm = 1)
+						`).get(buttonUser.id);
 
 						if (!joiningGuildData) {
 							console.log(`${logPrefix} Authorization FAILED. User is not owner or vice-gm.`);
@@ -4185,6 +4537,14 @@ module.exports = {
 						console.log(`${logPrefix} Authorization SUCCEEDED. User is in guild [${joiningGuildData.guild_tag}] with tier ${joiningGuildData.tier} and balance ${joiningGuildData.balance}.`);
 
 						const joiningGuildTag = joiningGuildData.guild_tag;
+
+						// Prevent the attacking guild from joining the defending side and vice versa
+						if ((joiningGuildTag === attackerTag && side === 'defender') || (joiningGuildTag === defenderTag && side === 'attacker')) {
+							console.log(`${logPrefix} Invalid side selection for guild [${joiningGuildTag}].`);
+							const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Invalid Action').setDescription('Your guild cannot join the opposing side of the war.');
+							return i.editReply({ embeds: [errorEmbed] });
+						}
+
 						console.log(`${logPrefix} Verifying if the raid is still active in the database...`);
 						const originalRaid = db.prepare('SELECT attacker_tag, defender_tag FROM raid_history WHERE id = ? AND success = -1').get(collectedRaidId);
 
@@ -4243,9 +4603,7 @@ module.exports = {
 						console.log(`${logPrefix} Sending success reply to the user...`);
 						await i.editReply({ embeds: [successEmbed] });
 						console.log(`${logPrefix} Success reply sent.`);
-						// --- End of logic from handleAllianceJoin ---
 
-						// --- Now, update the public war message ---
 						console.log(`${logPrefix} Fetching all current allies to update the public war message...`);
 						const allAllies = db.prepare(`
 							SELECT ara.side, gl.guild_name
@@ -4271,12 +4629,11 @@ module.exports = {
 					}
 					catch (error) {
 						console.error(`${logPrefix} CRITICAL ERROR during collection:`, error);
-						// Try to inform the user that something went wrong
 						if (!i.replied && !i.deferred) {
-							await i.reply({ content: 'An unexpected error occurred. The Innkeepers have been notified.', ephemeral: true }).catch(e => console.error(`${logPrefix} Failed to send initial error reply:`, e));
+							await i.reply({ content: 'An unexpected error occurred. The Innkeepers have been notified.', flags: [MessageFlags.Ephemeral] }).catch(e => console.error(`${logPrefix} Failed to send initial error reply:`, e));
 						}
 						else {
-							await i.followUp({ content: 'An unexpected error occurred. The Innkeepers have been notified.', ephemeral: true }).catch(e => console.error(`${logPrefix} Failed to send followup error reply:`, e));
+							await i.followUp({ content: 'An unexpected error occurred. The Innkeepers have been notified.', flags: [MessageFlags.Ephemeral] }).catch(e => console.error(`${logPrefix} Failed to send followup error reply:`, e));
 						}
 					}
 				});
@@ -4453,6 +4810,7 @@ module.exports = {
 			}
 
 			const cost = TIER_DATA[currentTier].cost;
+			const newTier = currentTier + 1;
 
 			if (guildData.balance < cost) {
 				errorEmbed.setDescription('Your guild no longer has enough crowns to upgrade!');
@@ -4468,7 +4826,6 @@ module.exports = {
 					db.prepare('UPDATE guild_economy SET balance = balance - ? WHERE guild_tag = ?')
 						.run(cost, guildTag);
 
-					const newTier = currentTier + 1;
 					db.prepare(`
 				INSERT INTO guild_tiers (guild_tag, tier, last_upgrade_time)
 				VALUES (?, ?, ?)
@@ -4563,7 +4920,10 @@ module.exports = {
 					option.setName('guild_tag')
 						.setDescription('Tag of the guild to look up')
 						.setRequired(true)
-						.setAutocomplete(true)))
+						.setAutocomplete(true))
+				.addBooleanOption(option =>
+					option.setName('full_view')
+						.setDescription('Display all guild info in a single message instead of the interactive menu.')))
 		.addSubcommand(subcommand =>
 			subcommand
 				.setName('join')
@@ -4674,21 +5034,30 @@ module.exports = {
 						.setDescription('Set or replace your guild\'s custom sticker slot.'))
 				.addSubcommand(subcommand =>
 					subcommand
-						.setName('about')
-						.setDescription('Set your guild description')
-						.addStringOption(option =>
-							option.setName('text')
-								.setDescription('About your guild (max 1000 chars)')
-								.setRequired(true)))
-				.addSubcommand(subcommand =>
-					subcommand
 						.setName('motto')
 						.setDescription('Set your guild motto')
 						.addStringOption(option =>
 							option.setName('text')
 								.setDescription('Short guild motto (max 50 chars)')
 								.setRequired(true)))
-
+				.addSubcommand(subcommand =>
+					subcommand
+						.setName('hook')
+						.setDescription('Set your guild\'s short, punchy recruitment hook.')
+						.addStringOption(option =>
+							option.setName('text')
+								.setDescription('The hook text (max 150 chars).')
+								.setRequired(true)
+								.setMaxLength(150)))
+				.addSubcommand(subcommand =>
+					subcommand
+						.setName('lore')
+						.setDescription('Set your guild\'s detailed backstory or lore.')
+						.addStringOption(option =>
+							option.setName('text')
+								.setDescription('The lore text (max 4000 chars).')
+								.setRequired(true)
+								.setMaxLength(4000)))
 				.addSubcommand(subcommand =>
 					subcommand
 						.setName('name')
@@ -4816,11 +5185,19 @@ module.exports = {
 				await handlePayout(interaction);
 			}
 		}
+		else if (subcommand === 'info') {
+			const fullView = interaction.options.getBoolean('full_view');
+			if (fullView) {
+				await handleFullInfo(interaction);
+			}
+			else {
+				await handleInfo(interaction);
+			}
+		}
 		else if (subcommand === 'create') {await handleCreate(interaction);}
 		else if (subcommand === 'delete') {await handleDelete(interaction);}
 		else if (subcommand === 'leave') {await handleLeave(interaction);}
 		else if (subcommand === 'invite') {await handleInvite(interaction);}
-		else if (subcommand === 'info') {await handleInfo(interaction);}
 		else if (subcommand === 'bequeath') {await handleBequeath(interaction);}
 		else if (subcommand === 'list') {await handleList(interaction);}
 		else if (subcommand === 'join') {await handleJoin(interaction);}

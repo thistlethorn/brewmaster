@@ -55,8 +55,9 @@ const setupTables = db.transaction(() => {
             public_channel_id TEXT,
             role_id TEXT,
             is_open INTEGER DEFAULT 0,
-            about_text TEXT DEFAULT '',
             motto TEXT DEFAULT '',
+            hook TEXT DEFAULT '',
+            lore TEXT DEFAULT '',
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             guildmember_title TEXT DEFAULT 'Member',
             UNIQUE(guild_name)
@@ -331,6 +332,20 @@ const setupTables = db.transaction(() => {
         )
     `).run();
 
+	//  Dynamic configuration keypair settings
+	//
+	db.prepare(`
+		CREATE TABLE IF NOT EXISTS bot_settings (
+			setting_key TEXT PRIMARY KEY,
+			setting_value TEXT NOT NULL
+		)
+	`).run();
+
+	// Initialize any default settings that should exist
+	db.prepare(`
+		INSERT OR IGNORE INTO bot_settings (setting_key, setting_value)
+		VALUES (?, ?)
+	`).run('dev_disable_reminders', 'false');
 
 	// indexes for faster recall
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_welcome_claims ON welcome_messages(welcome_time)').run();
@@ -351,171 +366,6 @@ const setupTables = db.transaction(() => {
 
 setupTables();
 
-try {
-	db.pragma('foreign_keys = ON;');
-	console.log('[database] Foreign key support is enabled via PRAGMA.');
-}
-catch (error) {
-	console.log('[database] This instance of SQLite/better-sqlite3 does not support foreign keys or has failed initializing. ' + error);
-}
-
-try {
-	// Migration for raid_history table to add alliance tracking
-	const historyCols = db.prepare('PRAGMA table_info(raid_history)').all();
-	if (!historyCols.some(col => col.name === 'attacker_allies')) {
-		db.prepare('ALTER TABLE raid_history ADD COLUMN attacker_allies TEXT').run();
-		console.log('[Database Migration] Added attacker_allies to raid_history.');
-	}
-	if (!historyCols.some(col => col.name === 'defender_allies')) {
-		db.prepare('ALTER TABLE raid_history ADD COLUMN defender_allies TEXT').run();
-		console.log('[Database Migration] Added defender_allies to raid_history.');
-	}
-	// Rename defender_roll to defender_ac for clarity
-	if (historyCols.some(col => col.name === 'defender_roll')) {
-		db.prepare('ALTER TABLE raid_history RENAME COLUMN defender_roll TO defender_ac').run();
-		console.log('[Database Migration] Renamed defender_roll to defender_ac in raid_history.');
-	}
-
-
-	// Migration for raid_cooldowns table
-	const cooldownsCols = db.prepare('PRAGMA table_info(raid_cooldowns)').all();
-	if (!cooldownsCols.some(col => col.name === 'is_under_raid')) {
-		db.prepare('ALTER TABLE raid_cooldowns ADD COLUMN is_under_raid INTEGER DEFAULT 0').run();
-		console.log('[Database Migration] Added is_under_raid to raid_cooldowns.');
-	}
-}
-catch (error) {
-	console.error('[Database Migration] Error altering raid_history or raid_cooldowns:', error);
-}
-
-
-try {
-	console.log('[Database Migration] Checking for guild_list schema updates...');
-	const columns = db.prepare('PRAGMA table_info(guild_list)').all();
-	const hasPublicChannelId = columns.some(col => col.name === 'public_channel_id');
-
-	// Add the column if it doesn't exist
-	if (!hasPublicChannelId) {
-		console.log('[Database Migration] Column "public_channel_id" not found. Altering table...');
-		db.prepare('ALTER TABLE guild_list ADD COLUMN public_channel_id TEXT').run();
-		console.log('[Database Migration] Table "guild_list" altered successfully.');
-	}
-	else {
-		console.log('[Database Migration] Column "public_channel_id" already exists. Skipping alteration.');
-	}
-
-	// Run the backfill logic now, the column is guaranteed to exist.
-	const backfillData = [
-		{ tag: 'FUN', public_id: '1396220445593829617' },
-		{ tag: 'RIC', public_id: '1396220670249013358' },
-		{ tag: 'RIP', public_id: '1396220991147085996' },
-		{ tag: 'RYE', public_id: '1396220567534833674' },
-		{ tag: 'HMC', public_id: '1396220926634361053' },
-		{ tag: 'MHA', public_id: '1396221209783566416' },
-		{ tag: 'GRG', public_id: '1396221315979018252' },
-	];
-
-	const updateStmt = db.prepare('UPDATE guild_list SET public_channel_id = ? WHERE guild_tag = ? AND public_channel_id IS NULL');
-
-	const backfillTransaction = db.transaction(() => {
-		let updatedCount = 0;
-		for (const item of backfillData) {
-			const result = updateStmt.run(item.public_id, item.tag);
-			if (result.changes > 0) {
-				updatedCount++;
-			}
-		}
-		if (updatedCount > 0) {
-			console.log(`[Database Backfill] Successfully backfilled public_channel_id for ${updatedCount} guilds.`);
-		}
-		else {
-			console.log('[Database Backfill] All existing guilds already have a public_channel_id. No backfill needed.');
-		}
-	});
-
-	// Run the transaction as a whole
-	backfillTransaction();
-
-}
-catch (error) {
-	console.error('[Database Migration/Backfill] An error occurred:', error);
-}
-const raidNum = 16;
-const defendingGuildTag = 'FUN';
-const attackingGuildTag = 'RIP';
-const overrideCheck = false;
-try {
-	console.log(`[Database Migration] Checking for and attempting to fix bugged raid ID ${raidNum}...`);
-	const buggedRaid = db
-		.prepare('SELECT id FROM raid_history WHERE id = ? AND success = -1')
-		.get(raidNum);
-	if (buggedRaid || overrideCheck) {
-		const migrationTransaction = db.transaction(() => {
-			// Step 1: Clean up the orphaned alliance entries.
-			const allyDeletionResult = db
-				.prepare('DELETE FROM active_raid_allies WHERE raid_id = ?')
-				.run(raidNum);
-			console.log(
-				`[Migration] Deleted ${allyDeletionResult.changes} orphaned entries from active_raid_allies.`,
-			);
-
-			// Step 2: Remove the bugged raid history record.
-			const historyDeletionResult = db
-				.prepare('DELETE FROM raid_history WHERE id = ?')
-				.run(raidNum);
-			console.log(
-				`[Migration] Deleted ${historyDeletionResult.changes} bugged record from raid_history.`,
-			);
-
-			// Step 3: Unlock the defender's guild.
-			db
-				.prepare(
-					'UPDATE raid_cooldowns SET is_under_raid = 0 WHERE guild_tag = ? AND is_under_raid = 1',
-				)
-				.run(defendingGuildTag);
-			console.log(
-				`[Migration] Unlocked the '${defendingGuildTag}' guild by resetting its is_under_raid flag.`,
-			);
-
-			db
-				.prepare(
-					'UPDATE raid_cooldowns SET shield_expiry = NULL WHERE guild_tag = ?',
-				)
-				.run(defendingGuildTag);
-			console.log(
-				`[Migration] Turned off the shield for the '${defendingGuildTag}' guild.`,
-			);
-
-			// Step 4: (NEW) Remove the unfair raid cooldown for the attacker.
-			const cooldownResetResult = db
-				.prepare(
-					'UPDATE raid_cooldowns SET last_raid_time = NULL WHERE guild_tag = ?',
-				)
-				.run(attackingGuildTag);
-			if (cooldownResetResult.changes > 0) {
-				console.log(
-					`[Migration] Successfully removed the unfair raid cooldown for '${attackingGuildTag}'.`,
-				);
-			}
-		});
-
-		migrationTransaction();
-		console.log(
-			`[Database Migration] Successfully reversed and cleaned up all aspects of bugged raid ID ${raidNum}.`,
-		);
-	}
-	else {
-		console.log(
-			`[Database Migration] Bugged raid ID ${raidNum} not found or already fixed. No action taken.`,
-		);
-	}
-}
-catch (error) {
-	console.error(
-		`[Database Migration] CRITICAL ERROR while trying to fix bugged raid ID ${raidNum}:`,
-		error,
-	);
-}
 
 db.pragma('journal_mode = WAL');
 module.exports = db;
