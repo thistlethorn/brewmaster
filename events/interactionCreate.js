@@ -108,6 +108,12 @@ module.exports = {
 
 				// --- TONY QUOTE BUTTON HANDLER ---
 				if (interaction.customId.startsWith('tony_quote_')) {
+					// Basic authorization: require a staff permission (adjust to your server policy)
+					const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+					if (!member || !member.permissions.has('ManageMessages')) {
+						return interaction.reply({ content: 'You are not authorized to perform this action.', flags: [MessageFlags.Ephemeral] });
+					}
+
 					const parts = interaction.customId.split('_');
 					// 'approve' or 'reject'
 					const action = parts[2];
@@ -127,12 +133,14 @@ module.exports = {
 
 					const { trigger_word, quote_text, user_id } = pendingQuote;
 
-					const originalEmbed = new EmbedBuilder(interaction.message.embeds[0].data);
-					const row = new ActionRowBuilder().addComponents(
-						...interaction.message.components[0].components.map(c =>
-							ButtonBuilder.from(c).setDisabled(true),
-						),
-					);
+					const baseEmbed = interaction.message.embeds?.[0];
+					const originalEmbed = baseEmbed ? new EmbedBuilder(baseEmbed.data) : new EmbedBuilder();
+					const firstRow = interaction.message.components?.[0];
+					const row = firstRow
+						? new ActionRowBuilder().addComponents(
+							...firstRow.components.map(c => ButtonBuilder.from(c).setDisabled(true)),
+						)
+						: new ActionRowBuilder();
 
 					if (action === 'approve') {
 						db.transaction(() => {
@@ -140,24 +148,23 @@ module.exports = {
 								INSERT INTO tony_quotes_active (trigger_word, quote_text, user_id)
 								VALUES (?, ?, ?)
 							`).run(trigger_word, quote_text, user_id);
-							db.prepare('DELETE FROM tony_quotes_pending WHERE id = ?')
-								.run(pendingId);
+							db.prepare('DELETE FROM tony_quotes_pending WHERE id = ?').run(pendingId);
 						})();
 
 						originalEmbed
 							.setColor(0x2ECC71)
 							.setFooter({ text: `Approved by ${interaction.user.username}` });
 						await interaction.update({ embeds: [originalEmbed], components: [row] });
+
 					}
 					else if (action === 'reject') {
 						db.transaction(() => {
 							db.prepare(`
-							INSERT INTO user_economy (user_id, crowns)
-							VALUES (?, 200)
-							ON CONFLICT(user_id) DO UPDATE SET crowns = crowns + 200
-						`).run(user_id);
-							db.prepare('DELETE FROM tony_quotes_pending WHERE id = ?')
-								.run(pendingId);
+								INSERT INTO user_economy (user_id, crowns)
+								VALUES (?, 200)
+								ON CONFLICT(user_id) DO UPDATE SET crowns = crowns + 200
+							`).run(user_id);
+							db.prepare('DELETE FROM tony_quotes_pending WHERE id = ?').run(pendingId);
 						})();
 
 						originalEmbed
@@ -174,6 +181,7 @@ module.exports = {
 							rejectionMessage,
 						);
 					}
+
 					return;
 				}
 				// --- DAILY NOTIFICATION BUTTON HANDLER ---

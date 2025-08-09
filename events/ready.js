@@ -5,6 +5,7 @@ const setupDailyReset = require('../tasks/dailyReset');
 const { resumeActiveGiveaways } = require('../utils/handleMotwGiveaway');
 const { resumeDailyReminders } = require('../tasks/dailyReminder');
 const { resumeTempRoleRemovals } = require('../tasks/tempRoleManager');
+const { setupIdleChatter } = require('../tasks/idleChatter');
 
 module.exports = {
 	name: Events.ClientReady,
@@ -23,6 +24,8 @@ module.exports = {
 		console.log('[Ready.js] resumeDailyReminders is complete');
 		resumeTempRoleRemovals(client);
 		console.log('[Ready.js] resumeTempRoleRemovals is complete');
+		setupIdleChatter(client);
+		console.log('[Ready.js] setupIdleChatter is complete');
 
 	},
 };

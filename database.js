@@ -42,22 +42,24 @@ const setupTables = db.transaction(() => {
 	db.prepare(`
         CREATE TABLE IF NOT EXISTS tony_quotes_pending (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            trigger_word TEXT NOT NULL,
+            trigger_word TEXT,
             quote_text TEXT NOT NULL,
             user_id TEXT NOT NULL,
             approval_message_id TEXT NOT NULL,
-            submitted_at TEXT DEFAULT CURRENT_TIMESTAMP
+            submitted_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            quote_type TEXT DEFAULT 'trigger' NOT NULL
         )
     `).run();
 
 	db.prepare(`
         CREATE TABLE IF NOT EXISTS tony_quotes_active (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            trigger_word TEXT NOT NULL,
+            trigger_word TEXT,
             quote_text TEXT NOT NULL,
             user_id TEXT NOT NULL,
             times_triggered INTEGER DEFAULT 0,
-            last_triggered_at TEXT
+            last_triggered_at TEXT,
+            quote_type TEXT DEFAULT 'trigger' NOT NULL
         )
     `).run();
 
@@ -67,6 +69,13 @@ const setupTables = db.transaction(() => {
 			last_triggered_at TEXT
 		)
 	`).run();
+
+	db.prepare(`
+        CREATE TABLE IF NOT EXISTS tony_idle_chatter_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            next_chatter_time TEXT
+        )
+    `).run();
 
 	// "Guild management system" via /commands/utility/ @ [guild.js]
 
@@ -388,6 +397,7 @@ const setupTables = db.transaction(() => {
 		VALUES (?, ?)
 	`).run('dev_disable_reminders', 'false');
 	db.prepare('INSERT OR IGNORE INTO tony_quotes_global_cooldown (id, last_triggered_at) VALUES (1, NULL)').run();
+	db.prepare('INSERT OR IGNORE INTO tony_idle_chatter_state (id, next_chatter_time) VALUES (1, NULL)').run();
 	db.prepare('INSERT OR IGNORE INTO game_jackpot (id, amount) VALUES (1, 5000)').run();
 
 
@@ -401,6 +411,8 @@ const setupTables = db.transaction(() => {
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_raid_allies ON active_raid_allies(raid_id)').run();
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_temp_roles_expiry ON temp_roles(expiry_time)').run();
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_tony_quotes_trigger ON tony_quotes_active(trigger_word)').run();
+	db.prepare('CREATE INDEX IF NOT EXISTS idx_tony_quotes_type ON tony_quotes_active(quote_type, user_id)').run();
+
 
 });
 

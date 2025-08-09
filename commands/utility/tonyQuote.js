@@ -25,6 +25,7 @@ async function handleView(interaction, pageArg) {
 			.setColor(0x3498DB)
 			.setTitle('📜 Your Submitted Quotes')
 			.setDescription('*You haven\'t submitted any approved quotes yet. Use `/tonyquote submit` to add one!*');
+		// For an empty list, a simple reply is fine, even on a button click.
 		return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
 	}
 
@@ -63,7 +64,15 @@ async function handleView(interaction, pageArg) {
 		components.push(row);
 	}
 
-	await interaction.reply({ embeds: [embed], components, flags: [MessageFlags.Ephemeral] });
+	// --- FIX: Use interaction.update() for buttons, interaction.reply() for commands ---
+	if (interaction.isButton()) {
+		// If the interaction is a button click, update the original message.
+		await interaction.update({ embeds: [embed], components, flags: [MessageFlags.Ephemeral] });
+	}
+	else {
+		// Otherwise, it's a slash command, so send a new reply.
+		await interaction.reply({ embeds: [embed], components, flags: [MessageFlags.Ephemeral] });
+	}
 }
 
 
@@ -81,6 +90,19 @@ async function handleSubmit(interaction) {
 	}
 	if (!/^[a-zA-Z0-9&]+$/.test(triggerWord) || triggerWord.split(' ').length > 1) {
 		errorEmbed.setDescription('The trigger word must be a single word containing only letters, numbers, or an ampersand (&).');
+		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+	}
+
+	// --- FIX: Check for duplicate trigger/quote combination before proceeding ---
+	const existingQuote = db.prepare(`
+        SELECT 1 FROM tony_quotes_active WHERE trigger_word = ? AND quote_text = ?
+        UNION ALL
+        SELECT 1 FROM tony_quotes_pending WHERE trigger_word = ? AND quote_text = ?
+        LIMIT 1
+    `).get(triggerWord, quoteText, triggerWord, quoteText);
+
+	if (existingQuote) {
+		errorEmbed.setDescription('This exact trigger and quote combination already exists (either active or pending approval). Please submit something new!');
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
 
