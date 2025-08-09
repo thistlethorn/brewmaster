@@ -1232,6 +1232,8 @@ async function handleDues(interaction) {
 		});
 	}
 	const today = new Date().toISOString().slice(0, 10);
+
+	// guild tag is set as primary key, just to make sure ON CONFLICT works properly
 	const upsert = db.prepare(`
 		INSERT INTO guild_daily_dues (guild_tag, last_dues_date)
 	    VALUES (?, ?)
@@ -1345,6 +1347,7 @@ async function handleDues(interaction) {
 		let scenario;
 		let investmentChange;
 		let resultMessage;
+		const pickOutcome = (s, ok) => ok ? s.success : s.failure;
 
 		if (luckRoll < 0.01) {
 			if (shuffledUltra.length === 0) shuffledUltra = shuffleArray(ULTRA_RARE_DUES_SCENARIOS);
@@ -1364,11 +1367,11 @@ async function handleDues(interaction) {
 			const isSuccess = Math.random() < 0.6;
 			if (isSuccess) {
 				investmentChange = Math.floor(contribution * (0.2 + Math.random() * 0.6));
-				resultMessage = scenario.success;
+				resultMessage = pickOutcome(scenario, isSuccess);
 			}
 			else {
 				investmentChange = -Math.floor(contribution * (0.1 + Math.random() * 0.4));
-				resultMessage = scenario.failure;
+				resultMessage = pickOutcome(scenario, isSuccess);
 			}
 		}
 
@@ -1429,7 +1432,7 @@ async function handleDues(interaction) {
 			{ name: '💰 Total Collected', value: `**${totalCollected.toLocaleString()}** crowns`, inline: true },
 		);
 	addLogFields(finalEmbed, resultsLog, 'Final Contribution Log');
-	finalEmbed.setFooter({ text: 'Dues collected by the Guildmaster are 1% of every member\'s balance.' });
+	finalEmbed.setFooter({ text: 'The Guildmaster collects DAILY DUES equal to 1% of each member\'s balance.' });
 	await duesMessage.edit({ embeds: [finalEmbed] });
 }
 
@@ -3015,6 +3018,14 @@ async function handleRaidAutocomplete(interaction) {
 		await interaction.respond([]);
 	}
 }
+
+
+/**
+* Autocomplete handler for /guild fund -> guild_tag option.
+* Returns up to 25 guilds matching tag or name.
+* @param {import('discord.js').AutocompleteInteraction} interaction
+* @returns {Promise<void>}
+*/
 async function handleFundAutocomplete(interaction) {
 	try {
 		const focusedValue = interaction.options.getFocused();
@@ -3673,15 +3684,16 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 				// Give the entire net loot to the primary attacker
 				if (netLoot > 0) {
 					db.prepare('UPDATE guild_economy SET balance = balance + ? WHERE guild_tag = ?').run(netLoot, attackerTag);
-					db.prepare(`
-						INSERT INTO raid_leaderboard (guild_tag, successful_raids, crowns_stolen)
-						VALUES (?, 1, ?)
-						ON CONFLICT(guild_tag) DO UPDATE SET
-							successful_raids = successful_raids + 1,
-							crowns_stolen = crowns_stolen + ?
-					`).run(attackerTag, netLoot, netLoot);
 				}
 			})();
+
+			db.prepare(`
+				INSERT INTO raid_leaderboard (guild_tag, successful_raids, crowns_stolen)
+				VALUES (?, 1, ?)
+				ON CONFLICT(guild_tag) DO UPDATE SET
+					successful_raids = successful_raids + 1,
+					crowns_stolen = crowns_stolen + ?
+			`).run(attackerTag, netLoot, netLoot);
 
 			await checkAndDestroyGuildOnRaid(defenderTag, attackerTag, interaction);
 			const isDestroyed = !db.prepare('SELECT 1 FROM guild_list WHERE guild_tag = ?').get(defenderTag);
