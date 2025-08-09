@@ -37,6 +37,36 @@ const setupTables = db.transaction(() => {
         )
     `).run();
 
+	// "Tony Quote System" via /commands/utility/ @ [tonyQuote.js]
+
+	db.prepare(`
+        CREATE TABLE IF NOT EXISTS tony_quotes_pending (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trigger_word TEXT NOT NULL,
+            quote_text TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            approval_message_id TEXT NOT NULL,
+            submitted_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    `).run();
+
+	db.prepare(`
+        CREATE TABLE IF NOT EXISTS tony_quotes_active (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trigger_word TEXT NOT NULL,
+            quote_text TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            times_triggered INTEGER DEFAULT 0,
+            last_triggered_at TEXT
+        )
+    `).run();
+
+	db.prepare(`
+		CREATE TABLE IF NOT EXISTS tony_quotes_global_cooldown (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			last_triggered_at TEXT
+		)
+	`).run();
 
 	// "Guild management system" via /commands/utility/ @ [guild.js]
 
@@ -357,6 +387,9 @@ const setupTables = db.transaction(() => {
 		INSERT OR IGNORE INTO bot_settings (setting_key, setting_value)
 		VALUES (?, ?)
 	`).run('dev_disable_reminders', 'false');
+	db.prepare('INSERT OR IGNORE INTO tony_quotes_global_cooldown (id, last_triggered_at) VALUES (1, NULL)').run();
+	db.prepare('INSERT OR IGNORE INTO game_jackpot (id, amount) VALUES (1, 5000)').run();
+
 
 	// indexes for faster recall
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_welcome_claims ON welcome_messages(welcome_time)').run();
@@ -367,11 +400,7 @@ const setupTables = db.transaction(() => {
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_guild_stickers_tag ON guild_stickers(guild_tag)').run();
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_raid_allies ON active_raid_allies(raid_id)').run();
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_temp_roles_expiry ON temp_roles(expiry_time)').run();
-
-
-	// Initialize the jackpot if it doesn't exist
-	db.prepare('INSERT OR IGNORE INTO game_jackpot (id, amount) VALUES (1, 5000)').run();
-
+	db.prepare('CREATE INDEX IF NOT EXISTS idx_tony_quotes_trigger ON tony_quotes_active(trigger_word)').run();
 
 });
 

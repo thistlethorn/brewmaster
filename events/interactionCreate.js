@@ -3,6 +3,7 @@ const { Events, EmbedBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, But
 const { handleMotwEntry } = require('../utils/handleMotwGiveaway');
 const { scheduleDailyReminder, sendReminder } = require('../tasks/dailyReminder');
 const { updateMultiplier } = require('../utils/handleCrownRewards');
+const sendMessageToChannel = require('../utils/sendMessageToChannel');
 const db = require('../database');
 
 
@@ -104,6 +105,56 @@ module.exports = {
 			}
 			// Handle button interactions first
 			if (interaction.isButton()) {
+
+				// --- TONY QUOTE BUTTON HANDLER ---
+				if (interaction.customId.startsWith('tony_quote_')) {
+					const parts = interaction.customId.split('_');
+					// 'approve' or 'reject'
+					const action = parts[2];
+					const pendingId = parts[3];
+
+					// Get the pending quote data
+					const pendingQuote = db.prepare('SELECT * FROM tony_quotes_pending WHERE id = ?').get(pendingId);
+					if (!pendingQuote) {
+						return interaction.update({ content: 'This submission was already handled or has an error.', embeds: [], components: [] });
+					}
+
+					const { trigger_word, quote_text, user_id } = pendingQuote;
+
+					const originalEmbed = new EmbedBuilder(interaction.message.embeds[0].data);
+					const row = new ActionRowBuilder().addComponents(
+						new ButtonBuilder(interaction.message.components[0].components[0].data).setDisabled(true),
+						new ButtonBuilder(interaction.message.components[0].components[1].data).setDisabled(true),
+					);
+
+					if (action === 'approve') {
+						db.transaction(() => {
+							db.prepare(`
+								INSERT INTO tony_quotes_active (trigger_word, quote_text, user_id)
+								VALUES (?, ?, ?)
+							`).run(trigger_word, quote_text, user_id);
+							db.prepare('DELETE FROM tony_quotes_pending WHERE id = ?').run(pendingId);
+						})();
+
+						originalEmbed.setColor(0x2ECC71).setFooter({ text: `Approved by ${interaction.user.username}` });
+						await interaction.update({ embeds: [originalEmbed], components: [row] });
+					}
+					else if (action === 'reject') {
+						db.transaction(() => {
+							db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(200, user_id);
+							db.prepare('DELETE FROM tony_quotes_pending WHERE id = ?').run(pendingId);
+						})();
+
+						originalEmbed.setColor(0xE74C3C).setFooter({ text: `Rejected by ${interaction.user.username}` });
+						await interaction.update({ embeds: [originalEmbed], components: [row] });
+
+						// Notify the user
+						const BOT_COMMANDS_CHANNEL_ID = '1354187940246327316';
+						const rejectionMessage = `Hey <@${user_id}>, your Tony Quote submission for the trigger \`${trigger_word}\` wasn't approved this time. The **200 Crowns** have been refunded to your account. Thanks for the suggestion, though!`;
+						await sendMessageToChannel(interaction.client, BOT_COMMANDS_CHANNEL_ID, rejectionMessage);
+					}
+					return;
+				}
 				// --- DAILY NOTIFICATION BUTTON HANDLER ---
 				if (interaction.customId.startsWith('guild_info_')) {
 					if (guildCommand && typeof guildCommand.buttons?.handleGuildInfoButton === 'function') {
@@ -125,11 +176,12 @@ module.exports = {
 							.setDescription(guild.lore);
 
 						return interaction.reply({ embeds: [loreEmbed], flags: [MessageFlags.Ephemeral] });
-					} catch (error) {
+					}
+					catch (error) {
 						console.error('[Error] Failed to fetch guild lore:', error);
-						return interaction.reply({ 
-							content: 'There was an error fetching the guild lore. Please try again later.', 
-							flags: [MessageFlags.Ephemeral] 
+						return interaction.reply({
+							content: 'There was an error fetching the guild lore. Please try again later.',
+							flags: [MessageFlags.Ephemeral],
 						});
 					}
 				}

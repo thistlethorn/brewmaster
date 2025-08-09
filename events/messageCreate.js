@@ -76,6 +76,81 @@ function formatStreakProgress(streak) {
 module.exports = {
 	name: Events.MessageCreate,
 	async execute(message) {
+		if (!isBot(message) && !isInGameroom(message)) {
+			// 50% chance to even check for a trigger
+			if (Math.random() <= 0.5) {
+				const now = new Date();
+				const nowISO = now.toISOString();
+
+				// Check global cooldown (5 minutes)
+				const globalCooldown = db.prepare('SELECT last_triggered_at FROM tony_quotes_global_cooldown WHERE id = 1').get();
+				if (globalCooldown && globalCooldown.last_triggered_at) {
+					const lastTriggerTime = new Date(globalCooldown.last_triggered_at);
+					if (now - lastTriggerTime < 5 * 60 * 1000) {
+						return;
+						// Global cooldown is active
+					}
+				}
+
+				const content = message.content.toLowerCase().replace(/[.,!?;:]/g, '');
+				const words = new Set(content.split(/\s+/));
+				// Use a Set for faster lookups
+
+				// Find all possible quotes that could be triggered by the words in the message
+				const potentialTriggers = [];
+				for (const word of words) {
+					const matchingQuotes = db.prepare('SELECT id, quote_text, user_id, last_triggered_at FROM tony_quotes_active WHERE trigger_word = ?').all(word);
+					for (const quote of matchingQuotes) {
+						// Check this specific quote's 15-minute cooldown
+						if (quote.last_triggered_at) {
+							const lastWordTriggerTime = new Date(quote.last_triggered_at);
+							if (now - lastWordTriggerTime < 15 * 60 * 1000) {
+								continue;
+								// This specific quote is on cooldown, skip it
+							}
+						}
+						potentialTriggers.push(quote);
+					}
+				}
+
+				// If we have any valid, off-cooldown quotes, pick one at random
+				if (potentialTriggers.length > 0) {
+					const chosenQuote = potentialTriggers[Math.floor(Math.random() * potentialTriggers.length)];
+
+					try {
+						const triggerTx = db.transaction(() => {
+							// Update the specific active quote record using its unique ID
+							db.prepare(`
+								UPDATE tony_quotes_active
+								SET times_triggered = times_triggered + 1, last_triggered_at = ?
+								WHERE id = ?
+							`).run(nowISO, chosenQuote.id);
+
+							// Pay the user
+							db.prepare('UPDATE user_economy SET crowns = crowns + 20 WHERE user_id = ?').run(chosenQuote.user_id);
+
+							// Update global cooldown
+							db.prepare('UPDATE tony_quotes_global_cooldown SET last_triggered_at = ? WHERE id = 1').run(nowISO);
+
+							// Check if the quote has been triggered 20 times and remove it
+							const currentTriggers = db.prepare('SELECT times_triggered FROM tony_quotes_active WHERE id = ?').get(chosenQuote.id);
+							if (currentTriggers && currentTriggers.times_triggered >= 20) {
+								db.prepare('DELETE FROM tony_quotes_active WHERE id = ?').run(chosenQuote.id);
+							}
+						});
+
+						triggerTx();
+
+						// Send Tony's reply
+						await message.channel.send(`*${chosenQuote.quote_text}*`);
+
+					}
+					catch (dbError) {
+						console.error('[Tony Quote Trigger] Database transaction failed:', dbError);
+					}
+				}
+			}
+		}
 		if (!isBot(message) && !isInGameroom(message) && isNormalMessage(message.content)) {
 			const userId = message.author.id;
 			try {
