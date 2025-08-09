@@ -374,6 +374,6 @@ const setupTables = db.transaction(() => {
 
 setupTables();
 
-
+db.pragma('foreign_keys = ON');
 db.pragma('journal_mode = WAL');
 module.exports = db;

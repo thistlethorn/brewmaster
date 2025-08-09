@@ -1232,12 +1232,14 @@ async function handleDues(interaction) {
 		});
 	}
 	const today = new Date().toISOString().slice(0, 10);
-	const duesCheckStmt = db.prepare(`
+	const upsert = db.prepare(`
 		INSERT INTO guild_daily_dues (guild_tag, last_dues_date)
-		VALUES (?, ?)
-		ON CONFLICT(guild_tag) DO NOTHING
-	`);
-	const info = duesCheckStmt.run(guildData.guild_tag, today);
+	    VALUES (?, ?)
+		ON CONFLICT(guild_tag) DO UPDATE SET
+			last_dues_date = excluded.last_dues_date
+		WHERE last_dues_date <> excluded.last_dues_date
+		`);
+	const info = upsert.run(guildData.guild_tag, today);
 
 	// Inserting first, then checking this to prevent race conditions from forming
 
@@ -3014,21 +3016,26 @@ async function handleRaidAutocomplete(interaction) {
 	}
 }
 async function handleFundAutocomplete(interaction) {
-	const focusedValue = interaction.options.getFocused();
+	try {
+		const focusedValue = interaction.options.getFocused();
 
-	const guilds = db.prepare(`
-        SELECT guild_tag, guild_name
-        FROM guild_list
-        WHERE guild_tag LIKE ? OR guild_name LIKE ?
-        LIMIT 25
-    `).all(`%${focusedValue}%`, `%${focusedValue}%`);
-
-	await interaction.respond(
-		guilds.map(guild => ({
-			name: `${guild.guild_name} [${guild.guild_tag}]`,
-			value: guild.guild_tag,
-		})),
-	);
+		const guilds = db.prepare(`
+			SELECT guild_tag, guild_name
+			FROM guild_list
+			WHERE guild_tag LIKE ? OR guild_name LIKE ?
+			LIMIT 25
+		    `).all(`%${focusedValue}%`, `%${focusedValue}%`);
+		await interaction.respond(
+			guilds.map(guild => ({
+				name: `${guild.guild_name} [${guild.guild_tag}]`,
+				value: guild.guild_tag,
+			})),
+		);
+	}
+	catch (e) {
+		console.error('Fund autocomplete error:', e);
+		await interaction.respond([]);
+	}
 }
 async function handleInfoAutocomplete(interaction) {
 	const focusedValue = interaction.options.getFocused();

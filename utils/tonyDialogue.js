@@ -358,7 +358,7 @@ const dialogue = {
 		'🏛️ Now That\'s What I Call Contributin\'!',
 	],
 	fund_success_value: [
-		(amount, name, tag) => `✅ Look at you, tossin' in ${amount.toLocaleString()} Crowns to **${name} (${tag})**. That's the kinda loyalty we like to see.`,
+		(amount, name, tag) => `✅ Look at you, tossin' in ${amount.toLocaleString()} Crowns to **${name} [${tag}]**. That's the kinda loyalty we like to see.`,
 		(amount, name, tag) => `✅ ${amount.toLocaleString()} Crowns straight into the vault of **${name} [${tag}]**. You just earned yourself some respect, friend.`,
 	],
 	fund_error_name: [
