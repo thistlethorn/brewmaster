@@ -127,7 +127,11 @@ module.exports = {
 							`).run(nowISO, chosenQuote.id);
 
 							// Pay the user
-							db.prepare('UPDATE user_economy SET crowns = crowns + 20 WHERE user_id = ?').run(chosenQuote.user_id);
+							db.prepare(`
+								INSERT INTO user_economy (user_id, crowns)
+								VALUES (?, 20)
+								ON CONFLICT(user_id) DO UPDATE SET crowns = crowns + 20
+							`).run(chosenQuote.user_id);
 
 							// Update global cooldown
 							db.prepare('UPDATE tony_quotes_global_cooldown SET last_triggered_at = ? WHERE id = 1').run(nowISO);
@@ -143,6 +147,7 @@ module.exports = {
 
 						// Send Tony's reply
 						await message.channel.send(`*${chosenQuote.quote_text}*`);
+						await message.channel.send(`||-# <@${chosenQuote.user_id}>  earned 20 Crowns for this quote! • Want to submit your own? Use \`/tonyquote\` and earn 200 bonus crowns over time, for each!||`);
 
 					}
 					catch (dbError) {

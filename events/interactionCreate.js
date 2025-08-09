@@ -114,17 +114,24 @@ module.exports = {
 					const pendingId = parts[3];
 
 					// Get the pending quote data
-					const pendingQuote = db.prepare('SELECT * FROM tony_quotes_pending WHERE id = ?').get(pendingId);
+					const pendingQuote = db
+						.prepare('SELECT * FROM tony_quotes_pending WHERE id = ?')
+						.get(pendingId);
 					if (!pendingQuote) {
-						return interaction.update({ content: 'This submission was already handled or has an error.', embeds: [], components: [] });
+						return interaction.update({
+							content: 'This submission was already handled or has an error.',
+							embeds: [],
+							components: [],
+						});
 					}
 
 					const { trigger_word, quote_text, user_id } = pendingQuote;
 
 					const originalEmbed = new EmbedBuilder(interaction.message.embeds[0].data);
 					const row = new ActionRowBuilder().addComponents(
-						new ButtonBuilder(interaction.message.components[0].components[0].data).setDisabled(true),
-						new ButtonBuilder(interaction.message.components[0].components[1].data).setDisabled(true),
+						...interaction.message.components[0].components.map(c =>
+							ButtonBuilder.from(c).setDisabled(true),
+						),
 					);
 
 					if (action === 'approve') {
@@ -133,25 +140,39 @@ module.exports = {
 								INSERT INTO tony_quotes_active (trigger_word, quote_text, user_id)
 								VALUES (?, ?, ?)
 							`).run(trigger_word, quote_text, user_id);
-							db.prepare('DELETE FROM tony_quotes_pending WHERE id = ?').run(pendingId);
+							db.prepare('DELETE FROM tony_quotes_pending WHERE id = ?')
+								.run(pendingId);
 						})();
 
-						originalEmbed.setColor(0x2ECC71).setFooter({ text: `Approved by ${interaction.user.username}` });
+						originalEmbed
+							.setColor(0x2ECC71)
+							.setFooter({ text: `Approved by ${interaction.user.username}` });
 						await interaction.update({ embeds: [originalEmbed], components: [row] });
 					}
 					else if (action === 'reject') {
 						db.transaction(() => {
-							db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(200, user_id);
-							db.prepare('DELETE FROM tony_quotes_pending WHERE id = ?').run(pendingId);
+							db.prepare(`
+							INSERT INTO user_economy (user_id, crowns)
+							VALUES (?, 200)
+							ON CONFLICT(user_id) DO UPDATE SET crowns = crowns + 200
+						`).run(user_id);
+							db.prepare('DELETE FROM tony_quotes_pending WHERE id = ?')
+								.run(pendingId);
 						})();
 
-						originalEmbed.setColor(0xE74C3C).setFooter({ text: `Rejected by ${interaction.user.username}` });
+						originalEmbed
+							.setColor(0xE74C3C)
+							.setFooter({ text: `Rejected by ${interaction.user.username}` });
 						await interaction.update({ embeds: [originalEmbed], components: [row] });
 
 						// Notify the user
 						const BOT_COMMANDS_CHANNEL_ID = '1354187940246327316';
 						const rejectionMessage = `Hey <@${user_id}>, your Tony Quote submission for the trigger \`${trigger_word}\` wasn't approved this time. The **200 Crowns** have been refunded to your account. Thanks for the suggestion, though!`;
-						await sendMessageToChannel(interaction.client, BOT_COMMANDS_CHANNEL_ID, rejectionMessage);
+						await sendMessageToChannel(
+							interaction.client,
+							BOT_COMMANDS_CHANNEL_ID,
+							rejectionMessage,
+						);
 					}
 					return;
 				}

@@ -8,9 +8,10 @@ const MAX_QUOTE_LENGTH = 200;
 const QUOTES_PER_PAGE = 5;
 const APPROVAL_CHANNEL_ID = '1403817767081082960';
 
-async function handleView(interaction) {
+async function handleView(interaction, pageArg) {
 	const userId = interaction.user.id;
-	const page = interaction.options.getInteger('page') || 1;
+	// Use the page argument if it exists, otherwise get it from the interaction options, or default to 1.
+	const page = pageArg ?? interaction.options.getInteger('page') ?? 1;
 
 	const quotes = db.prepare(`
         SELECT trigger_word, quote_text, times_triggered
@@ -193,9 +194,8 @@ module.exports = {
 				return interaction.reply({ content: 'Hey, that ain\'t for you!', flags: [MessageFlags.Ephemeral] });
 			}
 
-			// Mock the interaction options to reuse the handleView function
-			interaction.options = { getInteger: () => page };
-			await handleView(interaction);
+			// Call handleView directly with the page number as an argument
+			await handleView(interaction, page);
 			return;
 		}
 
