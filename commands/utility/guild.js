@@ -942,40 +942,16 @@ async function handleGuildFund(interaction) {
 	const userId = interaction.user.id;
 	const guildTag = interaction.options.getString('guild_tag').toUpperCase();
 	const amount = interaction.options.getInteger('amount');
-	const OWNER_ID = '1126419078140153946';
 
-	// Owner bypass for guild membership check
-	if (userId !== OWNER_ID) {
-		// Check if user is in the guild they're trying to fund
-		const userGuild = db.prepare('SELECT guild_tag FROM guildmember_tracking WHERE user_id = ?').get(userId);
-		if (!userGuild) {
-			const embed = new EmbedBuilder()
-				.setColor(0xed4245)
-				.setTitle(getTonyQuote('fund_failed_title'))
-				.addFields(
-					{
-						name: getTonyQuote('fund_notInGuild_name'),
-						value: getTonyQuote('fund_notInGuild_value'),
-						inline: false,
-					},
-				);
-			return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
-		}
-		if (userGuild.guild_tag !== guildTag) {
-			const embed = new EmbedBuilder()
-				.setColor(0xed4245)
-				.setTitle(getTonyQuote('fund_failed_title'))
-				.addFields(
-					{
-						name: getTonyQuote('fund_wrongGuild_name'),
-						value: getTonyQuote('fund_wrongGuild_value', userGuild.guild_tag, guildTag),
-						inline: false,
-					},
-				);
-			return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
-		}
+	// --- NEW: Check if guild exists ---
+	const guildInfo = db.prepare('SELECT guild_name FROM guild_list WHERE guild_tag = ?').get(guildTag);
+	if (!guildInfo) {
+		const embed = new EmbedBuilder()
+			.setColor(0xed4245)
+			.setTitle('❌ Guild Not Found')
+			.setDescription(`Couldn't find any guild with the tag [${guildTag}]. Please double-check the tag.`);
+		return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
 	}
-
 
 	// Get user's balance
 	const userEcon = db.prepare('SELECT crowns FROM user_economy WHERE user_id = ?').get(userId);
@@ -1015,11 +991,9 @@ async function handleGuildFund(interaction) {
 
 		db.prepare('COMMIT').run();
 
-		// Get guild name for response
-		const guildInfo = db.prepare('SELECT guild_name FROM guild_list WHERE guild_tag = ?').get(guildTag);
 		const embed = new EmbedBuilder()
 			.setColor(0xF1C40F)
-			.setTitle('💰 Westwind Royal Treasury 💰')
+			.setTitle('💰 Treasury Contribution 💰')
 			.addFields(
 				{
 					name: getTonyQuote('fund_success_name'),
@@ -1055,6 +1029,7 @@ async function handleGuildFund(interaction) {
 		await interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
 	}
 }
+
 async function handlePayout(interaction, targetUser = null) {
 	const userId = interaction.user.id;
 	const amount = interaction.options.getInteger('amount');
@@ -1256,6 +1231,19 @@ async function handleDues(interaction) {
 			flags: [MessageFlags.Ephemeral],
 		});
 	}
+	const today = new Date().toISOString().slice(0, 10);
+	const lastDues = db.prepare('SELECT last_dues_date FROM guild_daily_dues WHERE guild_tag = ?').get(guildData.guild_tag);
+
+	if (lastDues && lastDues.last_dues_date === today) {
+		const errorEmbed = new EmbedBuilder()
+			.setColor(0xFEE75C)
+			.setTitle('💰 Dues Already Collected')
+			.setDescription('Your guild has already collected its dues for today. This command can be used once per day (resets at Midnight UTC).');
+		return interaction.reply({
+			embeds: [errorEmbed],
+			flags: [MessageFlags.Ephemeral],
+		});
+	}
 
 	// Fetch the guild's dedicated public channel
 	let guildChannel;
@@ -1348,16 +1336,19 @@ async function handleDues(interaction) {
 		const luckRoll = Math.random();
 		let scenario;
 		let investmentChange;
+		let resultMessage;
 
 		if (luckRoll < 0.01) {
 			if (shuffledUltra.length === 0) shuffledUltra = shuffleArray(ULTRA_RARE_DUES_SCENARIOS);
 			scenario = shuffledUltra.pop();
 			investmentChange = Math.floor(contribution * (5 + Math.random() * 5));
+			resultMessage = scenario.success;
 		}
 		else if (luckRoll < 0.05) {
 			if (shuffledRare.length === 0) shuffledRare = shuffleArray(RARE_DUES_SCENARIOS);
 			scenario = shuffledRare.pop();
 			investmentChange = Math.floor(contribution * (1.5 + Math.random() * 1.5));
+			resultMessage = scenario.success;
 		}
 		else {
 			if (shuffledCommon.length === 0) shuffledCommon = shuffleArray(DUES_SCENARIOS);
@@ -1365,10 +1356,11 @@ async function handleDues(interaction) {
 			const isSuccess = Math.random() < 0.6;
 			if (isSuccess) {
 				investmentChange = Math.floor(contribution * (0.2 + Math.random() * 0.6));
+				resultMessage = scenario.success;
 			}
 			else {
 				investmentChange = -Math.floor(contribution * (0.1 + Math.random() * 0.4));
-				scenario.success = scenario.failure;
+				resultMessage = scenario.failure;
 			}
 		}
 
@@ -1393,7 +1385,6 @@ async function handleDues(interaction) {
 
 		// STAGE 3: Reveal outcome
 		const resultAmount = Math.max(0, contribution + investmentChange);
-		const resultMessage = scenario.success;
 
 		try {
 			db.transaction(() => {
@@ -1430,8 +1421,9 @@ async function handleDues(interaction) {
 			{ name: '💰 Total Collected', value: `**${totalCollected.toLocaleString()}** crowns`, inline: true },
 		);
 	addLogFields(finalEmbed, resultsLog, 'Final Contribution Log');
-	finalEmbed.setFooter({ text: 'Dues collected by the Guildmaster at 1% of __each__ member\'s balance.' });
+	finalEmbed.setFooter({ text: 'Dues collected by the Guildmaster are 1% of every member\'s balance.' });
 	await duesMessage.edit({ embeds: [finalEmbed] });
+	db.prepare('INSERT OR REPLACE INTO guild_daily_dues (guild_tag, last_dues_date) VALUES (?, ?)').run(guildData.guild_tag, today);
 }
 
 async function handleInfo(interaction) {
@@ -3016,6 +3008,23 @@ async function handleRaidAutocomplete(interaction) {
 		await interaction.respond([]);
 	}
 }
+async function handleFundAutocomplete(interaction) {
+	const focusedValue = interaction.options.getFocused();
+
+	const guilds = db.prepare(`
+        SELECT guild_tag, guild_name
+        FROM guild_list
+        WHERE guild_tag LIKE ? OR guild_name LIKE ?
+        LIMIT 25
+    `).all(`%${focusedValue}%`, `%${focusedValue}%`);
+
+	await interaction.respond(
+		guilds.map(guild => ({
+			name: `${guild.guild_name} [${guild.guild_tag}]`,
+			value: guild.guild_tag,
+		})),
+	);
+}
 async function handleInfoAutocomplete(interaction) {
 	const focusedValue = interaction.options.getFocused();
 	const guilds = db.prepare(`
@@ -3646,30 +3655,26 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 			console.log(`[Raid Resolution LOG] [${raidId}] Loot calculated. Vault: ${stolenFromGuild}, Members: ${stolenFromMembers}, Total: ${totalLoot}, Net: ${netLoot}.`);
 
 			// --- Loot Distribution & Logging ---
-			const distributionLog = [];
-			console.log(`[Raid Resolution LOG] [${raidId}] Starting loot distribution transaction.`);
-			const spoilsTransaction = db.transaction(() => {
+			db.transaction(() => {
 				if (stolenFromGuild > 0) db.prepare('UPDATE guild_economy SET balance = balance - ? WHERE guild_tag = ?').run(stolenFromGuild, defenderTag);
-				const totalAttackerPower = attackingParticipants.reduce((sum, p) => sum + p.tier, 0);
-				if (netLoot > 0 && totalAttackerPower > 0) {
-					for (const winner of attackingParticipants) {
-						const shareOfLoot = Math.floor((winner.tier / totalAttackerPower) * netLoot);
-						if (shareOfLoot > 0) {
-							db.prepare('UPDATE guild_economy SET balance = balance + ? WHERE guild_tag = ?').run(shareOfLoot, winner.allied_guild_tag);
-							db.prepare('INSERT INTO raid_leaderboard (guild_tag, successful_raids, crowns_stolen) VALUES (?, 1, ?) ON CONFLICT(guild_tag) DO UPDATE SET successful_raids = successful_raids + 1, crowns_stolen = crowns_stolen + ?').run(winner.allied_guild_tag, shareOfLoot, shareOfLoot);
-							// Add a detailed line to our log for the final embed
-							distributionLog.push(`> **${winner.guild_name}**: +**${shareOfLoot.toLocaleString()}** Crowns`);
-						}
-					}
+
+				// Give the entire net loot to the primary attacker
+				if (netLoot > 0) {
+					db.prepare('UPDATE guild_economy SET balance = balance + ? WHERE guild_tag = ?').run(netLoot, attackerTag);
+					db.prepare(`
+						INSERT INTO raid_leaderboard (guild_tag, successful_raids, crowns_stolen)
+						VALUES (?, 1, ?)
+						ON CONFLICT(guild_tag) DO UPDATE SET
+							successful_raids = successful_raids + 1,
+							crowns_stolen = crowns_stolen + ?
+					`).run(attackerTag, netLoot, netLoot);
 				}
-			});
-			spoilsTransaction();
+			})();
 
 			await checkAndDestroyGuildOnRaid(defenderTag, attackerTag, interaction);
 			const isDestroyed = !db.prepare('SELECT 1 FROM guild_list WHERE guild_tag = ?').get(defenderTag);
 			const description = isDestroyed ? `The attacking alliance has utterly destroyed **${finalDefenderData.guild_name}**!` : `The attacking alliance has triumphed over **${finalDefenderData.guild_name}**!`;
 
-			// --- NEW: Create the verbose spoils field ---
 			const spoilsField = {
 				name: 'Spoils of War',
 				value: [
@@ -3678,9 +3683,7 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 					`**Total Loot:** **${totalLoot.toLocaleString()}**`,
 					`Lost During Escape (-${escapeLossPercent}%): **-${lostDuringEscape.toLocaleString()}**`,
 					'---',
-					`**Net Plunder Distributed:** **${netLoot.toLocaleString()}**`,
-					'**Distribution Details:**',
-					...distributionLog,
+					`The entire net plunder of **${netLoot.toLocaleString()} Crowns** has been transferred to **${finalAttackerData.guild_name}**'s vault.`,
 				].join('\n'),
 				inline: false,
 			};
@@ -3715,23 +3718,12 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 			await wait(5000);
 
 			defenderGain = Math.floor(raidCost * 0.5);
-			const distributionLog = [];
 
-			const compensationTransaction = db.transaction(() => {
-				const totalDefenderPower = defendingParticipants.reduce((sum, p) => sum + p.tier, 0);
-				if (defenderGain > 0 && totalDefenderPower > 0) {
-					for (const winner of defendingParticipants) {
-						const shareOfCompensation = Math.floor((winner.tier / totalDefenderPower) * defenderGain);
-						if (shareOfCompensation > 0) {
-							db.prepare('UPDATE guild_economy SET balance = balance + ? WHERE guild_tag = ?').run(shareOfCompensation, winner.allied_guild_tag);
-							// Add a detailed line to our log for the final embed
-							distributionLog.push(`> **${winner.guild_name}**: +**${shareOfCompensation.toLocaleString()}** Crowns`);
-						}
-					}
-				}
-			});
-			compensationTransaction();
-			 const defenderMembers = db.prepare('SELECT user_id FROM guildmember_tracking WHERE guild_tag = ?').all(defenderTag);
+			// Give the entire compensation to the primary defender's guild vault
+			db.prepare('UPDATE guild_economy SET balance = balance + ? WHERE guild_tag = ?').run(defenderGain, defenderTag);
+			console.log(`[Raid Resolution LOG] [${raidId}] Awarded ${defenderGain} compensation to primary defender ${defenderTag}.`);
+
+			const defenderMembers = db.prepare('SELECT user_id FROM guildmember_tracking WHERE guild_tag = ?').all(defenderTag);
 			let roleAwardedCount = 0;
 			const defenderGuild = await interaction.client.guilds.fetch(interaction.guild.id);
 			const raidDefenderRole = await defenderGuild.roles.fetch(RAID_DEFENDER_ROLE_ID);
@@ -3760,15 +3752,13 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 			}
 			const description = `The defending coalition has repelled the invaders led by **${finalAttackerData.guild_name}**!`;
 
-			// --- NEW: Create the verbose compensation field ---
 			const compensationField = {
 				name: 'Defender\'s Compensation',
 				value: [
 					`Attacker's War Declaration Cost: **${raidCost.toLocaleString()}**`,
 					`Compensation Awarded (50%): **${defenderGain.toLocaleString()}**`,
 					'---',
-					'**Distribution Details:**',
-					...distributionLog,
+					`The entire compensation has been transferred to **${finalDefenderData.guild_name}**'s vault.`,
 				].join('\n'),
 				inline: false,
 			};
@@ -4890,11 +4880,12 @@ module.exports = {
 		.addSubcommand(subcommand =>
 			subcommand
 				.setName('fund')
-				.setDescription('Contribute Crowns to your guild!')
+				.setDescription('Contribute Crowns to any guild!')
 				.addStringOption(option =>
 					option.setName('guild_tag')
-						.setDescription('Your guild tag')
-						.setRequired(true))
+						.setDescription('The tag of the guild to fund')
+						.setRequired(true)
+						.setAutocomplete(true))
 				.addIntegerOption(option =>
 					option.setName('amount')
 						.setDescription('Amount of Crowns to contribute')
@@ -5131,6 +5122,9 @@ module.exports = {
 				}
 				else if (subcommand === 'raid') {
 					return handleRaidAutocomplete(interaction);
+				}
+				else if (subcommand === 'fund') {
+					return handleFundAutocomplete(interaction);
 				}
 			}
 			return;

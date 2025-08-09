@@ -134,6 +134,14 @@ const setupTables = db.transaction(() => {
         )
     `).run();
 
+	db.prepare(`
+        CREATE TABLE IF NOT EXISTS guild_daily_dues (
+            guild_tag TEXT PRIMARY KEY,
+            last_dues_date TEXT NOT NULL,
+            FOREIGN KEY(guild_tag) REFERENCES guild_list(guild_tag) ON DELETE CASCADE
+        )
+    `).run();
+
 	// "Guild raiding backend" via /commands/utility/ @ [guild.js]
 
 	db.prepare(`

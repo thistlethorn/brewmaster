@@ -19,8 +19,8 @@ const dialogue = {
 		'👑 Heavy is the Crown',
 	],
 	leave_isOwner_desc: [
-		(name, tag) => `Hey, you\'re the big boss of **${name} [${tag}]**. You forgot or somethin? You gotta pass the crown or shut it down before you even think about walkin\' away.`,
-		(name, tag) => `Look, you the one runnin\' **${name} [${tag}]**, so either hand off the keys to someone else or close shop before you bounce, got it?`,
+		(name, tag) => `Hey, you're the big boss of **${name} [${tag}]**. You forgot or somethin? You gotta pass the crown or shut it down before you even think about walkin' away.`,
+		(name, tag) => `Look, you the one runnin' **${name} [${tag}]**, so either hand off the keys to someone else or close shop before you bounce, got it?`,
 		(name, tag) => `The captain goes down with the ship, or at least finds a new captain. You're at the helm of **${name} [${tag}]**. Can't just abandon your post.`,
 		(name, tag) => `This ain't just a title, it's a responsibility. Pass the torch or burn the place down. You can't just walk away from **${name} [${tag}]**.`,
 	],
@@ -41,8 +41,8 @@ const dialogue = {
 		'✅ Ties Severed',
 	],
 	leave_success_desc: [
-		(name, tag) => `Alright, you\'re off the books now. You\'ve successfully slipped outta **${name} [${tag}]**. No hard feelings... right?`,
-		(name, tag) => `Well, looks like you\'ve made your exit, clean and smooth. No more ties to **${name} [${tag}]** for you now.`,
+		(name, tag) => `Alright, you're off the books now. You've successfully slipped outta **${name} [${tag}]**. No hard feelings... right?`,
+		(name, tag) => `Well, looks like you've made your exit, clean and smooth. No more ties to **${name} [${tag}]** for you now.`,
 		(name, tag) => `The deed is done. Your name's been struck from the roster of **${name} [${tag}]**. You're a free agent now.`,
 		(name, tag) => `Consider your ties officially severed. You've successfully parted ways with **${name} [${tag}]**. Good luck out there.`,
 	],
@@ -76,8 +76,8 @@ const dialogue = {
 		'❌ Poaching? Not on My Watch.',
 	],
 	invite_targetInGuild_desc: [
-		(user) => `Hold up, ${user} is already sittin\' pretty in another crew. Gotta say goodbye to the old family before joinin\' a new one, capiche?`,
-		(user) => `Hey, ${user} ain\'t a free agent, they still in another guild. Gotta drop the old ties before makin\' new ones.`,
+		(user) => `Hold up, ${user} is already sittin' pretty in another crew. Gotta say goodbye to the old family before joinin' a new one, capiche?`,
+		(user) => `Hey, ${user} ain't a free agent, they still in another guild. Gotta drop the old ties before makin' new ones.`,
 		(user) => `That one's already flying another crew's colors. ${user} has to be a lone wolf before they can join your pack.`,
 		(user) => `Looks like ${user} already signed a contract with another outfit. They gotta get outta that deal before they can sign a new one with you.`,
 	],
@@ -101,13 +101,13 @@ const dialogue = {
 	],
 	announce_newHero_desc: [
 		(user) => `Alright everyone, give a big, loud welcome to our newest family member, ${user}!`,
-		(user) => `Hey, listen up! Let\'s roll out the red carpet for ${user}!`,
+		(user) => `Hey, listen up! Let's roll out the red carpet for ${user}!`,
 		(user) => `Raise a glass, everyone! We've got new blood! Let's hear it for ${user}!`,
 		(user) => `Pull up a chair, there's a new name at our table! A warm welcome to ${user}!`,
 	],
 	announce_newHero_value: [
-		(name) => `You\'re officially part of the ${name} crew! Glad to have ya struttin\' through our public square!`,
-		(name) => `Fresh off the boat and into ${name}! We\'re buzzin\' to have you hangin\' with us in the heart of our guildhall!`,
+		(name) => `You're officially part of the ${name} crew! Glad to have ya struttin' through our public square!`,
+		(name) => `Fresh off the boat and into ${name}! We're buzzin' to have you hangin' with us in the heart of our guildhall!`,
 		(name) => `The newest face in ${name}!`,
 		'Glad to have you with us.',
 	],
@@ -148,26 +148,26 @@ const dialogue = {
 		'This ain\'t Goldilocks, pal. Not too short, not too long. Between 3 and 35. Get it right.',
 	],
 	create_reservedName_desc: [
-		(terms) => `Whoa there, that name\'s got some words we keep off the books. Try somethin\' classier, alright? None of this: ${terms}. I better not catch you tryin' to pull somethin' off like that again, you hear me?`,
-		(terms) => `Ehhh, that one\'s not gonna fly. You\'re usin\' terms that don\'t sit right with me and the higher-ups. You best steer clear of: ${terms}. Don't make me remind you again.`,
+		(terms) => `Whoa there, that name's got some words we keep off the books. Try somethin' classier, alright? None of this: ${terms}. I better not catch you tryin' to pull somethin' off like that again, you hear me?`,
+		(terms) => `Ehhh, that one's not gonna fly. You're usin' terms that don't sit right with me and the higher-ups. You best steer clear of: ${terms}. Don't make me remind you again.`,
 		(terms) => `You're walking on thin ice with that name. Pick another one before you fall in. Stay away from these words: ${terms}.`,
 		(terms) => `Some words are bad for business, see? And you picked one. Choose a name that doesn't use stuff like: ${terms}.`,
 	],
 	create_alreadyInGuild_desc: [
-		(name, tag) => `Gotta slow down there, Mr. 'wannabe boss'. You\'re already part o\' **${name} [${tag}]**. Gotta tie up those loose ends before buildin\' somethin\' new and makin' your own guild, capisce?`,
-		(name, tag) => `Hold up there, pally-pal! You\'re still on the books with **${name} [${tag}]**. Gotta step outta that crew before startin\' your own.`,
-		(name, tag) => `One family at a time, friend. Settle your business with **${name}** before you go startin' a new one.`,
+		(name, tag) => `Gotta slow down there, Mr. 'wannabe boss'. You're already part o' **${name} [${tag}]**. Gotta tie up those loose ends before buildin' somethin' new and makin' your own guild, capisce?`,
+		(name, tag) => `Hold up there, pally-pal! You're still on the books with **${name} [${tag}]**. Gotta step outta that crew before startin' your own.`,
+		(name, tag) => `One family at a time, friend. Settle your business with **${name} [${tag}]** before you go startin' a new one.`,
 		(name, tag) => `Tryin' to run two crews at once? That's bad for your health. Leave **${name} [${tag}]** first, then we can talk.`,
 	],
 	create_tagTaken_desc: [
-		(tag) => `Eh, tough break, [${tag}]'s already claimed by another guild. You\'ll need to cook up somethin\' new, alright?`,
+		(tag) => `Eh, tough break, [${tag}]'s already claimed by another guild. You'll need to cook up somethin' new, alright?`,
 		(tag) => `No luck, friend, [${tag}] is off the table. Some other guild beat ya to it. Best get creative now, eh?`,
-		(tag) => `That tag's already stitched on another crew's banner. You're late. Back to the drawing board.`,
+		(tag) => `That tag, [${tag}], is already stitched on another crew's banner. You're late. Back to the drawing board.`,
 		(tag) => `Someone's already making a name for themselves with [${tag}]. Think of something more original.`,
 	],
 	create_success_title: [
 		(name, tag) => `🏰 Guild "${name}" [${tag}] Created!`,
-		(name, tag) => `🏰 Welcome to the Big Leagues, "${name}"!`,
+		(name, tag) => `🏰 Welcome to the Big Leagues, "${name}" [${tag}]!`,
 		(name, tag) => `🏰 The Birth of "${name}" [${tag}]!`,
 	],
 	create_success_desc: [
@@ -182,13 +182,13 @@ const dialogue = {
 		'🏰 A New Power Rises!',
 	],
 	create_globalAnnounce_desc: [
-		(name, tag, user) => `Alright, listen up, everyone: **${name} [${tag}]** now stands tall, established by Guildmaster ${user}. Here\'s to fame, fortune, and a legacy worth rememberin\'! Cheers!`,
+		(name, tag, user) => `Alright, listen up, everyone: **${name} [${tag}]** now stands tall, established by Guildmaster ${user}. Here's to fame, fortune, and a legacy worth rememberin'! Cheers!`,
 		(name, tag, user) => `Word goes out: **${name} [${tag}]** has been founded under the watchful eye of Guildmaster ${user}. Watch out, their name just may echo far and wide...`,
 		(name, tag, user) => `Hear ye, hear ye! A new power rises in our midst! **${name} [${tag}]**, led by the ambitious ${user}, has entered the game.`,
 		(name, tag, user) => `Another flag flies over the tavern today. **${name} [${tag}]** has been founded by ${user}. May their coffers stay full and their enemies tremble.`,
 	],
 	create_publicChannelWelcome: [
-		(name, tag, user) => `Gather \'round, folks, for a grand welcome to the public square of **${name} [${tag}]**! Built brick by brick by none other than ${user}!`,
+		(name, tag, user) => `Gather 'round, folks, for a grand welcome to the public square of **${name} [${tag}]**! Built brick by brick by none other than ${user}!`,
 		(name, tag, user) => `Step right up, new faces, and enter the heart of **${name} [${tag}]**, founded by ${user}! Respect the grounds, mingle wise, and make yourselves at home!`,
 		(name, tag, user) => `Let it be known, this space now belongs to **${name} [${tag}]**. The first brick was laid by ${user}. Don't scuff the floors.`,
 		(name, tag, user) => `This here is the public square of **${name} [${tag}]**. Founded by the vision of ${user}. All are welcome, but watch your step.`,
@@ -224,7 +224,7 @@ const dialogue = {
 	],
 	delete_confirm_desc: [
 		(name, tag) => `You really wanna whack **${name} [${tag}]** off the map? All the channels, role, the whole legacy... Gone. No backsies, no take-two. You sure about this, bud?`,
-		(name, tag) => `This is a big decision, pal. Deletin\' **${name} [${tag}]** means burnin\' it to the ground. Channels, role, history... Poof! And once it\'s done, it\'s done. You sure you ready for that?`,
+		(name, tag) => `This is a big decision, pal. Deletin' **${name} [${tag}]** means burnin' it to the ground. Channels, role, history... Poof! And once it's done, it's done. You sure you ready for that?`,
 		(name) => `You sure about this? Once you pull this lever, **${name}** becomes nothin' but a memory. No goin' back. Think hard.`,
 		(name, tag) => `This is it, the final call. You hit that button, and **${name} [${tag}]** and everything it stands for... poof. Gone for good. You ready for that?`,
 	],
@@ -246,7 +246,7 @@ const dialogue = {
 	],
 	delete_globalAnnounce_desc: [
 		(name, tag) => `And just like that: **${name} [${tag}]** is no more. The boss made the call. Banners down, doors closed. It's history now.`,
-		(name, tag) => `It\'s official: **${name} [${tag}]**'s been laid to rest by its owner. Its banners came down, and its square\'s now gone for good.`,
+		(name, tag) => `It's official: **${name} [${tag}]**'s been laid to rest by its owner. Its banners came down, and its square's now gone for good.`,
 		(name, tag) => `Well, that's a wrap. The owner's called it quits on **${name} [${tag}]**. Lower the flags, boys. Another one bites the dust.`,
 		(name, tag) => `It's official. The boss has disbanded **${name} [${tag}]**. A quiet end to their story. Pour one out.`,
 	],
@@ -256,7 +256,7 @@ const dialogue = {
 		'🗑️ The Deed Is Done',
 	],
 	delete_success_desc: [
-		(name, tag) => `It\'s done. **${name} [${tag}]**'s been wiped clean. Like it was never even there. Sad to cross this one off the ledger...`,
+		(name, tag) => `It's done. **${name} [${tag}]**'s been wiped clean. Like it was never even there. Sad to cross this one off the ledger...`,
 		(name, tag) => `All gone... **${name} [${tag}]** has officially been closed up for good. No mess, no loose ends...`,
 		(name, tag) => `Alright, the deed is done. **${name} [${tag}]** has been wiped from the map. Clean slate.`,
 		(name, tag) => `It's finished. You've successfully dismantled **${name} [${tag}]**. Hope you knew what you were doin'.`,
@@ -345,36 +345,20 @@ const dialogue = {
 		'❌ Funding Fell Through',
 		'❌ Hit a Snag',
 	],
-	fund_notInGuild_name: [
-		'🏛️ You aren\'t in a guild!',
-		'🏛️ Who You With?',
-	],
-	fund_notInGuild_value: [
-		'You aren\'t even in a guild, pal!',
-		'How \'bout you join one first, eh?',
-	],
-	fund_wrongGuild_name: [
-		'🏛️ You can only contribute to the guild you are in!',
-		'🏛️ Not Your Turf, Pal',
-	],
-	fund_wrongGuild_value: [
-		(userTag, targetTag) => `Nice gesture, but you\'re tryin\' to throw coin at the wrong banner. You\'re with [${userTag}], not [${targetTag}], capisce?`,
-		(userTag, targetTag) => `Now, hold up, there! You're in [${userTag}], but you\'re tryin\' to fund [${targetTag}]? You gettin' things mixed up or somethin'? Maybe I outta serve you less ale for now.`,
-	],
 	fund_insufficient_name: [
 		'💸 You can only fund your guild with Crowns than you own!',
 		'💸 Big Spender... of Crowns You Don\'t Have!',
 	],
 	fund_insufficient_value: [
-		(amount, diff) => `Tryin\' to toss in ${amount.toLocaleString()} Crowns? You\'re short ${diff.toLocaleString()}. Maybe check your wallet first before makin\' promises, eh?`,
-		(amount, diff) => `You wanna drop ${amount.toLocaleString()} Crowns, but you\'re missin\' ${diff.toLocaleString()}. I respect the ambition, though, so how 'bout you go and earn them missing Crowns now and try that after?`,
+		(amount, diff) => `Tryin' to toss in ${amount.toLocaleString()} Crowns? You're short ${diff.toLocaleString()}. Maybe check your wallet first before makin' promises, eh?`,
+		(amount, diff) => `You wanna drop ${amount.toLocaleString()} Crowns, but you're missin' ${diff.toLocaleString()}. I respect the ambition, though, so how 'bout you go and earn them missing Crowns now and try that after?`,
 	],
 	fund_success_name: [
 		'🏛️ Funding Guild Success!',
 		'🏛️ Now That\'s What I Call Contributin\'!',
 	],
 	fund_success_value: [
-		(amount, name, tag) => `✅ Look at you, tossin\' in ${amount.toLocaleString()} Crowns to **${name} (${tag})**. That\'s the kinda loyalty we like to see.`,
+		(amount, name, tag) => `✅ Look at you, tossin' in ${amount.toLocaleString()} Crowns to **${name} (${tag})**. That's the kinda loyalty we like to see.`,
 		(amount, name, tag) => `✅ ${amount.toLocaleString()} Crowns straight into the vault of **${name} [${tag}]**. You just earned yourself some respect, friend.`,
 	],
 	fund_error_name: [
@@ -397,7 +381,7 @@ function getTonyQuote(key, ...args) {
 	const quoteSet = dialogue[key];
 	if (!quoteSet || quoteSet.length === 0) {
 		console.error(`[Tony Dialogue] No quote found for key: ${key}`);
-		return '...'; // Fallback text
+		return '...';
 	}
 
 	const randomIndex = Math.floor(Math.random() * quoteSet.length);

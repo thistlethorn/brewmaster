@@ -15,6 +15,9 @@ async function setupDailyReset(client) {
 
 			console.log(`[dailyReset] User activity counts cleared at ${new Date().toISOString()}`);
 
+			db.prepare('DELETE FROM guild_daily_dues').run();
+			console.log(`[dailyReset] Guild dues tracker cleared at ${new Date().toISOString()}`);
+
 			// Remove active chatter role from everyone and update multipliers
 			const ACTIVE_CHATTER_ROLE = '1382521995656302632';
 
