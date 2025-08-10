@@ -15,6 +15,20 @@ let chatterTimeout = null;
 let clientInstance = null;
 let isSendingMessage = false;
 
+/**
+ * Calculates and saves the next random time for an idle message.
+ */
+function calculateAndSetNextTime() {
+	const randomDelay = Math.random() * MAX_ADDITIONAL_MS;
+	const nextTime = new Date(Date.now() + MIN_COOLDOWN_MS + randomDelay);
+	db.prepare(`
+        INSERT INTO tony_idle_chatter_state (id, next_chatter_time)
+        VALUES (1, ?)
+        ON CONFLICT(id) DO UPDATE SET next_chatter_time = excluded.next_chatter_time
+    `).run(nextTime.toISOString());
+	console.log(`[Idle Chatter] New next chatter time set to: ${nextTime.toISOString()}`);
+}
+
 function setupIdleChatter(client) {
 	clientInstance = client;
 	console.log('[Idle Chatter] Initializing...');
@@ -74,8 +88,7 @@ async function sendIdleMessage() {
 
 		if (uniqueUserIds.length === 0) {
 			console.log('[Idle Chatter] No active idle quotes found to send.');
-			calculateAndSetNextTime();
-			scheduleNextChatter();
+			// No need to call scheduleNextChatter here, as the finally block handles it.
 			return;
 		}
 
@@ -126,19 +139,7 @@ async function sendIdleMessage() {
 		calculateAndSetNextTime();
 		scheduleNextChatter();
 	}
-	function calculateAndSetNextTime() {
-		const randomDelay = Math.random() * MAX_ADDITIONAL_MS;
-		const nextTime = new Date(Date.now() + MIN_COOLDOWN_MS + randomDelay);
-		db.prepare(`
-    INSERT INTO tony_idle_chatter_state (id, next_chatter_time)
-    VALUES (1, ?)
-    ON CONFLICT(id) DO UPDATE SET next_chatter_time = excluded.next_chatter_time
-  `).run(nextTime.toISOString());
-		console.log(`[Idle Chatter] New next chatter time set to: ${nextTime.toISOString()}`);
-	}
-	console.log(`[Idle Chatter] New next chatter time set to: ${nextTime.toISOString()}`);
 }
-
 
 module.exports = {
 	setupIdleChatter,

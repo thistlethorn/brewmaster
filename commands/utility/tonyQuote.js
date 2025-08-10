@@ -1,17 +1,26 @@
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 const db = require('../../database');
 const sendMessageToChannel = require('../../utils/sendMessageToChannel');
+const config = require('../../config.json');
 
-const TRIGGER_SUBMISSION_COST = 200;
-const IDLE_SUBMISSION_COST = 100;
-const MAX_USER_QUOTES = 20;
-const MAX_QUOTE_LENGTH = 200;
-const QUOTES_PER_PAGE = 5;
-const APPROVAL_CHANNEL_ID = '1403817767081082960';
+const TRIGGER_SUBMISSION_COST = config.tonyQuote?.triggerSubmissionCost || 200;
+const IDLE_SUBMISSION_COST = config.tonyQuote?.idleSubmissionCost || 100;
+const MAX_USER_QUOTES = config.tonyQuote?.maxUserQuotes || 20;
+const MAX_QUOTE_LENGTH = config.tonyQuote?.maxQuoteLength || 200;
+const QUOTES_PER_PAGE = config.tonyQuote?.quotesPerPage || 5;
 
+const APPROVAL_CHANNEL_ID = config.tonyQuote?.approvalChannelId || '1403817767081082960';
+
+/**
+* Render a paginated view of the caller’s active quotes.
+* @param {import('discord.js').ChatInputCommandInteraction | import('discord.js').ButtonInteraction} interaction
+* @param {number} [pageArg]
+* @returns {Promise<void>}
+*/
 async function handleView(interaction, pageArg) {
 	const userId = interaction.user.id;
-	const page = pageArg ?? interaction.options.getInteger('page') ?? 1;
+	const rawPage = pageArg ?? interaction.options.getInteger('page') ?? 1;
+	const page = Number.isFinite(Number(rawPage)) ? Math.max(1, Math.floor(rawPage)) : 1;
 
 	const quotes = db.prepare(`
         SELECT trigger_word, quote_text, times_triggered, quote_type
@@ -28,14 +37,15 @@ async function handleView(interaction, pageArg) {
 		return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
 	}
 
-	const totalPages = Math.ceil(quotes.length / QUOTES_PER_PAGE);
-	const start = (page - 1) * QUOTES_PER_PAGE;
+	const totalPages = Math.max(1, Math.ceil(quotes.length / QUOTES_PER_PAGE));
+	const safePage = Math.min(page, totalPages);
+	const start = (safePage - 1) * QUOTES_PER_PAGE;
 	const end = start + QUOTES_PER_PAGE;
 	const pageContent = quotes.slice(start, end);
 
 	const embed = new EmbedBuilder()
 		.setColor(0x5865F2)
-		.setTitle(`📜 Your Submitted Quotes (Page ${page}/${totalPages})`)
+		.setTitle(`📜 Your Submitted Quotes (Page ${safePage}/${totalPages})`)
 		.setDescription('Here are your active quotes currently in circulation.');
 
 	pageContent.forEach(quote => {
@@ -53,15 +63,15 @@ async function handleView(interaction, pageArg) {
 	if (totalPages > 1) {
 		const row = new ActionRowBuilder().addComponents(
 			new ButtonBuilder()
-				.setCustomId(`tonyquote_view_${userId}_${page - 1}`)
+				.setCustomId(`tonyquote_view_${userId}_${safePage - 1}`)
 				.setLabel('◀️ Previous')
 				.setStyle(ButtonStyle.Secondary)
-				.setDisabled(page === 1),
+				.setDisabled(safePage === 1),
 			new ButtonBuilder()
-				.setCustomId(`tonyquote_view_${userId}_${page + 1}`)
+				.setCustomId(`tonyquote_view_${userId}_${safePage + 1}`)
 				.setLabel('Next ▶️')
 				.setStyle(ButtonStyle.Secondary)
-				.setDisabled(page === totalPages),
+				.setDisabled(safePage === totalPages),
 		);
 		components.push(row);
 	}
@@ -74,7 +84,11 @@ async function handleView(interaction, pageArg) {
 	}
 }
 
-
+/**
+* Handle /tonyquote submit (trigger quotes).
+* @param {import('discord.js').ChatInputCommandInteraction} interaction
+* @returns {Promise<void>}
+*/
 async function handleSubmit(interaction) {
 	const triggerWord = interaction.options.getString('trigger').toLowerCase();
 	const quoteText = interaction.options.getString('quote');
@@ -135,8 +149,6 @@ async function handleSubmit(interaction) {
 		SET crowns = crowns - ?
 	`).run(userId, TRIGGER_SUBMISSION_COST);
 	try {
-		db.prepare('UPDATE user_economy SET crowns = crowns - ? WHERE user_id = ?').run(TRIGGER_SUBMISSION_COST, userId);
-
 		const approvalEmbed = new EmbedBuilder()
 			.setColor(0xFEE75C)
 			.setTitle('📝 New Tony Quote for Approval')
@@ -182,6 +194,12 @@ async function handleSubmit(interaction) {
 	}
 }
 
+
+/**
+* Handle /tonyquote submit_idle (idle phrases).
+* @param {import('discord.js').ChatInputCommandInteraction} interaction
+* @returns {Promise<void>}
+*/
 async function handleIdleSubmit(interaction) {
 	const quoteText = interaction.options.getString('phrase');
 	const userId = interaction.user.id;
@@ -205,13 +223,15 @@ async function handleIdleSubmit(interaction) {
 	}
 
 	const userQuoteCount = db.prepare(`
-        SELECT
-            (SELECT COUNT(*) FROM tony_quotes_active WHERE user_id = ?) +
-            (SELECT COUNT(*) FROM tony_quotes_pending WHERE user_id = ?)
-        AS count
+        SELECT COUNT(*) AS count
+        FROM (
+          SELECT 1 FROM tony_quotes_active WHERE user_id = ? AND quote_type = 'idle'
+          UNION ALL
+          SELECT 1 FROM tony_quotes_pending WHERE user_id = ? AND quote_type = 'idle'
+        )
     `).get(userId, userId).count;
 	if (userQuoteCount >= MAX_USER_QUOTES) {
-		errorEmbed.setDescription(`You already have ${MAX_USER_QUOTES} active idle phrases, which is the maximum allowed.`);
+		errorEmbed.setDescription(`You already have ${MAX_USER_QUOTES} active & pending idle phrases, which is the maximum allowed.`);
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
 
@@ -288,11 +308,19 @@ module.exports = {
 				.setDescription('View your active and submitted Tony Quotes.')
 				.addIntegerOption(option => option.setName('page').setDescription('The page number to view.').setRequired(false))),
 
+
+	/**
+    * Slash-command entry point and button dispatcher for paging.
+    * Routed for slash commands (and optionally for tonyquote_view_* buttons).
+    * @param {import('discord.js').ChatInputCommandInteraction | import('discord.js').ButtonInteraction} interaction
+    * @returns {Promise<void>}
+    */
 	async execute(interaction) {
 		if (interaction.isButton() && interaction.customId.startsWith('tonyquote_view_')) {
 			const parts = interaction.customId.split('_');
 			const targetUserId = parts[2];
-			const page = parseInt(parts[3], 10);
+			const raw = Number(parts[3]);
+			const page = Number.isFinite(raw) ? Math.max(1, Math.floor(raw)) : 1;
 
 			if (interaction.user.id !== targetUserId) {
 				return interaction.reply({ content: 'Hey, that ain\'t for you!', flags: [MessageFlags.Ephemeral] });

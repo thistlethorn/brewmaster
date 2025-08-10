@@ -1,5 +1,5 @@
 // events/interactionCreate.js
-const { Events, EmbedBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { Events, EmbedBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits } = require('discord.js');
 const { handleMotwEntry } = require('../utils/handleMotwGiveaway');
 const { scheduleDailyReminder, sendReminder } = require('../tasks/dailyReminder');
 const { updateMultiplier } = require('../utils/handleCrownRewards');
@@ -98,7 +98,7 @@ module.exports = {
 
 				if (interaction.customId.startsWith('tony_quote_')) {
 					const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
-					if (!member || !member.permissions.has('ManageMessages')) {
+					if (!member || !member.permissions.has(PermissionFlagsBits.ManageMessages)) {
 						return interaction.reply({ content: 'You are not authorized to perform this action.', flags: [MessageFlags.Ephemeral] });
 					}
 
@@ -151,13 +151,19 @@ module.exports = {
 					}
 					return;
 				}
+				else if (interaction.customId.startsWith('tonyquote_view_')) {
+					const cmd = interaction.client.commands.get('tonyquote');
+					if (cmd && typeof cmd.execute === 'function') {
+						return cmd.execute(interaction);
+			    	}
+			    }
 
-				if (interaction.customId.startsWith('guild_info_')) {
+				else if (interaction.customId.startsWith('guild_info_')) {
 					if (guildCommand && typeof guildCommand.buttons?.handleGuildInfoButton === 'function') {
 						return guildCommand.buttons.handleGuildInfoButton(interaction);
 					}
 				}
-				if (interaction.customId.startsWith('guild_show_lore_')) {
+				else if (interaction.customId.startsWith('guild_show_lore_')) {
 					const guildTag = interaction.customId.split('_')[3];
 					try {
 						const guild = db.prepare('SELECT guild_name, lore FROM guild_list WHERE guild_tag = ?').get(guildTag);
@@ -172,7 +178,7 @@ module.exports = {
 						return interaction.reply({ content: 'There was an error fetching the guild lore. Please try again later.', flags: [MessageFlags.Ephemeral] });
 					}
 				}
-				if (interaction.customId.startsWith('daily_notify_')) {
+				else if (interaction.customId.startsWith('daily_notify_')) {
 
 					const parts = interaction.customId.split('_');
 					const action = parts[2];
@@ -252,7 +258,7 @@ module.exports = {
 					}
 				}
 
-				if (interaction.customId === 'motw_enter') {
+				else if (interaction.customId === 'motw_enter') {
 					try {
 						await handleMotwEntry(interaction);
 						console.log(`[Execute] Successfully handled MotW entry, requested by ${interaction.user.displayName}`);
@@ -262,7 +268,7 @@ module.exports = {
 					}
 					return;
 				}
-				if (interaction.customId.startsWith('gamble_')) {
+				else if (interaction.customId.startsWith('gamble_')) {
 					if (gameCommand && typeof gameCommand.buttons?.handleGameButton === 'function') {
 						try {
 							await gameCommand.buttons.handleGameButton(interaction);
@@ -277,7 +283,7 @@ module.exports = {
 					}
 				}
 
-				if (interaction.customId === 'raid_cancel' || interaction.customId === 'upgrade_cancel' || interaction.customId === 'shield_cancel') {
+				else if (interaction.customId === 'raid_cancel' || interaction.customId === 'upgrade_cancel' || interaction.customId === 'shield_cancel') {
 					try {
 						await interaction.update({ content: 'Action cancelled.', components: [], embeds: [] });
 						return;
@@ -288,7 +294,7 @@ module.exports = {
 						return;
 					}
 				}
-				if (interaction.customId.startsWith('guild_') || interaction.customId.startsWith('raid_') || interaction.customId.startsWith('upgrade_') || interaction.customId.startsWith('shield_') || interaction.customId.startsWith('fundraise_') || interaction.customId.startsWith('raidmsg_')) {
+				else if (interaction.customId.startsWith('guild_') || interaction.customId.startsWith('raid_') || interaction.customId.startsWith('upgrade_') || interaction.customId.startsWith('shield_') || interaction.customId.startsWith('fundraise_') || interaction.customId.startsWith('raidmsg_')) {
 					if (!guildCommand) {
 						console.error('[Error] Guild command not found for button handling');
 						return;
