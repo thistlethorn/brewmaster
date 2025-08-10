@@ -69,10 +69,20 @@ function scheduleNextChatter() {
 
 	console.log(`[Idle Chatter] Next message scheduled for: ${nextChatterTime.toISOString()}`);
 
-	if (delayMs <= 0) {
-		console.log('[Idle Chatter] Chatter time is overdue. Sending now.');
-		if (!isSendingMessage) {
+	  if (delayMs <= 0) {
+		console.log('[Idle Chatter] Chatter time is overdue. Attempting to claim and send.');
+		// Claim by moving next_chatter_time a minute ahead (temporary hold) only if still due
+		const claim = db.prepare(`
+            UPDATE tony_idle_chatter_state
+            SET next_chatter_time = datetime('now', '+1 minute')
+            WHERE id = 1 AND (next_chatter_time IS NOT NULL) AND datetime(next_chatter_time) <= datetime('now')
+        `).run();
+		if (claim.changes === 1 && !isSendingMessage) {
 			sendIdleMessage();
+		}
+		else {
+			// Another instance claimed; reschedule based on current db value
+			scheduleNextChatter();
 		}
 	}
 	else {

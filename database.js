@@ -1,6 +1,10 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 
+const config = require('./config.json');
+const JACKPOT_BASE_AMOUNT = config.gamble?.jackpotBaseAmount || 5000;
+
+
 const db = new Database(path.join(__dirname, 'bump_data.db'));
 db.pragma('foreign_keys = ON');
 db.pragma('journal_mode = WAL');
@@ -42,8 +46,8 @@ const setupTables = db.transaction(() => {
 	db.prepare(`
         CREATE TABLE IF NOT EXISTS tony_quotes_pending (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            trigger_word TEXT,
-            quote_text TEXT NOT NULL,
+            trigger_word TEXT COLLATE NOCASE,
+            quote_text TEXT NOT NULL COLLATE NOCASE,
             user_id TEXT NOT NULL,
             approval_message_id TEXT NOT NULL,
             submitted_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -57,8 +61,8 @@ const setupTables = db.transaction(() => {
 	db.prepare(`
         CREATE TABLE IF NOT EXISTS tony_quotes_active (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            trigger_word TEXT,
-            quote_text TEXT NOT NULL,
+            trigger_word TEXT COLLATE NOCASE,
+            quote_text TEXT NOT NULL COLLATE NOCASE,
             user_id TEXT NOT NULL,
             times_triggered INTEGER DEFAULT 0,
             last_triggered_at TEXT,
@@ -290,9 +294,9 @@ const setupTables = db.transaction(() => {
 	db.prepare(`
         CREATE TABLE IF NOT EXISTS game_jackpot (
             id INTEGER PRIMARY KEY CHECK (id = 1),
-            amount INTEGER DEFAULT 5000
+            amount INTEGER DEFAULT ?
         )
-    `).run();
+    `).run(JACKPOT_BASE_AMOUNT);
 
 
 	db.prepare(`
@@ -402,7 +406,7 @@ const setupTables = db.transaction(() => {
 	`).run('dev_disable_reminders', 'false');
 	db.prepare('INSERT OR IGNORE INTO tony_quotes_global_cooldown (id, last_triggered_at) VALUES (1, NULL)').run();
 	db.prepare('INSERT OR IGNORE INTO tony_idle_chatter_state (id, next_chatter_time) VALUES (1, NULL)').run();
-	db.prepare('INSERT OR IGNORE INTO game_jackpot (id, amount) VALUES (1, 5000)').run();
+	db.prepare('INSERT OR IGNORE INTO game_jackpot (id, amount) VALUES (1, ?)').run(JACKPOT_BASE_AMOUNT);
 
 
 	// indexes for faster recall
@@ -416,26 +420,66 @@ const setupTables = db.transaction(() => {
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_temp_roles_expiry ON temp_roles(expiry_time)').run();
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_tony_quotes_trigger ON tony_quotes_active(trigger_word)').run();
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_tony_quotes_type ON tony_quotes_active(quote_type, user_id)').run();
+	db.prepare('CREATE INDEX IF NOT EXISTS idx_tony_quotes_by_user ON tony_quotes_active(user_id, quote_type, trigger_word)').run();
 
 	// All of the unique indexes
+	// Pre-clean duplicates to avoid failures when creating unique indexes.
+	// This makes the check case-insensitive to match the new index logic.
+	db.prepare(`
+		DELETE FROM tony_quotes_active
+		WHERE quote_type = 'trigger' AND id NOT IN (
+			SELECT MIN(id) FROM tony_quotes_active
+			WHERE quote_type = 'trigger'
+			GROUP BY LOWER(trigger_word), LOWER(quote_text)
+		)
+	`).run();
+
+	db.prepare(`
+		DELETE FROM tony_quotes_active
+		WHERE quote_type = 'idle' AND id NOT IN (
+			SELECT MIN(id) FROM tony_quotes_active
+			WHERE quote_type = 'idle'
+			GROUP BY LOWER(quote_text)
+		)
+	`).run();
+
+	db.prepare(`
+		DELETE FROM tony_quotes_pending
+		WHERE quote_type = 'trigger' AND id NOT IN (
+			SELECT MIN(id) FROM tony_quotes_pending
+			WHERE quote_type = 'trigger'
+			GROUP BY LOWER(trigger_word), LOWER(quote_text)
+		)
+	`).run();
+
+	db.prepare(`
+		DELETE FROM tony_quotes_pending
+		WHERE quote_type = 'idle' AND id NOT IN (
+			SELECT MIN(id) FROM tony_quotes_pending
+			WHERE quote_type = 'idle'
+			GROUP BY LOWER(quote_text)
+		)
+	`).run();
+
+
 	db.prepare(`
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_tqa_trigger
-		ON tony_quotes_active(trigger_word, quote_text)
+		ON tony_quotes_active(LOWER(trigger_word), LOWER(quote_text))
 		WHERE quote_type = 'trigger'
 	`).run();
 	db.prepare(`
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_tqa_idle
-		ON tony_quotes_active(quote_text)
+		ON tony_quotes_active(LOWER(quote_text))
 		WHERE quote_type = 'idle'
 	`).run();
 	db.prepare(`
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_tqp_trigger
-		ON tony_quotes_pending(trigger_word, quote_text)
+		ON tony_quotes_pending(LOWER(trigger_word), LOWER(quote_text))
 		WHERE quote_type = 'trigger'
 	`).run();
 	db.prepare(`
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_tqp_idle
-		ON tony_quotes_pending(quote_text)
+		ON tony_quotes_pending(LOWER(quote_text))
 		WHERE quote_type = 'idle'
 	`).run();
 

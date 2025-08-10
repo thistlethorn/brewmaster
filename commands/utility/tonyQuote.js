@@ -13,7 +13,7 @@ const QUOTES_PER_PAGE = config.tonyQuote?.quotesPerPage || 5;
 
 const APPROVAL_CHANNEL_ID = config.tonyQuote?.approvalChannelId;
 if (!APPROVAL_CHANNEL_ID) {
-	throw new Error('[TonyQuote] Approval channel ID not configured; submissions will fail.');
+	console.warn('[TonyQuote] Approval channel ID not configured; submissions will be rejected at runtime.');
 }
 
 
@@ -101,6 +101,10 @@ async function handleSubmit(interaction) {
 	const userId = interaction.user.id;
 
 	const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Submission Failed');
+	if (!APPROVAL_CHANNEL_ID) {
+		errorEmbed.setDescription('Submissions are currently unavailable because the approval channel is not configured. Please contact an admin.');
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
+	}
 	if (quoteText.length === 0) {
 		errorEmbed.setDescription('Your quote can’t be empty.');
 		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
@@ -151,7 +155,8 @@ async function handleSubmit(interaction) {
 		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 
-	 let charged = false;
+	let charged = false;
+	let approvalMessage;
 	try {
 		// Ensure user row exists
 		db.prepare('INSERT OR IGNORE INTO user_economy (user_id, crowns) VALUES (?, 0)').run(userId);
@@ -176,7 +181,7 @@ async function handleSubmit(interaction) {
 			.setTimestamp();
 
 
-		const approvalMessage = await sendMessageToChannel(interaction.client, APPROVAL_CHANNEL_ID, approvalEmbed);
+		approvalMessage = await sendMessageToChannel(interaction.client, APPROVAL_CHANNEL_ID, approvalEmbed);
 		const result = db.prepare(`
             INSERT INTO tony_quotes_pending (trigger_word, quote_text, user_id, approval_message_id, quote_type)
             VALUES (?, ?, ?, ?, 'trigger')
@@ -200,6 +205,10 @@ async function handleSubmit(interaction) {
 	}
 	catch (error) {
 		console.error('Tony Quote submission error:', error);
+		if (approvalMessage) {
+			try { await approvalMessage.delete(); }
+			catch (e) { console.log(e); }
+		}
 		if (charged) {
 			db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(TRIGGER_SUBMISSION_COST, userId);
 		}
@@ -218,7 +227,10 @@ async function handleIdleSubmit(interaction) {
 	const quoteText = interaction.options.getString('phrase').trim();
 	const userId = interaction.user.id;
 	const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Submission Failed');
-
+	if (!APPROVAL_CHANNEL_ID) {
+		errorEmbed.setDescription('Submissions are currently unavailable because the approval channel is not configured. Please contact an admin.');
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
+	}
 	if (quoteText.length === 0) {
 		errorEmbed.setDescription('Your idle phrase can’t be empty.');
 		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
@@ -260,6 +272,7 @@ async function handleIdleSubmit(interaction) {
 	}
 
 	let charged = false;
+	let approvalMessage;
 	try {
 		db.prepare('INSERT OR IGNORE INTO user_economy (user_id, crowns) VALUES (?, 0)').run(userId);
 		const res = db.prepare('UPDATE user_economy SET crowns = crowns - ? WHERE user_id = ? AND crowns >= ?')
@@ -280,7 +293,7 @@ async function handleIdleSubmit(interaction) {
 			.setFooter({ text: 'Please review this submission carefully.' })
 			.setTimestamp();
 
-		const approvalMessage = await sendMessageToChannel(interaction.client, APPROVAL_CHANNEL_ID, approvalEmbed);
+		approvalMessage = await sendMessageToChannel(interaction.client, APPROVAL_CHANNEL_ID, approvalEmbed);
 
 		const result = db.prepare(`
             INSERT INTO tony_quotes_pending (quote_text, user_id, approval_message_id, quote_type)
@@ -304,6 +317,10 @@ async function handleIdleSubmit(interaction) {
 	}
 	catch (error) {
 		console.error('Tony Idle Quote submission error:', error);
+		if (approvalMessage) {
+			try { await approvalMessage.delete(); }
+			catch (e) { console.log(e); }
+		}
 		if (charged) {
 			db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(IDLE_SUBMISSION_COST, userId);
 		}

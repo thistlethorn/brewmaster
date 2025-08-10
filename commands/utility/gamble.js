@@ -10,6 +10,8 @@ const {
 	MessageFlags,
 } = require('discord.js');
 const db = require('../../database');
+const config = require('../../config.json');
+const JACKPOT_BASE_AMOUNT = config.gamble?.jackpotBaseAmount || 5000;
 
 // --- GAME CONFIG & HELPERS ---
 
@@ -99,7 +101,7 @@ function addToJackpot(amount) {
 }
 
 function resetJackpot() {
-	db.prepare('UPDATE game_jackpot SET amount = 2000 WHERE id = 1').run();
+	db.prepare('UPDATE game_jackpot SET amount = ? WHERE id = 1').run(JACKPOT_BASE_AMOUNT);
 }
 
 function getUserBalance(userId) {
