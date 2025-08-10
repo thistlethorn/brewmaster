@@ -97,13 +97,13 @@ const setupTables = db.transaction(() => {
 	db.prepare(`
 		CREATE TABLE IF NOT EXISTS tony_quotes_archive (
 			id INTEGER,
-            source_table TEXT,
+            source_table TEXT NOT NULL CHECK (source_table IN ('pending','active')),
 			trigger_word TEXT,
 			quote_text TEXT,
 			user_id TEXT,
 			approval_message_id TEXT,
 			submitted_at TEXT,
-			quote_type TEXT,
+			quote_type TEXT CHECK (quote_type IN ('trigger','idle')),
 			archived_at TEXT DEFAULT CURRENT_TIMESTAMP,
 			reason TEXT
 		)
@@ -465,6 +465,11 @@ const setupTables = db.transaction(() => {
 	const cleanupAndLog = (table, type, groupBy) => {
 		if (!['tony_quotes_active', 'tony_quotes_pending'].includes(table)) throw new Error('Invalid table');
 		if (!['trigger', 'idle'].includes(type)) throw new Error('Invalid type');
+		const allowedGroupBys = new Set([
+			'LOWER(TRIM(trigger_word)), LOWER(TRIM(quote_text))',
+			'LOWER(TRIM(quote_text))',
+		]);
+		if (!allowedGroupBys.has(groupBy)) throw new Error('Invalid groupBy');
 		const whereClause = `quote_type = '${type}'`;
 		const subQuery = `SELECT MIN(id) FROM ${table} WHERE ${whereClause} GROUP BY ${groupBy}`;
 
@@ -520,3 +525,4 @@ const setupTables = db.transaction(() => {
 setupTables();
 
 module.exports = db;
+module.exports.JACKPOT_BASE_AMOUNT = JACKPOT_BASE_AMOUNT;

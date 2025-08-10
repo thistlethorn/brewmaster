@@ -71,12 +71,14 @@ function scheduleNextChatter() {
 
 	  if (delayMs <= 0) {
 		console.log('[Idle Chatter] Chatter time is overdue. Attempting to claim and send.');
-		// Claim by moving next_chatter_time a minute ahead (temporary hold) only if still due
+		const holdUntil = new Date(Date.now() + 60_000).toISOString();
+		const nowIso = new Date().toISOString();
 		const claim = db.prepare(`
             UPDATE tony_idle_chatter_state
-            SET next_chatter_time = datetime('now', '+1 minute')
-            WHERE id = 1 AND (next_chatter_time IS NOT NULL) AND datetime(next_chatter_time) <= datetime('now')
-        `).run();
+            SET next_chatter_time = ?
+            WHERE id = 1 AND next_chatter_time IS NOT NULL AND next_chatter_time <= ?
+        `).run(holdUntil, nowIso);
+
 		if (claim.changes === 1 && !isSendingMessage) {
 			sendIdleMessage();
 		}
@@ -126,7 +128,11 @@ async function sendIdleMessage() {
 		const chosenQuote = userQuotes[Math.floor(Math.random() * userQuotes.length)];
 
 		// --- Send the message and process DB updates ---
-		await sendMessageToChannel(clientInstance, IDLE_CHATTER_CHANNEL_ID, `*${chosenQuote.quote_text}*`);
+		await sendMessageToChannel(
+			clientInstance,
+			IDLE_CHATTER_CHANNEL_ID,
+			{ content: `*${chosenQuote.quote_text}*`, allowedMentions: { parse: [] } },
+		);
 
 		const triggerTx = db.transaction(() => {
 			db.prepare(`

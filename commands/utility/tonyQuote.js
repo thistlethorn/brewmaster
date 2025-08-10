@@ -5,11 +5,11 @@ const db = require('../../database');
 const sendMessageToChannel = require('../../utils/sendMessageToChannel');
 const config = require('../../config.json');
 
-const TRIGGER_SUBMISSION_COST = config.tonyQuote?.triggerSubmissionCost || 200;
-const IDLE_SUBMISSION_COST = config.tonyQuote?.idleSubmissionCost || 100;
-const MAX_USER_QUOTES = config.tonyQuote?.maxUserQuotes || 20;
-const MAX_QUOTE_LENGTH = config.tonyQuote?.maxQuoteLength || 200;
-const QUOTES_PER_PAGE = config.tonyQuote?.quotesPerPage || 5;
+const TRIGGER_SUBMISSION_COST = Math.max(1, parseInt(config.tonyQuote?.triggerSubmissionCost) || 200);
+const IDLE_SUBMISSION_COST = Math.max(1, parseInt(config.tonyQuote?.idleSubmissionCost) || 100);
+const MAX_USER_QUOTES = Math.max(1, parseInt(config.tonyQuote?.maxUserQuotes) || 20);
+const MAX_QUOTE_LENGTH = Math.max(10, Math.min(500, parseInt(config.tonyQuote?.maxQuoteLength) || 200));
+const QUOTES_PER_PAGE = Math.max(1, Math.min(25, parseInt(config.tonyQuote?.quotesPerPage) || 5));
 
 const APPROVAL_CHANNEL_ID = config.tonyQuote?.approvalChannelId;
 if (!APPROVAL_CHANNEL_ID) {
@@ -119,9 +119,17 @@ async function handleSubmit(interaction) {
 	}
 
 	const existingQuote = db.prepare(`
-        SELECT 1 FROM tony_quotes_active WHERE trigger_word = ? AND quote_text = ? AND quote_type = 'trigger'
+        SELECT 1
+            FROM tony_quotes_active
+            WHERE LOWER(TRIM(trigger_word)) = LOWER(TRIM(?))
+            AND LOWER(TRIM(quote_text))   = LOWER(TRIM(?))
+            AND quote_type = 'trigger'
         UNION ALL
-        SELECT 1 FROM tony_quotes_pending WHERE trigger_word = ? AND quote_text = ? AND quote_type = 'trigger'
+        SELECT 1
+            FROM tony_quotes_pending
+            WHERE LOWER(TRIM(trigger_word)) = LOWER(TRIM(?))
+            AND LOWER(TRIM(quote_text))   = LOWER(TRIM(?))
+            AND quote_type = 'trigger'
         LIMIT 1
     `).get(triggerWord, quoteText, triggerWord, quoteText);
 
@@ -241,11 +249,17 @@ async function handleIdleSubmit(interaction) {
 	}
 
 	const existingQuote = db.prepare(`
-		SELECT 1 FROM tony_quotes_active WHERE quote_text = ? AND quote_type = 'idle'
-		UNION ALL
-		SELECT 1 FROM tony_quotes_pending WHERE quote_text = ? AND quote_type = 'idle'
-		LIMIT 1
-	`).get(quoteText, quoteText);
+        SELECT 1
+            FROM tony_quotes_active
+            WHERE LOWER(TRIM(quote_text)) = LOWER(TRIM(?))
+            AND quote_type = 'idle'
+        UNION ALL
+        SELECT 1
+            FROM tony_quotes_pending
+            WHERE LOWER(TRIM(quote_text)) = LOWER(TRIM(?))
+            AND quote_type = 'idle'
+        LIMIT 1
+    `).get(quoteText, quoteText);
 
 	if (existingQuote) {
 		errorEmbed.setDescription('This exact idle phrase already exists. Please submit something new!');
@@ -361,6 +375,9 @@ module.exports = {
 	async execute(interaction) {
 		if (interaction.isButton() && interaction.customId.startsWith('tonyquote_view_')) {
 			const parts = interaction.customId.split('_');
+			if (parts.length < 4) {
+				return interaction.reply({ content: 'Invalid button interaction.', flags: MessageFlags.Ephemeral });
+			}
 			const targetUserId = parts[2];
 			const raw = Number(parts[3]);
 			const page = Number.isFinite(raw) ? Math.max(1, Math.floor(raw)) : 1;

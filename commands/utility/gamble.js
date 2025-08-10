@@ -10,8 +10,8 @@ const {
 	MessageFlags,
 } = require('discord.js');
 const db = require('../../database');
-const config = require('../../config.json');
-const JACKPOT_BASE_AMOUNT = config.gamble?.jackpotBaseAmount || 5000;
+const { JACKPOT_BASE_AMOUNT } = require('../database');
+
 
 // --- GAME CONFIG & HELPERS ---
 

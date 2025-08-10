@@ -76,7 +76,7 @@ module.exports = {
 					}
 					catch (error) {
 						console.error('[Error] Gamble modal interaction error:', error);
-						await interaction.reply({ content: 'There was an error processing your bet.', flags: [MessageFlags.Ephemeral] });
+						await interaction.reply({ content: 'There was an error processing your bet.', flags: MessageFlags.Ephemeral });
 						return;
 					}
 				}
@@ -91,7 +91,7 @@ module.exports = {
 					}
 					catch (error) {
 						console.error('[Error] Fundraiser modal interaction error:', error);
-						await interaction.reply({ content: 'There was an error processing your custom contribution.', flags: [MessageFlags.Ephemeral] });
+						await interaction.reply({ content: 'There was an error processing your custom contribution.', flags: MessageFlags.Ephemeral });
 						return;
 					}
 				}
@@ -101,12 +101,12 @@ module.exports = {
 				if (interaction.customId.startsWith('tony_quote_')) {
 					const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
 					if (!member || !member.permissions.has(PermissionFlagsBits.ManageMessages)) {
-						return interaction.reply({ content: 'You are not authorized to perform this action.', flags: [MessageFlags.Ephemeral] });
+						return interaction.reply({ content: 'You are not authorized to perform this action.', flags: MessageFlags.Ephemeral });
 					}
 
 					const [, , action, pendingId] = interaction.customId.split('_');
 					if (!action || !pendingId || !/^\d+$/.test(pendingId)) {
-						return interaction.reply({ content: 'Malformed interaction.', flags: [MessageFlags.Ephemeral] });
+						return interaction.reply({ content: 'Malformed interaction.', flags: MessageFlags.Ephemeral });
 					}
 
 					const pendingQuote = db.prepare('SELECT * FROM tony_quotes_pending WHERE id = ?').get(pendingId);
@@ -127,10 +127,8 @@ module.exports = {
 					if (action === 'approve') {
 						db.transaction(() => {
 							// atomically delete the pending row and ensure it wasn’t already handled
-							const stillPending = db
-								.prepare('DELETE FROM tony_quotes_pending WHERE id = ? RETURNING 1')
-								.get(pendingId);
-							if (!stillPending) throw new Error('Quote has already been processed');
+							const del = db.prepare('DELETE FROM tony_quotes_pending WHERE id = ?').run(pendingId);
+							if (del.changes !== 1) throw new Error('Quote has already been processed');
 
 							db.prepare(`
                                 INSERT INTO tony_quotes_active (trigger_word, quote_text, user_id, quote_type)
@@ -182,14 +180,14 @@ module.exports = {
 					try {
 						const guild = db.prepare('SELECT guild_name, lore FROM guild_list WHERE guild_tag = ?').get(guildTag);
 						if (!guild || !guild.lore) {
-							return interaction.reply({ content: 'This guild has not written its lore yet.', flags: [MessageFlags.Ephemeral] });
+							return interaction.reply({ content: 'This guild has not written its lore yet.', flags: MessageFlags.Ephemeral });
 						}
 						const loreEmbed = new EmbedBuilder().setColor(0x5865F2).setTitle(`📜 Lore of ${guild.guild_name}`).setDescription(guild.lore);
-						return interaction.reply({ embeds: [loreEmbed], flags: [MessageFlags.Ephemeral] });
+						return interaction.reply({ embeds: [loreEmbed], flags: MessageFlags.Ephemeral });
 					}
 					catch (error) {
 						console.error('[Error] Failed to fetch guild lore:', error);
-						return interaction.reply({ content: 'There was an error fetching the guild lore. Please try again later.', flags: [MessageFlags.Ephemeral] });
+						return interaction.reply({ content: 'There was an error fetching the guild lore. Please try again later.', flags: MessageFlags.Ephemeral });
 					}
 				}
 				else if (interaction.customId.startsWith('daily_notify_')) {
@@ -219,7 +217,7 @@ module.exports = {
 								new ButtonBuilder().setCustomId('daily_notify_personal_in').setLabel('Yes, Notify Me!').setStyle(ButtonStyle.Success).setEmoji('🔔'),
 								new ButtonBuilder().setCustomId('daily_notify_personal_out').setLabel('No, Thanks').setStyle(ButtonStyle.Secondary),
 							);
-							await interaction.reply({ content: '👋 That daily claim message isn\'t yours, but you can set your own notification preferences here!', components: [row], flags: [MessageFlags.Ephemeral] });
+							await interaction.reply({ content: '👋 That daily claim message isn\'t yours, but you can set your own notification preferences here!', components: [row], flags: MessageFlags.Ephemeral });
 						}
 						return;
 					}
@@ -291,7 +289,7 @@ module.exports = {
 						}
 						catch (error) {
 							console.error('[Error] Gamble button interaction error:', error);
-							await interaction.reply({ content: 'There was an error processing this game action.', flags: [MessageFlags.Ephemeral] });
+							await interaction.reply({ content: 'There was an error processing this game action.', flags: MessageFlags.Ephemeral });
 							return;
 						}
 					}
@@ -304,7 +302,7 @@ module.exports = {
 					}
 					catch (error) {
 						console.error('[Error] Cancel button interaction error:', error);
-						await interaction.reply({ content: 'There was an error cancelling this action.', flags: [MessageFlags.Ephemeral] });
+						await interaction.reply({ content: 'There was an error cancelling this action.', flags: MessageFlags.Ephemeral });
 						return;
 					}
 				}
@@ -337,7 +335,7 @@ module.exports = {
 					}
 					catch (error) {
 						console.error(`[Error] Button interaction error for ${interaction.customId}:`, error);
-						await interaction.reply({ content: 'There was an error processing this button interaction.', flags: [MessageFlags.Ephemeral] });
+						await interaction.reply({ content: 'There was an error processing this button interaction.', flags: MessageFlags.Ephemeral });
 						return;
 					}
 				}
@@ -356,10 +354,10 @@ module.exports = {
 				console.error('[Command Execution Error]', error);
 				const errorMessage = error.code === 'SQLITE_ERROR' ? 'A database error occurred. Please try again later.' : 'There was an error while executing this command!';
 				if (interaction.replied || interaction.deferred) {
-					await interaction.followUp({ content: errorMessage, flags: [MessageFlags.Ephemeral] });
+					await interaction.followUp({ content: errorMessage, flags: MessageFlags.Ephemeral });
 				}
 				else {
-					await interaction.reply({ content: errorMessage, flags: [MessageFlags.Ephemeral] });
+					await interaction.reply({ content: errorMessage, flags: MessageFlags.Ephemeral });
 				}
 			}
 		}
