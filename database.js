@@ -54,6 +54,8 @@ const setupTables = db.transaction(() => {
             quote_type TEXT DEFAULT 'trigger' NOT NULL,
             CHECK (quote_type IN ('trigger','idle')),
             CHECK (quote_type = 'idle' OR trigger_word IS NOT NULL),
+            CHECK (quote_text = TRIM(quote_text)),
+            CHECK (trigger_word IS NULL OR trigger_word = TRIM(trigger_word)),
             UNIQUE(approval_message_id)
         )
     `).run();
@@ -68,7 +70,9 @@ const setupTables = db.transaction(() => {
             last_triggered_at TEXT,
             quote_type TEXT DEFAULT 'trigger' NOT NULL,
             CHECK (quote_type IN ('trigger','idle')),
-            CHECK (quote_type = 'idle' OR trigger_word IS NOT NULL)
+            CHECK (quote_type = 'idle' OR trigger_word IS NOT NULL),
+            CHECK (quote_text = TRIM(quote_text)),
+            CHECK (trigger_word IS NULL OR trigger_word = TRIM(trigger_word))
         )
     `).run();
 	db.prepare(`
@@ -84,6 +88,21 @@ const setupTables = db.transaction(() => {
             next_chatter_time TEXT
         )
     `).run();
+
+	// NEW: Archive table for preserving data during cleanup
+	db.prepare(`
+		CREATE TABLE IF NOT EXISTS tony_quotes_archive (
+			id INTEGER,
+			trigger_word TEXT,
+			quote_text TEXT,
+			user_id TEXT,
+			approval_message_id TEXT,
+			submitted_at TEXT,
+			quote_type TEXT,
+			archived_at TEXT DEFAULT CURRENT_TIMESTAMP,
+			reason TEXT
+		)
+	`).run();
 
 	// "Guild management system" via /commands/utility/ @ [guild.js]
 
@@ -423,43 +442,38 @@ const setupTables = db.transaction(() => {
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_tony_quotes_by_user ON tony_quotes_active(user_id, quote_type, trigger_word)').run();
 
 	// All of the unique indexes
+	// NOTE: Uniqueness for quotes is GLOBAL, not per-user. The same quote/trigger cannot exist twice
+	// on the server, regardless of who submitted it.
+
 	// Pre-clean duplicates to avoid failures when creating unique indexes.
-	// This makes the check case-insensitive to match the new index logic.
-	db.prepare(`
-		DELETE FROM tony_quotes_active
-		WHERE quote_type = 'trigger' AND id NOT IN (
-			SELECT MIN(id) FROM tony_quotes_active
-			WHERE quote_type = 'trigger'
-			GROUP BY LOWER(trigger_word), LOWER(quote_text)
-		)
-	`).run();
+	const cleanupAndLog = (table, type, groupBy) => {
+		const whereClause = `quote_type = '${type}'`;
+		const subQuery = `SELECT MIN(id) FROM ${table} WHERE ${whereClause} GROUP BY ${groupBy}`;
 
-	db.prepare(`
-		DELETE FROM tony_quotes_active
-		WHERE quote_type = 'idle' AND id NOT IN (
-			SELECT MIN(id) FROM tony_quotes_active
-			WHERE quote_type = 'idle'
-			GROUP BY LOWER(quote_text)
-		)
-	`).run();
+		// 1. Archive duplicates before deleting
+		db.prepare(`
+            INSERT INTO tony_quotes_archive (id, trigger_word, quote_text, user_id, approval_message_id, submitted_at, quote_type, reason)
+            SELECT id, trigger_word, quote_text, user_id, ${table === 'tony_quotes_pending' ? 'approval_message_id' : 'NULL'}, ${table === 'tony_quotes_pending' ? 'submitted_at' : 'NULL'}, quote_type, 'duplicate_cleanup'
+            FROM ${table}
+            WHERE ${whereClause} AND id NOT IN (${subQuery})
+        `).run();
 
-	db.prepare(`
-		DELETE FROM tony_quotes_pending
-		WHERE quote_type = 'trigger' AND id NOT IN (
-			SELECT MIN(id) FROM tony_quotes_pending
-			WHERE quote_type = 'trigger'
-			GROUP BY LOWER(trigger_word), LOWER(quote_text)
-		)
-	`).run();
+		// 2. Delete the duplicates and capture the number of changes
+		const result = db.prepare(`
+            DELETE FROM ${table}
+            WHERE ${whereClause} AND id NOT IN (${subQuery})
+        `).run();
 
-	db.prepare(`
-		DELETE FROM tony_quotes_pending
-		WHERE quote_type = 'idle' AND id NOT IN (
-			SELECT MIN(id) FROM tony_quotes_pending
-			WHERE quote_type = 'idle'
-			GROUP BY LOWER(quote_text)
-		)
-	`).run();
+		if (result.changes > 0) {
+			console.log(`[DB Cleanup] Archived and removed ${result.changes} duplicate quotes from ${table} (type: ${type}).`);
+		}
+	};
+
+	// Perform cleanup for all 4 unique index types
+	cleanupAndLog('tony_quotes_active', 'trigger', 'LOWER(trigger_word), LOWER(quote_text)');
+	cleanupAndLog('tony_quotes_active', 'idle', 'LOWER(quote_text)');
+	cleanupAndLog('tony_quotes_pending', 'trigger', 'LOWER(trigger_word), LOWER(quote_text)');
+	cleanupAndLog('tony_quotes_pending', 'idle', 'LOWER(quote_text)');
 
 
 	db.prepare(`
