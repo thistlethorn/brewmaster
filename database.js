@@ -49,6 +49,7 @@ const setupTables = db.transaction(() => {
             submitted_at TEXT DEFAULT CURRENT_TIMESTAMP,
             quote_type TEXT DEFAULT 'trigger' NOT NULL,
             CHECK (quote_type IN ('trigger','idle')),
+            CHECK (quote_type = 'idle' OR trigger_word IS NOT NULL),
             UNIQUE(approval_message_id)
         )
     `).run();
@@ -416,6 +417,27 @@ const setupTables = db.transaction(() => {
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_tony_quotes_trigger ON tony_quotes_active(trigger_word)').run();
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_tony_quotes_type ON tony_quotes_active(quote_type, user_id)').run();
 
+	// All of the unique indexes
+	db.prepare(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_tqa_trigger
+		ON tony_quotes_active(trigger_word, quote_text)
+		WHERE quote_type = 'trigger'
+	`).run();
+	db.prepare(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_tqa_idle
+		ON tony_quotes_active(quote_text)
+		WHERE quote_type = 'idle'
+	`).run();
+	db.prepare(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_tqp_trigger
+		ON tony_quotes_pending(trigger_word, quote_text)
+		WHERE quote_type = 'trigger'
+	`).run();
+	db.prepare(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_tqp_idle
+		ON tony_quotes_pending(quote_text)
+		WHERE quote_type = 'idle'
+	`).run();
 
 });
 

@@ -97,7 +97,8 @@ module.exports = {
 				}
 				if (!onGlobalCooldown) {
 					// Find all possible quotes that could be triggered by the words in the message
-					const uniqueWords = Array.from(words);
+					const tokens = (message.content.toLowerCase().match(/[a-z0-9]+/gi) || []);
+					const uniqueWords = Array.from(new Set(tokens));
 					const placeholders = uniqueWords.map(() => '?').join(',');
 					const candidates = uniqueWords.length
 						? db.prepare(

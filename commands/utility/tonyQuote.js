@@ -1,6 +1,5 @@
-// Using 'flags: MessageFlags.Ephemeral' for ephemeral replies.
-// 'ephemeral: true' is confirmed to be deprecated in current DiscordJS v14 and is in no way usable.
-// See: https://discordjs.guide/slash-commands/response-methods.html#ephemeral-responses
+// Project standard: Use flags: MessageFlags.Ephemeral for all ephemeral replies in Discord.js v14.
+// Do not use ephemeral: true anywhere in this codebase.
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 const db = require('../../database');
 const sendMessageToChannel = require('../../utils/sendMessageToChannel');
@@ -164,6 +163,15 @@ async function handleSubmit(interaction) {
 		}
 		charged = true;
 		const approvalEmbed = new EmbedBuilder()
+			.setColor(0x5dade2)
+			.setTitle('📝 New Tony Trigger Quote for Approval')
+			.addFields(
+				{ name: 'Submitted By', value: `${interaction.user} (\`${userId}\`)`, inline: false },
+				{ name: 'Type', value: 'Trigger', inline: true },
+				{ name: 'Cost', value: `👑 ${TRIGGER_SUBMISSION_COST}`, inline: true },
+				{ name: 'Trigger', value: `\`${triggerWord}\``, inline: false },
+				{ name: 'Quote', value: `>>> "${quoteText}"`, inline: false },
+			)
 			.setFooter({ text: 'Please review this submission carefully.' })
 			.setTimestamp();
 
@@ -179,7 +187,7 @@ async function handleSubmit(interaction) {
 			new ButtonBuilder().setCustomId(`tony_quote_reject_${pendingId}`).setLabel('Reject').setStyle(ButtonStyle.Danger).setEmoji('❌'),
 		);
 
-		await approvalMessage.edit({ components: [row] });
+		await approvalMessage.edit({ embeds: [approvalEmbed], components: [row] });
 
 		const successEmbed = new EmbedBuilder()
 			.setColor(0x2ECC71)
@@ -213,7 +221,7 @@ async function handleIdleSubmit(interaction) {
 
 	if (quoteText.length === 0) {
 		errorEmbed.setDescription('Your idle phrase can’t be empty.');
-		return interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 	if (quoteText.length > MAX_QUOTE_LENGTH) {
 		errorEmbed.setDescription(`Your phrase is too long! Please keep it under ${MAX_QUOTE_LENGTH} characters.`);

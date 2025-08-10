@@ -32,6 +32,12 @@ function calculateAndSetNextTime() {
 function setupIdleChatter(client) {
 	clientInstance = client;
 	console.log('[Idle Chatter] Initializing...');
+	if (!IDLE_CHATTER_CHANNEL_ID) {
+		console.warn(
+			'[Idle Chatter] idleChatterChannelId is not configured. Skipping idle chatter scheduling.',
+		);
+		return;
+	}
 	scheduleNextChatter();
 }
 

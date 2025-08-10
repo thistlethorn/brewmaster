@@ -4,7 +4,9 @@ const { handleMotwEntry } = require('../utils/handleMotwGiveaway');
 const { scheduleDailyReminder, sendReminder } = require('../tasks/dailyReminder');
 const { updateMultiplier } = require('../utils/handleCrownRewards');
 const sendMessageToChannel = require('../utils/sendMessageToChannel');
+const config = require('../config.json');
 const db = require('../database');
+const BOT_COMMANDS_CHANNEL_ID = config?.discord?.botCommandsId || '1354187940246327316';
 
 
 function formatOption(option) {
@@ -117,8 +119,11 @@ module.exports = {
 					const baseEmbed = interaction.message.embeds?.[0];
 					const originalEmbed = baseEmbed ? new EmbedBuilder(baseEmbed.data) : new EmbedBuilder();
 					const firstRow = interaction.message.components?.[0];
-					const row = firstRow ? new ActionRowBuilder().addComponents(...firstRow.components.map(c => ButtonBuilder.from(c).setDisabled(true))) : new ActionRowBuilder();
-
+					const row = firstRow
+						? new ActionRowBuilder().addComponents(
+							...firstRow.components.map(c => ButtonBuilder.from(c).setDisabled(true)),
+						)
+						: null;
 					if (action === 'approve') {
 						db.transaction(() => {
 							// atomically delete the pending row and ensure it wasn’t already handled
@@ -136,7 +141,10 @@ module.exports = {
 						originalEmbed
 							.setColor(0x2ECC71)
 							.setFooter({ text: `Approved by ${interaction.user.username}` });
-						await interaction.update({ embeds: [originalEmbed], components: [row] });
+						await interaction.update({
+							embeds: [originalEmbed],
+							components: row ? [row] : [],
+						});
 					}
 					else if (action === 'reject') {
 						const refundAmount = quote_type === 'idle' ? 100 : 200;
@@ -150,7 +158,6 @@ module.exports = {
 						originalEmbed.setColor(0xE74C3C).setFooter({ text: `Rejected by ${interaction.user.username}` });
 						await interaction.update({ embeds: [originalEmbed], components: [row] });
 
-						const BOT_COMMANDS_CHANNEL_ID = '1354187940246327316';
 						const typeText = quote_type === 'idle' ? 'idle phrase' : `trigger quote for \`${trigger_word}\``;
 						const rejectionMessage = `Hey <@${user_id}>, your Tony Quote submission for the ${typeText} wasn't approved this time. The **${refundAmount} Crowns** have been refunded to your account.`;
 						await sendMessageToChannel(interaction.client, BOT_COMMANDS_CHANNEL_ID, rejectionMessage);
