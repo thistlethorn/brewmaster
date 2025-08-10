@@ -151,6 +151,7 @@ module.exports = {
 					}
 					return;
 				}
+				// handle Tony Quote view button
 				else if (interaction.customId.startsWith('tonyquote_view_')) {
 					const cmd = interaction.client.commands.get('tonyquote');
 					if (cmd && typeof cmd.execute === 'function') {

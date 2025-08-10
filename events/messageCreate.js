@@ -83,7 +83,7 @@ module.exports = {
 				const nowISO = now.toISOString();
 
 				// ensure row exists once
-				db.prepare('INSERT OR IGNORE INTO tony_quotes_global_cooldown (id, last_triggered_at) VALUES (1, ?)').run(nowISO);
+				db.prepare('INSERT OR IGNORE INTO tony_quotes_global_cooldown (id, last_triggered_at) VALUES (1, NULL)').run();
 
 				// Check global cooldown (5 minutes)
 				const globalCooldown = db.prepare('SELECT last_triggered_at FROM tony_quotes_global_cooldown WHERE id = 1').get();

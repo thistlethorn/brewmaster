@@ -100,6 +100,12 @@ async function sendIdleMessage() {
             SELECT id, quote_text FROM tony_quotes_active WHERE quote_type = 'idle' AND user_id = ?
         `).all(randomUserId);
 
+		if (userQuotes.length === 0) {
+			console.warn('[Idle Chatter] Selected user has no idle quotes - rescheduling.');
+			return;
+			// finally{} will schedule the next attempt
+		}
+
 		// Step 3: Pick a random quote from that user's list
 		const chosenQuote = userQuotes[Math.floor(Math.random() * userQuotes.length)];
 

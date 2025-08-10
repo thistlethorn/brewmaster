@@ -368,7 +368,7 @@ async function handleDaily(interaction) {
 		streakFooter = 'Your streak was broken! You are back to Day 1.';
 	}
 	else if (currentStreak > 1) {
-		streakFooter = `You are on a ${currentStreak}-day streak at Prestiege ${currentPrestige} (${daysNeededForNextPrestige} days more until next Prestige)! Keep it up! 🔥`;
+		streakFooter = `You are on a ${currentStreak}-day streak at Prestige ${currentPrestige}, and ${daysNeededForNextPrestige} days more until next Prestige! Keep it up! 🔥`;
 	}
 	else {
 		streakFooter = 'You claimed your first daily! Claim again tomorrow to start a streak!';

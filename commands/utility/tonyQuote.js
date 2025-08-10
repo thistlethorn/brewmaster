@@ -9,7 +9,12 @@ const MAX_USER_QUOTES = config.tonyQuote?.maxUserQuotes || 20;
 const MAX_QUOTE_LENGTH = config.tonyQuote?.maxQuoteLength || 200;
 const QUOTES_PER_PAGE = config.tonyQuote?.quotesPerPage || 5;
 
-const APPROVAL_CHANNEL_ID = config.tonyQuote?.approvalChannelId || '1403817767081082960';
+const APPROVAL_CHANNEL_ID = config.tonyQuote?.approvalChannelId;
+if (!APPROVAL_CHANNEL_ID) {
+	console.warn('[TonyQuote] Approval channel ID not configured; submissions will fail.');
+}
+
+// Using MessageFlags.Ephemeral for ephemeral replies, as using 'ephemeral: true' is deprecated according to current DiscordJS v14.
 
 /**
 * Render a paginated view of the caller’s active quotes.
@@ -50,7 +55,7 @@ async function handleView(interaction, pageArg) {
 
 	pageContent.forEach(quote => {
 		const isIdle = quote.quote_type === 'idle';
-		const maxTriggers = isIdle ? 40 : 20;
+		const maxTriggers = isIdle ? (config.tonyQuote?.maxIdleUses ?? 40) : (config.tonyQuote?.maxTriggerUses ?? 20);
 		const name = isIdle ? 'Idle Phrase' : `Trigger: "${quote.trigger_word}"`;
 		embed.addFields({
 			name: name,
@@ -90,17 +95,20 @@ async function handleView(interaction, pageArg) {
 * @returns {Promise<void>}
 */
 async function handleSubmit(interaction) {
-	const triggerWord = interaction.options.getString('trigger').toLowerCase();
-	const quoteText = interaction.options.getString('quote');
+	const triggerWord = interaction.options.getString('trigger').trim().toLowerCase();
+	const quoteText = interaction.options.getString('quote').trim();
 	const userId = interaction.user.id;
 
 	const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Submission Failed');
-
+	if (quoteText.length === 0) {
+		errorEmbed.setDescription('Your quote can’t be empty.');
+		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+	}
 	if (quoteText.length > MAX_QUOTE_LENGTH) {
 		errorEmbed.setDescription(`Your quote is too long! Please keep it under ${MAX_QUOTE_LENGTH} characters.`);
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
-	if (!/^[a-zA-Z0-9&]+$/.test(triggerWord) || triggerWord.split(' ').length > 1) {
+	if (!/^[a-zA-Z0-9&]+$/.test(triggerWord)) {
 		errorEmbed.setDescription('The trigger word must be a single word containing only letters, numbers, or an ampersand (&).');
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
@@ -124,7 +132,7 @@ async function handleSubmit(interaction) {
                                             UNION ALL
                                             SELECT 1 FROM tony_quotes_pending WHERE user_id = ? AND quote_type = 'trigger'
                                         )
-                            `).get(userId).count;
+                            `).get(userId, userId).count;
 	if (userQuoteCount >= MAX_USER_QUOTES) {
 		errorEmbed.setDescription(`You already have ${MAX_USER_QUOTES} active & pending trigger quotes, which is the maximum allowed.`);
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
@@ -142,13 +150,17 @@ async function handleSubmit(interaction) {
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
 
-	db.prepare(`
-		INSERT INTO user_economy (user_id, crowns)
-		VALUES (?, 0)
-		ON CONFLICT(user_id) DO UPDATE
-		SET crowns = crowns - ?
-	`).run(userId, TRIGGER_SUBMISSION_COST);
+	 let charged = false;
 	try {
+		// Ensure user row exists
+		db.prepare('INSERT OR IGNORE INTO user_economy (user_id, crowns) VALUES (?, 0)').run(userId);
+		// Charge once, atomically guard against insufficient funds
+		const res = db.prepare('UPDATE user_economy SET crowns = crowns - ? WHERE user_id = ? AND crowns >= ?')
+			.run(TRIGGER_SUBMISSION_COST, userId, TRIGGER_SUBMISSION_COST);
+		if (res.changes !== 1) {
+			throw new Error('Insufficient funds at time of charge');
+		}
+		charged = true;
 		const approvalEmbed = new EmbedBuilder()
 			.setColor(0xFEE75C)
 			.setTitle('📝 New Tony Quote for Approval')
@@ -188,7 +200,9 @@ async function handleSubmit(interaction) {
 	}
 	catch (error) {
 		console.error('Tony Quote submission error:', error);
-		db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(TRIGGER_SUBMISSION_COST, userId);
+		if (charged) {
+			db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(TRIGGER_SUBMISSION_COST, userId);
+		}
 		errorEmbed.setTitle('❌ System Error').setDescription('Something went wrong on my end. Your Crowns have not been spent. Please try again later.');
 		await interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
@@ -201,10 +215,14 @@ async function handleSubmit(interaction) {
 * @returns {Promise<void>}
 */
 async function handleIdleSubmit(interaction) {
-	const quoteText = interaction.options.getString('phrase');
+	const quoteText = interaction.options.getString('phrase').trim();
 	const userId = interaction.user.id;
 	const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Submission Failed');
 
+	if (quoteText.length === 0) {
+		errorEmbed.setDescription('Your idle phrase can’t be empty.');
+		return interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+	}
 	if (quoteText.length > MAX_QUOTE_LENGTH) {
 		errorEmbed.setDescription(`Your phrase is too long! Please keep it under ${MAX_QUOTE_LENGTH} characters.`);
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
@@ -241,9 +259,15 @@ async function handleIdleSubmit(interaction) {
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
 
+	let charged = false;
 	try {
-		db.prepare('UPDATE user_economy SET crowns = crowns - ? WHERE user_id = ?').run(IDLE_SUBMISSION_COST, userId);
-
+		db.prepare('INSERT OR IGNORE INTO user_economy (user_id, crowns) VALUES (?, 0)').run(userId);
+		const res = db.prepare('UPDATE user_economy SET crowns = crowns - ? WHERE user_id = ? AND crowns >= ?')
+			.run(IDLE_SUBMISSION_COST, userId, IDLE_SUBMISSION_COST);
+		if (res.changes !== 1) {
+			throw new Error('Insufficient funds at time of charge');
+		}
+		charged = true;
 		const approvalEmbed = new EmbedBuilder()
 			.setColor(0x5dade2)
 			.setTitle('📝 New Tony Idle Phrase for Approval')
@@ -280,8 +304,9 @@ async function handleIdleSubmit(interaction) {
 	}
 	catch (error) {
 		console.error('Tony Idle Quote submission error:', error);
-		db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(IDLE_SUBMISSION_COST, userId);
-		errorEmbed.setTitle('❌ System Error').setDescription('Something went wrong on my end. Your Crowns have not been spent. Please try again later.');
+		if (charged) {
+			db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(IDLE_SUBMISSION_COST, userId);
+		}		errorEmbed.setTitle('❌ System Error').setDescription('Something went wrong on my end. Your Crowns have not been spent. Please try again later.');
 		await interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
 	}
 }
@@ -294,14 +319,14 @@ module.exports = {
 		.addSubcommand(subcommand =>
 			subcommand
 				.setName('submit')
-				.setDescription('Submit a new trigger word and quote for Tony to say! (Cost: 200 Crowns)')
+				.setDescription(`Submit a new trigger word and quote for Tony to say! (Cost: ${TRIGGER_SUBMISSION_COST} Crowns)`)
 				.addStringOption(option => option.setName('trigger').setDescription('A single word that will trigger your quote.').setRequired(true))
-				.addStringOption(option => option.setName('quote').setDescription('The quote Tony will say (max 200 chars).').setRequired(true)))
+				.addStringOption(option => option.setName('quote').setDescription(`The quote Tony will say (max ${MAX_QUOTE_LENGTH} chars).`).setRequired(true)))
 		.addSubcommand(subcommand =>
 			subcommand
 				.setName('submit_idle')
-				.setDescription('Submit an idle phrase for Tony to say randomly in chat! (Cost: 100 Crowns)')
-				.addStringOption(option => option.setName('phrase').setDescription('The phrase Tony will say (max 200 chars).').setRequired(true)))
+				.setDescription(`Submit an idle phrase for Tony to say randomly in chat! (Cost: ${IDLE_SUBMISSION_COST} Crowns)`)
+				.addStringOption(option => option.setName('phrase').setDescription(`The phrase Tony will say (max ${MAX_QUOTE_LENGTH} chars).`).setRequired(true)))
 		.addSubcommand(subcommand =>
 			subcommand
 				.setName('view')
