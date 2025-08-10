@@ -5,6 +5,8 @@ const getWeekIdentifier = require('../utils/getWeekIdentifier');
 const { reschedule } = require('../tasks/bumpReminder');
 const { isBot, isInGameroom, isNormalMessage } = require('../utils/chatFilters');
 const { calculateBumpReward, updateMultiplier } = require('../utils/handleCrownRewards');
+const config = require('../config.json');
+const MAX_TRIGGER_USES = config.tonyQuote?.maxTriggerUses ?? 20;
 
 function isQualityWelcome(message) {
 	const content = message.content.toLowerCase();
@@ -97,7 +99,7 @@ module.exports = {
 				}
 				if (!onGlobalCooldown) {
 					// Find all possible quotes that could be triggered by the words in the message
-					const tokens = (message.content.toLowerCase().match(/[a-z0-9]+/gi) || []);
+					const tokens = (message.content.toLowerCase().match(/[a-z0-9&]+/gi) || []);
 					const uniqueWords = Array.from(new Set(tokens));
 					const placeholders = uniqueWords.map(() => '?').join(',');
 					const candidates = uniqueWords.length
@@ -137,7 +139,7 @@ module.exports = {
 
 								// Check if the quote has been triggered 20 times and remove it
 								const currentTriggers = db.prepare('SELECT times_triggered FROM tony_quotes_active WHERE id = ?').get(chosenQuote.id);
-								if (currentTriggers && currentTriggers.times_triggered >= 20) {
+								if (currentTriggers && currentTriggers.times_triggered >= MAX_TRIGGER_USES) {
 									db.prepare('DELETE FROM tony_quotes_active WHERE id = ?').run(chosenQuote.id);
 								}
 							});

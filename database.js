@@ -2,7 +2,8 @@ const Database = require('better-sqlite3');
 const path = require('path');
 
 const config = require('./config.json');
-const JACKPOT_BASE_AMOUNT = config.gamble?.jackpotBaseAmount || 5000;
+const rawJackpot = Number.parseInt(config?.gamble?.jackpotBaseAmount, 10);
+const JACKPOT_BASE_AMOUNT = Number.isFinite(rawJackpot) && rawJackpot > 0 ? rawJackpot : 5000;
 
 
 const db = new Database(path.join(__dirname, 'bump_data.db'));
@@ -55,7 +56,9 @@ const setupTables = db.transaction(() => {
             CHECK (quote_type IN ('trigger','idle')),
             CHECK (quote_type = 'idle' OR trigger_word IS NOT NULL),
             CHECK (quote_text = TRIM(quote_text)),
+            CHECK (length(quote_text) > 0),
             CHECK (trigger_word IS NULL OR trigger_word = TRIM(trigger_word)),
+            CHECK (trigger_word IS NULL OR length(trigger_word) > 0),
             UNIQUE(approval_message_id)
         )
     `).run();
@@ -66,13 +69,15 @@ const setupTables = db.transaction(() => {
             trigger_word TEXT COLLATE NOCASE,
             quote_text TEXT NOT NULL COLLATE NOCASE,
             user_id TEXT NOT NULL,
-            times_triggered INTEGER DEFAULT 0,
+            times_triggered INTEGER DEFAULT 0 CHECK (times_triggered >= 0),
             last_triggered_at TEXT,
             quote_type TEXT DEFAULT 'trigger' NOT NULL,
             CHECK (quote_type IN ('trigger','idle')),
             CHECK (quote_type = 'idle' OR trigger_word IS NOT NULL),
             CHECK (quote_text = TRIM(quote_text)),
-            CHECK (trigger_word IS NULL OR trigger_word = TRIM(trigger_word))
+            CHECK (length(quote_text) > 0),
+            CHECK (trigger_word IS NULL OR trigger_word = TRIM(trigger_word)),
+            CHECK (trigger_word IS NULL OR length(trigger_word) > 0)
         )
     `).run();
 	db.prepare(`
@@ -89,10 +94,10 @@ const setupTables = db.transaction(() => {
         )
     `).run();
 
-	// NEW: Archive table for preserving data during cleanup
 	db.prepare(`
 		CREATE TABLE IF NOT EXISTS tony_quotes_archive (
 			id INTEGER,
+            source_table TEXT,
 			trigger_word TEXT,
 			quote_text TEXT,
 			user_id TEXT,
@@ -313,9 +318,9 @@ const setupTables = db.transaction(() => {
 	db.prepare(`
         CREATE TABLE IF NOT EXISTS game_jackpot (
             id INTEGER PRIMARY KEY CHECK (id = 1),
-            amount INTEGER DEFAULT ?
+            amount INTEGER DEFAULT ${JACKPOT_BASE_AMOUNT}
         )
-    `).run(JACKPOT_BASE_AMOUNT);
+    `).run();
 
 
 	db.prepare(`
@@ -440,20 +445,33 @@ const setupTables = db.transaction(() => {
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_tony_quotes_trigger ON tony_quotes_active(trigger_word)').run();
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_tony_quotes_type ON tony_quotes_active(quote_type, user_id)').run();
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_tony_quotes_by_user ON tony_quotes_active(user_id, quote_type, trigger_word)').run();
+	db.prepare('CREATE INDEX IF NOT EXISTS idx_tqa_archive_lookup ON tony_quotes_archive(quote_type, trigger_word, archived_at)').run();
+	db.prepare('CREATE INDEX IF NOT EXISTS idx_tony_quotes_trigger_by_type ON tony_quotes_active(quote_type, trigger_word)').run();
 
 	// All of the unique indexes
 	// NOTE: Uniqueness for quotes is GLOBAL, not per-user. The same quote/trigger cannot exist twice
 	// on the server, regardless of who submitted it.
 
+
 	// Pre-clean duplicates to avoid failures when creating unique indexes.
+
+	/**
+     * Archive and remove duplicates within a table for a given quote_type.
+     * Keeps the smallest id per normalized group.
+     * @param {'tony_quotes_active'|'tony_quotes_pending'} table
+     * @param {'trigger'|'idle'} type
+     * @param {string} groupBy SQL expression used in GROUP BY (pre-validated)
+     */
 	const cleanupAndLog = (table, type, groupBy) => {
+		if (!['tony_quotes_active', 'tony_quotes_pending'].includes(table)) throw new Error('Invalid table');
+		if (!['trigger', 'idle'].includes(type)) throw new Error('Invalid type');
 		const whereClause = `quote_type = '${type}'`;
 		const subQuery = `SELECT MIN(id) FROM ${table} WHERE ${whereClause} GROUP BY ${groupBy}`;
 
 		// 1. Archive duplicates before deleting
 		db.prepare(`
-            INSERT INTO tony_quotes_archive (id, trigger_word, quote_text, user_id, approval_message_id, submitted_at, quote_type, reason)
-            SELECT id, trigger_word, quote_text, user_id, ${table === 'tony_quotes_pending' ? 'approval_message_id' : 'NULL'}, ${table === 'tony_quotes_pending' ? 'submitted_at' : 'NULL'}, quote_type, 'duplicate_cleanup'
+            INSERT INTO tony_quotes_archive (id, source_table, trigger_word, quote_text, user_id, approval_message_id, submitted_at, quote_type, reason)
+            SELECT id, '${table === 'tony_quotes_pending' ? 'pending' : 'active'}', trigger_word, quote_text, user_id, ${table === 'tony_quotes_pending' ? 'approval_message_id' : 'NULL'}, ${table === 'tony_quotes_pending' ? 'submitted_at' : 'NULL'}, quote_type, 'duplicate_cleanup'
             FROM ${table}
             WHERE ${whereClause} AND id NOT IN (${subQuery})
         `).run();
@@ -470,30 +488,30 @@ const setupTables = db.transaction(() => {
 	};
 
 	// Perform cleanup for all 4 unique index types
-	cleanupAndLog('tony_quotes_active', 'trigger', 'LOWER(trigger_word), LOWER(quote_text)');
-	cleanupAndLog('tony_quotes_active', 'idle', 'LOWER(quote_text)');
-	cleanupAndLog('tony_quotes_pending', 'trigger', 'LOWER(trigger_word), LOWER(quote_text)');
-	cleanupAndLog('tony_quotes_pending', 'idle', 'LOWER(quote_text)');
+	cleanupAndLog('tony_quotes_active', 'trigger', 'LOWER(TRIM(trigger_word)), LOWER(TRIM(quote_text))');
+	cleanupAndLog('tony_quotes_active', 'idle', 'LOWER(TRIM(quote_text))');
+	cleanupAndLog('tony_quotes_pending', 'trigger', 'LOWER(TRIM(trigger_word)), LOWER(TRIM(quote_text))');
+	cleanupAndLog('tony_quotes_pending', 'idle', 'LOWER(TRIM(quote_text))');
 
 
 	db.prepare(`
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_tqa_trigger
-		ON tony_quotes_active(LOWER(trigger_word), LOWER(quote_text))
+        ON tony_quotes_active(LOWER(TRIM(trigger_word)), LOWER(TRIM(quote_text)))
 		WHERE quote_type = 'trigger'
 	`).run();
 	db.prepare(`
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_tqa_idle
-		ON tony_quotes_active(LOWER(quote_text))
+		ON tony_quotes_active(LOWER(TRIM(quote_text)))
 		WHERE quote_type = 'idle'
 	`).run();
 	db.prepare(`
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_tqp_trigger
-		ON tony_quotes_pending(LOWER(trigger_word), LOWER(quote_text))
+		ON tony_quotes_pending(LOWER(TRIM(trigger_word)), LOWER(TRIM(quote_text)))
 		WHERE quote_type = 'trigger'
 	`).run();
 	db.prepare(`
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_tqp_idle
-		ON tony_quotes_pending(LOWER(quote_text))
+		ON tony_quotes_pending(LOWER(TRIM(quote_text)))
 		WHERE quote_type = 'idle'
 	`).run();
 
