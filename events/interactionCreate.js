@@ -121,14 +121,21 @@ module.exports = {
 
 					if (action === 'approve') {
 						db.transaction(() => {
+							// atomically delete the pending row and ensure it wasn’t already handled
+							const stillPending = db
+								.prepare('DELETE FROM tony_quotes_pending WHERE id = ? RETURNING 1')
+								.get(pendingId);
+							if (!stillPending) throw new Error('Quote has already been processed');
+
 							db.prepare(`
                                 INSERT INTO tony_quotes_active (trigger_word, quote_text, user_id, quote_type)
                                 VALUES (?, ?, ?, ?)
                             `).run(trigger_word, quote_text, user_id, quote_type);
-							db.prepare('DELETE FROM tony_quotes_pending WHERE id = ?').run(pendingId);
 						})();
 
-						originalEmbed.setColor(0x2ECC71).setFooter({ text: `Approved by ${interaction.user.username}` });
+						originalEmbed
+							.setColor(0x2ECC71)
+							.setFooter({ text: `Approved by ${interaction.user.username}` });
 						await interaction.update({ embeds: [originalEmbed], components: [row] });
 					}
 					else if (action === 'reject') {
@@ -140,7 +147,6 @@ module.exports = {
                             `).run(user_id, refundAmount, refundAmount);
 							db.prepare('DELETE FROM tony_quotes_pending WHERE id = ?').run(pendingId);
 						})();
-
 						originalEmbed.setColor(0xE74C3C).setFooter({ text: `Rejected by ${interaction.user.username}` });
 						await interaction.update({ embeds: [originalEmbed], components: [row] });
 

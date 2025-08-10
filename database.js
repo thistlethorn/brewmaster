@@ -62,10 +62,10 @@ const setupTables = db.transaction(() => {
             times_triggered INTEGER DEFAULT 0,
             last_triggered_at TEXT,
             quote_type TEXT DEFAULT 'trigger' NOT NULL,
-            CHECK (quote_type IN ('trigger','idle'))
+            CHECK (quote_type IN ('trigger','idle')),
+            CHECK (quote_type = 'idle' OR trigger_word IS NOT NULL)
         )
     `).run();
-
 	db.prepare(`
 		CREATE TABLE IF NOT EXISTS tony_quotes_global_cooldown (
 			id INTEGER PRIMARY KEY CHECK (id = 1),

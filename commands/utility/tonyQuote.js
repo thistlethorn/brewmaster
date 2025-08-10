@@ -1,3 +1,6 @@
+// Using 'flags: MessageFlags.Ephemeral' for ephemeral replies.
+// 'ephemeral: true' is confirmed to be deprecated in current DiscordJS v14 and is in no way usable.
+// See: https://discordjs.guide/slash-commands/response-methods.html#ephemeral-responses
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 const db = require('../../database');
 const sendMessageToChannel = require('../../utils/sendMessageToChannel');
@@ -14,7 +17,6 @@ if (!APPROVAL_CHANNEL_ID) {
 	console.warn('[TonyQuote] Approval channel ID not configured; submissions will fail.');
 }
 
-// Using MessageFlags.Ephemeral for ephemeral replies, as using 'ephemeral: true' is deprecated according to current DiscordJS v14.
 
 /**
 * Render a paginated view of the caller’s active quotes.
@@ -39,7 +41,7 @@ async function handleView(interaction, pageArg) {
 			.setColor(0x3498DB)
 			.setTitle('📜 Your Submitted Quotes')
 			.setDescription('*You haven\'t submitted any approved quotes yet. Use `/tonyquote submit` or `/tonyquote submit_idle` to add one!*');
-		return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 	}
 
 	const totalPages = Math.max(1, Math.ceil(quotes.length / QUOTES_PER_PAGE));
@@ -85,7 +87,7 @@ async function handleView(interaction, pageArg) {
 		await interaction.update({ embeds: [embed], components });
 	}
 	else {
-		await interaction.reply({ embeds: [embed], components, flags: [MessageFlags.Ephemeral] });
+		await interaction.reply({ embeds: [embed], components, flags: MessageFlags.Ephemeral });
 	}
 }
 
@@ -102,15 +104,15 @@ async function handleSubmit(interaction) {
 	const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Submission Failed');
 	if (quoteText.length === 0) {
 		errorEmbed.setDescription('Your quote can’t be empty.');
-		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 	if (quoteText.length > MAX_QUOTE_LENGTH) {
 		errorEmbed.setDescription(`Your quote is too long! Please keep it under ${MAX_QUOTE_LENGTH} characters.`);
-		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 	if (!/^[a-zA-Z0-9&]+$/.test(triggerWord)) {
 		errorEmbed.setDescription('The trigger word must be a single word containing only letters, numbers, or an ampersand (&).');
-		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 
 	const existingQuote = db.prepare(`
@@ -122,7 +124,7 @@ async function handleSubmit(interaction) {
 
 	if (existingQuote) {
 		errorEmbed.setDescription('This exact trigger and quote combination already exists. Please submit something new!');
-		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 
 	const userQuoteCount = db.prepare(`
@@ -135,7 +137,7 @@ async function handleSubmit(interaction) {
                             `).get(userId, userId).count;
 	if (userQuoteCount >= MAX_USER_QUOTES) {
 		errorEmbed.setDescription(`You already have ${MAX_USER_QUOTES} active & pending trigger quotes, which is the maximum allowed.`);
-		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 
 	const userBalance = db.prepare(`
@@ -147,7 +149,7 @@ async function handleSubmit(interaction) {
 	if (userBalance < TRIGGER_SUBMISSION_COST) {
 		errorEmbed.setDescription(
 		    `You don't have enough Crowns! This costs **${TRIGGER_SUBMISSION_COST} Crowns**, but you only have **${userBalance}**.`);
-		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 
 	 let charged = false;
@@ -174,12 +176,12 @@ async function handleSubmit(interaction) {
 			.setFooter({ text: 'Please review this submission carefully.' })
 			.setTimestamp();
 
-		const approvalMessage = await sendMessageToChannel(interaction.client, APPROVAL_CHANNEL_ID, approvalEmbed);
 
 		const result = db.prepare(`
             INSERT INTO tony_quotes_pending (trigger_word, quote_text, user_id, approval_message_id, quote_type)
             VALUES (?, ?, ?, ?, 'trigger')
         `).run(triggerWord, quoteText, userId, approvalMessage.id);
+		const approvalMessage = await sendMessageToChannel(interaction.client, APPROVAL_CHANNEL_ID, approvalEmbed);
 		const pendingId = result.lastInsertRowid;
 
 		const row = new ActionRowBuilder().addComponents(
@@ -195,7 +197,7 @@ async function handleSubmit(interaction) {
 			.setDescription(`Thanks, pal. Your trigger quote has been sent for review. **${TRIGGER_SUBMISSION_COST} Crowns** have been deducted.`)
 			.addFields({ name: 'Your Trigger', value: `\`${triggerWord}\`` }, { name: 'Your Quote', value: `"${quoteText}"` });
 
-		await interaction.reply({ embeds: [successEmbed], flags: [MessageFlags.Ephemeral] });
+		await interaction.reply({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
 
 	}
 	catch (error) {
@@ -204,7 +206,7 @@ async function handleSubmit(interaction) {
 			db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(TRIGGER_SUBMISSION_COST, userId);
 		}
 		errorEmbed.setTitle('❌ System Error').setDescription('Something went wrong on my end. Your Crowns have not been spent. Please try again later.');
-		await interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		await interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 }
 
@@ -225,7 +227,7 @@ async function handleIdleSubmit(interaction) {
 	}
 	if (quoteText.length > MAX_QUOTE_LENGTH) {
 		errorEmbed.setDescription(`Your phrase is too long! Please keep it under ${MAX_QUOTE_LENGTH} characters.`);
-		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 
 	const existingQuote = db.prepare(`
@@ -237,7 +239,7 @@ async function handleIdleSubmit(interaction) {
 
 	if (existingQuote) {
 		errorEmbed.setDescription('This exact idle phrase already exists. Please submit something new!');
-		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 
 	const userQuoteCount = db.prepare(`
@@ -250,13 +252,13 @@ async function handleIdleSubmit(interaction) {
     `).get(userId, userId).count;
 	if (userQuoteCount >= MAX_USER_QUOTES) {
 		errorEmbed.setDescription(`You already have ${MAX_USER_QUOTES} active & pending idle phrases, which is the maximum allowed.`);
-		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 
 	const userBalance = db.prepare('SELECT crowns FROM user_economy WHERE user_id = ?').get(userId)?.crowns || 0;
 	if (userBalance < IDLE_SUBMISSION_COST) {
 		errorEmbed.setDescription(`You don't have enough Crowns! This costs **${IDLE_SUBMISSION_COST} Crowns**, but you only have **${userBalance}**.`);
-		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 
 	let charged = false;
@@ -300,14 +302,14 @@ async function handleIdleSubmit(interaction) {
 			.setDescription(`Thanks, pal. Your idle phrase has been sent to the Innkeepers for review. **${IDLE_SUBMISSION_COST} Crowns** have been deducted.`)
 			.addFields({ name: 'Your Phrase', value: `"${quoteText}"` });
 
-		await interaction.reply({ embeds: [successEmbed], flags: [MessageFlags.Ephemeral] });
+		await interaction.reply({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
 	}
 	catch (error) {
 		console.error('Tony Idle Quote submission error:', error);
 		if (charged) {
 			db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(IDLE_SUBMISSION_COST, userId);
 		}		errorEmbed.setTitle('❌ System Error').setDescription('Something went wrong on my end. Your Crowns have not been spent. Please try again later.');
-		await interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		await interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 }
 
@@ -348,7 +350,7 @@ module.exports = {
 			const page = Number.isFinite(raw) ? Math.max(1, Math.floor(raw)) : 1;
 
 			if (interaction.user.id !== targetUserId) {
-				return interaction.reply({ content: 'Hey, that ain\'t for you!', flags: [MessageFlags.Ephemeral] });
+				return interaction.reply({ content: 'Hey, that ain\'t for you!', flags: MessageFlags.Ephemeral });
 			}
 
 			await handleView(interaction, page);
