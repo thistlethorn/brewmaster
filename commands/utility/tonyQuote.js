@@ -14,7 +14,7 @@ const QUOTES_PER_PAGE = config.tonyQuote?.quotesPerPage || 5;
 
 const APPROVAL_CHANNEL_ID = config.tonyQuote?.approvalChannelId;
 if (!APPROVAL_CHANNEL_ID) {
-	console.warn('[TonyQuote] Approval channel ID not configured; submissions will fail.');
+	throw new Error('[TonyQuote] Approval channel ID not configured; submissions will fail.');
 }
 
 
@@ -164,26 +164,16 @@ async function handleSubmit(interaction) {
 		}
 		charged = true;
 		const approvalEmbed = new EmbedBuilder()
-			.setColor(0xFEE75C)
-			.setTitle('📝 New Tony Quote for Approval')
-			.addFields(
-				{ name: 'Submitted By', value: `${interaction.user} (\`${userId}\`)`, inline: false },
-				{ name: 'Type', value: 'Trigger', inline: true },
-				{ name: 'Trigger Word', value: `\`${triggerWord}\``, inline: true },
-				{ name: 'Cost', value: `👑 ${TRIGGER_SUBMISSION_COST}`, inline: true },
-				{ name: 'Quote', value: `>>> "${quoteText}"`, inline: false },
-			)
 			.setFooter({ text: 'Please review this submission carefully.' })
 			.setTimestamp();
 
 
+		const approvalMessage = await sendMessageToChannel(interaction.client, APPROVAL_CHANNEL_ID, approvalEmbed);
 		const result = db.prepare(`
             INSERT INTO tony_quotes_pending (trigger_word, quote_text, user_id, approval_message_id, quote_type)
             VALUES (?, ?, ?, ?, 'trigger')
         `).run(triggerWord, quoteText, userId, approvalMessage.id);
-		const approvalMessage = await sendMessageToChannel(interaction.client, APPROVAL_CHANNEL_ID, approvalEmbed);
 		const pendingId = result.lastInsertRowid;
-
 		const row = new ActionRowBuilder().addComponents(
 			new ButtonBuilder().setCustomId(`tony_quote_approve_${pendingId}`).setLabel('Approve').setStyle(ButtonStyle.Success).setEmoji('✅'),
 			new ButtonBuilder().setCustomId(`tony_quote_reject_${pendingId}`).setLabel('Reject').setStyle(ButtonStyle.Danger).setEmoji('❌'),
@@ -308,7 +298,8 @@ async function handleIdleSubmit(interaction) {
 		console.error('Tony Idle Quote submission error:', error);
 		if (charged) {
 			db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(IDLE_SUBMISSION_COST, userId);
-		}		errorEmbed.setTitle('❌ System Error').setDescription('Something went wrong on my end. Your Crowns have not been spent. Please try again later.');
+		}
+		errorEmbed.setTitle('❌ System Error').setDescription('Something went wrong on my end. Your Crowns have not been spent. Please try again later.');
 		await interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 }
@@ -332,7 +323,7 @@ module.exports = {
 		.addSubcommand(subcommand =>
 			subcommand
 				.setName('view')
-				.setDescription('View your active and submitted Tony Quotes.')
+				.setDescription('View your active Tony Quotes.')
 				.addIntegerOption(option => option.setName('page').setDescription('The page number to view.').setRequired(false))),
 
 

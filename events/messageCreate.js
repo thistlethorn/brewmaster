@@ -96,29 +96,21 @@ module.exports = {
 					}
 				}
 				if (!onGlobalCooldown) {
-					const content = message.content.toLowerCase().replace(/[.,!?;:]/g, '');
-					const words = new Set(content.split(/\s+/));
-					// Use a Set for faster lookups
-
 					// Find all possible quotes that could be triggered by the words in the message
-					const potentialTriggers = [];
-					for (const word of words) {
-						const matchingQuotes = db.prepare(
-					  'SELECT id, quote_text, user_id, last_triggered_at FROM tony_quotes_active WHERE quote_type = \'trigger\' AND trigger_word = ?',
-						).all(word);
-						for (const quote of matchingQuotes) {
-						// Check this specific quote's 15-minute cooldown
-							if (quote.last_triggered_at) {
-								const lastWordTriggerTime = new Date(quote.last_triggered_at);
-								if (now - lastWordTriggerTime < 15 * 60 * 1000) {
-									continue;
-								// This specific quote is on cooldown, skip it
-								}
-							}
-							potentialTriggers.push(quote);
-						}
-					}
-
+					const uniqueWords = Array.from(words);
+					const placeholders = uniqueWords.map(() => '?').join(',');
+					const candidates = uniqueWords.length
+						? db.prepare(
+							`SELECT id, quote_text, user_id, last_triggered_at
+               FROM tony_quotes_active
+               WHERE quote_type = 'trigger' AND trigger_word IN (${placeholders})`,
+						).all(...uniqueWords)
+						: [];
+					const potentialTriggers = candidates.filter(q => {
+						if (!q.last_triggered_at) return true;
+						const last = new Date(q.last_triggered_at);
+						return (now - last) >= 15 * 60 * 1000;
+					});
 					// If we have any valid, off-cooldown quotes, pick one at random
 					if (potentialTriggers.length > 0) {
 						const chosenQuote = potentialTriggers[Math.floor(Math.random() * potentialTriggers.length)];
