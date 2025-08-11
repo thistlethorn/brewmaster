@@ -104,8 +104,9 @@ module.exports = {
 						return interaction.reply({ content: 'You are not authorized to perform this action.', flags: MessageFlags.Ephemeral });
 					}
 
-					const [, , action, pendingId] = interaction.customId.split('_');
-					if (!action || !pendingId || !/^\d+$/.test(pendingId)) {
+					const [, , action, id] = interaction.customId.split('_');
+					const pendingId = Number(id);
+					if (!action || !Number.isInteger(pendingId)) {
 						return interaction.reply({ content: 'Malformed interaction.', flags: MessageFlags.Ephemeral });
 					}
 
@@ -145,7 +146,10 @@ module.exports = {
 						});
 					}
 					else if (action === 'reject') {
-						const refundAmount = quote_type === 'idle' ? 100 : 200;
+						const refundAmount = quote_type === 'idle'
+							? Math.max(1, parseInt(config.tonyQuote?.idleSubmissionCost ?? 100, 10))
+							: Math.max(1, parseInt(config.tonyQuote?.triggerSubmissionCost ?? 200, 10));
+
 						db.transaction(() => {
 							db.prepare(`
                                 INSERT INTO user_economy (user_id, crowns) VALUES (?, ?)
@@ -154,11 +158,16 @@ module.exports = {
 							db.prepare('DELETE FROM tony_quotes_pending WHERE id = ?').run(pendingId);
 						})();
 						originalEmbed.setColor(0xE74C3C).setFooter({ text: `Rejected by ${interaction.user.username}` });
-						await interaction.update({ embeds: [originalEmbed], components: [row] });
+						await interaction.update({ embeds: [originalEmbed], components: row ? [row] : [] });
 
 						const typeText = quote_type === 'idle' ? 'idle phrase' : `trigger quote for \`${trigger_word}\``;
 						const rejectionMessage = `Hey <@${user_id}>, your Tony Quote submission for the ${typeText} wasn't approved this time. The **${refundAmount} Crowns** have been refunded to your account.`;
-						await sendMessageToChannel(interaction.client, BOT_COMMANDS_CHANNEL_ID, rejectionMessage);
+						try {
+							await sendMessageToChannel(interaction.client, BOT_COMMANDS_CHANNEL_ID, rejectionMessage);
+						}
+						catch (error) {
+							console.warn('[Tony Quote Reject] Failed to send channel notice:', error);
+						}
 					}
 					return;
 				}

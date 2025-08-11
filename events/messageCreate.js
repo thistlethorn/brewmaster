@@ -87,17 +87,14 @@ module.exports = {
 				// ensure row exists once
 				db.prepare('INSERT OR IGNORE INTO tony_quotes_global_cooldown (id, last_triggered_at) VALUES (1, NULL)').run();
 
-				// Check global cooldown (5 minutes)
-				const globalCooldown = db.prepare('SELECT last_triggered_at FROM tony_quotes_global_cooldown WHERE id = 1').get();
-
-				let onGlobalCooldown = false;
-				if (globalCooldown && globalCooldown.last_triggered_at) {
-					const lastTriggerTime = new Date(globalCooldown.last_triggered_at);
-					if (now - lastTriggerTime < 5 * 60 * 1000) {
-						onGlobalCooldown = true;
-					}
-				}
-				if (!onGlobalCooldown) {
+				// Atomically claim the 5-minute cooldown window
+				const claimed = db.prepare(`
+					UPDATE tony_quotes_global_cooldown
+					SET last_triggered_at = ?
+					WHERE id = 1
+						AND (last_triggered_at IS NULL OR last_triggered_at <= datetime(?, '-5 minutes'))
+                `).run(nowISO, nowISO);
+				if (claimed.changes === 1) {
 					// Find all possible quotes that could be triggered by the words in the message
 					const tokens = (message.content.toLowerCase().match(/[a-z0-9&]+/gi) || []);
 					const uniqueWords = Array.from(new Set(tokens));

@@ -9,8 +9,7 @@ const MIN_COOLDOWN_MS = 60 * 60 * 1000;
 const MAX_ADDITIONAL_MS = 60 * 60 * 1000;
 
 const IDLE_REWARD = 5;
-const IDLE_MAX_TRIGGERS = config.tonyQuote?.maxIdleUses || 5;
-
+const IDLE_MAX_TRIGGERS = Math.max(1, parseInt(config.tonyQuote?.maxIdleUses ?? 40, 10));
 let chatterTimeout = null;
 let clientInstance = null;
 let isSendingMessage = false;

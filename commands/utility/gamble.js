@@ -10,7 +10,7 @@ const {
 	MessageFlags,
 } = require('discord.js');
 const db = require('../../database');
-const { JACKPOT_BASE_AMOUNT } = require('../database');
+const { JACKPOT_BASE_AMOUNT } = db;
 
 
 // --- GAME CONFIG & HELPERS ---
