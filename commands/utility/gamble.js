@@ -10,6 +10,8 @@ const {
 	MessageFlags,
 } = require('discord.js');
 const db = require('../../database');
+const { JACKPOT_BASE_AMOUNT } = db;
+
 
 // --- GAME CONFIG & HELPERS ---
 
@@ -99,7 +101,7 @@ function addToJackpot(amount) {
 }
 
 function resetJackpot() {
-	db.prepare('UPDATE game_jackpot SET amount = 2000 WHERE id = 1').run();
+	db.prepare('UPDATE game_jackpot SET amount = ? WHERE id = 1').run(JACKPOT_BASE_AMOUNT);
 }
 
 function getUserBalance(userId) {
@@ -498,7 +500,7 @@ async function handlePoker(interaction) {
 	const userId = interaction.user.id;
 	const bet = interaction.options.getInteger('bet');
 
-	if (activeGames.has(userId)) { return interaction.reply({ content: 'You already have an active game! Please finish it first.', ephemeral: true }); }
+	if (activeGames.has(userId)) { return interaction.reply({ content: 'You already have an active game! Please finish it first.', flags: MessageFlags.Ephemeral }); }
 	const balance = getUserBalance(userId);
 	if (balance < bet * 4) { return interaction.reply({ content: `You need at least **👑 ${bet * 4}** to play a full hand with this ante. You only have **👑 ${balance}**.` }); }
 
@@ -603,14 +605,12 @@ async function endPokerGame(interaction, gameState, result) {
 	const currentBalance = getUserBalance(userId);
 	activeGames.delete(userId);
 
-	// --- THIS IS THE FIX ---
-	// Add the final action and game over message to the log BEFORE building the embed.
+
 	if (result.reason) {
 		gameState.log.push(result.reason);
 	}
 	const winnerName = result.winner === 'player' ? interaction.user.username : 'Greg';
 	gameState.log.push(`\n**Game over! ${winnerName} wins the hand.**`);
-	// --- END OF FIX ---
 
 	// Now, build the embed with the fully updated log.
 	const embed = buildPokerEmbed(gameState, interaction.user, false, true);
@@ -619,18 +619,22 @@ async function endPokerGame(interaction, gameState, result) {
 	let finalFooterText = '';
 
 	if (result.winner === 'player') {
-		if (!result.reason.includes('ante')) {
+		const isAnteOnlyWin = result.reason?.includes('ante');
+
+		// Only pay out the pot if it was a normal win.
+		// For an ante-only win, the user's ante was already refunded before this function was called.
+		if (!isAnteOnlyWin) {
 			db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(gameState.pot, userId);
 		}
+
 		const finalBalance = getUserBalance(userId);
 		finalDescription = '**YOU WIN!**';
 		embed.setColor(0x2ECC71);
 
-		if (result.reason.includes('ante')) {
+		if (isAnteOnlyWin) {
 			finalFooterText = `Your Final Balance: 👑 ${finalBalance.toLocaleString()}`;
 		}
 		else {
-			// In the case of a fold, the current balance is pre-payout.
 			const preWinBalance = finalBalance - gameState.pot;
 			finalFooterText = `Your Balance: 👑 ${preWinBalance.toLocaleString()} + 👑 ${gameState.pot.toLocaleString()} = 👑 ${finalBalance.toLocaleString()}`;
 		}
@@ -688,6 +692,7 @@ async function endPokerGame(interaction, gameState, result) {
 	addLogFieldsToEmbed(embed, gameState.log);
 
 	await interaction.editReply({ embeds: [embed], components: [] });
+
 }
 
 function buildPokerButtons(gameState, userId, messageId) {
@@ -1019,7 +1024,7 @@ module.exports = {
 			if (game === 'blackjack') {
 				const action = parts[2];
 				const userId = parts[3];
-				if (interaction.user.id !== userId) { return interaction.reply({ content: 'This isn\'t your game!', ephemeral: true }); }
+				if (interaction.user.id !== userId) { return interaction.reply({ content: 'This isn\'t your game!', flags: MessageFlags.Ephemeral }); }
 
 				await resolveBlackjack(interaction, action);
 			}
@@ -1031,7 +1036,7 @@ module.exports = {
 
 				// 1. Check if the button belongs to the user interacting
 				if (interaction.user.id !== userId) {
-					return interaction.reply({ content: 'This isn\'t your game!', ephemeral: true });
+					return interaction.reply({ content: 'This isn\'t your game!', flags: MessageFlags.Ephemeral });
 				}
 
 				const gameState = activeGames.get(userId);
@@ -1057,7 +1062,7 @@ module.exports = {
 				else if (action === 'bet') {
 					const raiseAmount = gameState.gregBetInRound > gameState.playerBetInRound ? ante + (gameState.gregBetInRound - gameState.playerBetInRound) : ante;
 					if (balance < raiseAmount) {
-						await interaction.followUp({ content: `You don't have enough to bet 👑 ${raiseAmount}! You fold automatically.`, ephemeral: true });
+						await interaction.followUp({ content: `You don't have enough to bet 👑 ${raiseAmount}! You fold automatically.`, flags: MessageFlags.Ephemeral });
 						return endPokerGame(interaction, gameState, { winner: 'greg', reason: 'You folded (insufficient funds).' });
 					}
 					const amountToCall = gameState.gregBetInRound - gameState.playerBetInRound;
@@ -1071,7 +1076,7 @@ module.exports = {
 				else if (action === 'call') {
 					const callAmount = gameState.gregBetInRound - gameState.playerBetInRound;
 					if (balance < callAmount) {
-						await interaction.followUp({ content: `You don't have enough to call 👑 ${callAmount}! You fold automatically.`, ephemeral: true });
+						await interaction.followUp({ content: `You don't have enough to call 👑 ${callAmount}! You fold automatically.`, flags: MessageFlags.Ephemeral });
 						return endPokerGame(interaction, gameState, { winner: 'greg', reason: 'You folded (insufficient funds).' });
 					}
 					db.prepare('UPDATE user_economy SET crowns = crowns - ? WHERE user_id = ?').run(callAmount, userId);
@@ -1169,7 +1174,7 @@ module.exports = {
 				const userId = parts[3];
 				const bet = parseInt(parts[4]);
 
-				if (interaction.user.id !== userId) { return interaction.reply({ content: 'This isn\'t your game!', ephemeral: true }); }
+				if (interaction.user.id !== userId) { return interaction.reply({ content: 'This isn\'t your game!', flags: MessageFlags.Ephemeral }); }
 
 				if (action === 'start') {
 					const balance = getUserBalance(userId);
@@ -1218,7 +1223,7 @@ module.exports = {
 				const action = parts[2];
 				const userId = parts[3];
 
-				if (interaction.user.id !== userId) { return interaction.reply({ content: 'This isn\'t your game!', ephemeral: true }); }
+				if (interaction.user.id !== userId) { return interaction.reply({ content: 'This isn\'t your game!', flags: MessageFlags.Ephemeral }); }
 
 				if (action === 'custom') {
 					const modal = new ModalBuilder().setCustomId(`gamble_coinflip_modal_${userId}`).setTitle('Custom Coin Flip Bet');

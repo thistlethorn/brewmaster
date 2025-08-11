@@ -5,6 +5,8 @@ const getWeekIdentifier = require('../utils/getWeekIdentifier');
 const { reschedule } = require('../tasks/bumpReminder');
 const { isBot, isInGameroom, isNormalMessage } = require('../utils/chatFilters');
 const { calculateBumpReward, updateMultiplier } = require('../utils/handleCrownRewards');
+const config = require('../config.json');
+const MAX_TRIGGER_USES = config.tonyQuote?.maxTriggerUses ?? 20;
 
 function isQualityWelcome(message) {
 	const content = message.content.toLowerCase();
@@ -76,6 +78,87 @@ function formatStreakProgress(streak) {
 module.exports = {
 	name: Events.MessageCreate,
 	async execute(message) {
+		if (!isBot(message) && !isInGameroom(message)) {
+			// 50% chance to even check for a trigger
+			if (Math.random() <= 0.5) {
+				const now = new Date();
+				const nowISO = now.toISOString();
+
+				// ensure row exists once
+				db.prepare('INSERT OR IGNORE INTO tony_quotes_global_cooldown (id, last_triggered_at) VALUES (1, NULL)').run();
+
+				// Atomically claim the 5-minute cooldown window
+				const fiveMinutesAgoISO = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+				const claimed = db.prepare(`
+                  UPDATE tony_quotes_global_cooldown
+                  SET last_triggered_at = ?
+                  WHERE id = 1
+                    AND (last_triggered_at IS NULL OR last_triggered_at <= ?)
+                `).run(nowISO, fiveMinutesAgoISO);
+				if (claimed.changes === 1) {
+					// Find all possible quotes that could be triggered by the words in the message
+					const tokens = (message.content.toLowerCase().match(/[a-z0-9&]+/gi) || []);
+					const uniqueWords = Array.from(new Set(tokens));
+					const placeholders = uniqueWords.map(() => '?').join(',');
+					const candidates = uniqueWords.length
+						? db.prepare(
+							`SELECT id, quote_text, user_id, last_triggered_at
+               FROM tony_quotes_active
+               WHERE quote_type = 'trigger' AND trigger_word IN (${placeholders})`,
+						).all(...uniqueWords)
+						: [];
+					const potentialTriggers = candidates.filter(q => {
+						if (!q.last_triggered_at) return true;
+						const last = new Date(q.last_triggered_at);
+						return (now - last) >= 15 * 60 * 1000;
+					});
+					// If we have any valid, off-cooldown quotes, pick one at random
+					if (potentialTriggers.length > 0) {
+						const chosenQuote = potentialTriggers[Math.floor(Math.random() * potentialTriggers.length)];
+
+						try {
+							const triggerTx = db.transaction(() => {
+							// Update the specific active quote record using its unique ID
+								db.prepare(`
+								UPDATE tony_quotes_active
+								SET times_triggered = times_triggered + 1, last_triggered_at = ?
+								WHERE id = ?
+							`).run(nowISO, chosenQuote.id);
+
+								// Pay the user
+								db.prepare(`
+								INSERT INTO user_economy (user_id, crowns)
+								VALUES (?, 20)
+								ON CONFLICT(user_id) DO UPDATE SET crowns = crowns + 20
+							`).run(chosenQuote.user_id);
+
+								// Update global cooldown
+								db.prepare('UPDATE tony_quotes_global_cooldown SET last_triggered_at = ? WHERE id = 1').run(nowISO);
+
+								// Check if the quote has been triggered 20 times and remove it
+								const currentTriggers = db.prepare('SELECT times_triggered FROM tony_quotes_active WHERE id = ?').get(chosenQuote.id);
+								if (currentTriggers && currentTriggers.times_triggered >= MAX_TRIGGER_USES) {
+									db.prepare('DELETE FROM tony_quotes_active WHERE id = ?').run(chosenQuote.id);
+								}
+							});
+
+							triggerTx();
+
+							// Send Tony's reply
+							await message.channel.send({ content: `*${chosenQuote.quote_text}*`, allowedMentions: { parse: [] } });
+							await message.channel.send({
+								content: `||-# <@${chosenQuote.user_id}> earned 20 Crowns for this quote! • Want to submit your own? Use \`/tonyquote\` and earn 200 bonus crowns over time, for each!||`,
+								allowedMentions: { parse: [] },
+							});
+						}
+						catch (dbError) {
+							console.error('[Tony Quote Trigger] Database transaction failed:', dbError);
+						}
+					}
+				}
+
+			}
+		}
 		if (!isBot(message) && !isInGameroom(message) && isNormalMessage(message.content)) {
 			const userId = message.author.id;
 			try {
