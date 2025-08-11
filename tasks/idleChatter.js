@@ -133,12 +133,14 @@ async function sendIdleMessage() {
 			{ content: `*${chosenQuote.quote_text}*`, allowedMentions: { parse: [] } },
 		);
 
+		const nowISO = new Date().toISOString();
 		const triggerTx = db.transaction(() => {
 			db.prepare(`
                 UPDATE tony_quotes_active
-                SET times_triggered = times_triggered + 1
+                SET times_triggered = times_triggered + 1,
+                    last_triggered_at = ?
                 WHERE id = ?
-            `).run(chosenQuote.id);
+            `).run(nowISO, chosenQuote.id);
 
 			db.prepare(`
                 INSERT INTO user_economy (user_id, crowns)

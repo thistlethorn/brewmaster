@@ -99,77 +99,88 @@ module.exports = {
 			if (interaction.isButton()) {
 
 				if (interaction.customId.startsWith('tony_quote_')) {
-					const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
-					if (!member || !member.permissions.has(PermissionFlagsBits.ManageMessages)) {
-						return interaction.reply({ content: 'You are not authorized to perform this action.', flags: MessageFlags.Ephemeral });
-					}
-
-					const [, , action, id] = interaction.customId.split('_');
-					const pendingId = Number(id);
-					if (!action || !Number.isInteger(pendingId)) {
-						return interaction.reply({ content: 'Malformed interaction.', flags: MessageFlags.Ephemeral });
-					}
-
-					const pendingQuote = db.prepare('SELECT * FROM tony_quotes_pending WHERE id = ?').get(pendingId);
-					if (!pendingQuote) {
-						return interaction.update({ content: 'This submission was already handled or has an error.', embeds: [], components: [] });
-					}
-
-					const { trigger_word, quote_text, user_id, quote_type } = pendingQuote;
-
-					const baseEmbed = interaction.message.embeds?.[0];
-					const originalEmbed = baseEmbed ? new EmbedBuilder(baseEmbed.data) : new EmbedBuilder();
-					const firstRow = interaction.message.components?.[0];
-					const row = firstRow
-						? new ActionRowBuilder().addComponents(
-							...firstRow.components.map(c => ButtonBuilder.from(c).setDisabled(true)),
-						)
-						: null;
-					if (action === 'approve') {
-						db.transaction(() => {
-							// atomically delete the pending row and ensure it wasn’t already handled
-							const del = db.prepare('DELETE FROM tony_quotes_pending WHERE id = ?').run(pendingId);
-							if (del.changes !== 1) throw new Error('Quote has already been processed');
-
-							db.prepare(`
-                                INSERT INTO tony_quotes_active (trigger_word, quote_text, user_id, quote_type)
-                                VALUES (?, ?, ?, ?)
-                            `).run(trigger_word, quote_text, user_id, quote_type);
-						})();
-
-						originalEmbed
-							.setColor(0x2ECC71)
-							.setFooter({ text: `Approved by ${interaction.user.username}` });
-						await interaction.update({
-							embeds: [originalEmbed],
-							components: row ? [row] : [],
-						});
-					}
-					else if (action === 'reject') {
-						const refundAmount = quote_type === 'idle'
-							? Math.max(1, parseInt(config.tonyQuote?.idleSubmissionCost ?? 100, 10))
-							: Math.max(1, parseInt(config.tonyQuote?.triggerSubmissionCost ?? 200, 10));
-
-						db.transaction(() => {
-							db.prepare(`
-                                INSERT INTO user_economy (user_id, crowns) VALUES (?, ?)
-                                ON CONFLICT(user_id) DO UPDATE SET crowns = crowns + ?
-                            `).run(user_id, refundAmount, refundAmount);
-							db.prepare('DELETE FROM tony_quotes_pending WHERE id = ?').run(pendingId);
-						})();
-						originalEmbed.setColor(0xE74C3C).setFooter({ text: `Rejected by ${interaction.user.username}` });
-						await interaction.update({ embeds: [originalEmbed], components: row ? [row] : [] });
-
-						const typeText = quote_type === 'idle' ? 'idle phrase' : `trigger quote for \`${trigger_word}\``;
-						const rejectionMessage = `Hey <@${user_id}>, your Tony Quote submission for the ${typeText} wasn't approved this time. The **${refundAmount} Crowns** have been refunded to your account.`;
-						try {
-							await sendMessageToChannel(interaction.client, BOT_COMMANDS_CHANNEL_ID, rejectionMessage);
+					try {
+						const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+						if (!member || !member.permissions.has(PermissionFlagsBits.ManageMessages)) {
+							return interaction.reply({ content: 'You are not authorized to perform this action.', flags: MessageFlags.Ephemeral });
 						}
-						catch (error) {
-							console.warn('[Tony Quote Reject] Failed to send channel notice:', error);
+
+						const [, , action, id] = interaction.customId.split('_');
+						const pendingId = Number(id);
+						if (!action || !Number.isInteger(pendingId)) {
+							return interaction.reply({ content: 'Malformed interaction.', flags: MessageFlags.Ephemeral });
 						}
+
+						const pendingQuote = db.prepare('SELECT * FROM tony_quotes_pending WHERE id = ?').get(pendingId);
+						if (!pendingQuote) {
+							return interaction.update({ content: 'This submission was already handled or has an error.', embeds: [], components: [] });
+						}
+
+						const { trigger_word, quote_text, user_id, quote_type } = pendingQuote;
+
+						const baseEmbed = interaction.message.embeds?.[0];
+						const originalEmbed = baseEmbed ? new EmbedBuilder(baseEmbed.data) : new EmbedBuilder();
+						const firstRow = interaction.message.components?.[0];
+						const row = firstRow
+							? new ActionRowBuilder().addComponents(
+								...firstRow.components.map(c => ButtonBuilder.from(c).setDisabled(true)),
+							)
+							: null;
+						if (action === 'approve') {
+							db.transaction(() => {
+								// atomically delete the pending row and ensure it wasn’t already handled
+								const del = db.prepare('DELETE FROM tony_quotes_pending WHERE id = ?').run(pendingId);
+								if (del.changes !== 1) throw new Error('Quote has already been processed');
+
+								db.prepare(`
+									INSERT INTO tony_quotes_active (trigger_word, quote_text, user_id, quote_type)
+									VALUES (?, ?, ?, ?)
+								`).run(trigger_word, quote_text, user_id, quote_type);
+							})();
+
+							originalEmbed
+								.setColor(0x2ECC71)
+								.setFooter({ text: `Approved by ${interaction.user.username}` });
+							await interaction.update({
+								embeds: [originalEmbed],
+								components: row ? [row] : [],
+							});
+						}
+						else if (action === 'reject') {
+							const refundAmount = quote_type === 'idle'
+								? Math.max(1, parseInt(config.tonyQuote?.idleSubmissionCost ?? 100, 10))
+								: Math.max(1, parseInt(config.tonyQuote?.triggerSubmissionCost ?? 200, 10));
+
+							db.transaction(() => {
+								// Ensure this pending row wasn't already processed
+								const del = db.prepare('DELETE FROM tony_quotes_pending WHERE id = ?').run(pendingId);
+								if (del.changes !== 1) throw new Error('Quote has already been processed');
+								db.prepare(`
+									INSERT INTO user_economy (user_id, crowns) VALUES (?, ?)
+									ON CONFLICT(user_id) DO UPDATE SET crowns = crowns + ?
+								`).run(user_id, refundAmount, refundAmount);
+							})();
+							originalEmbed.setColor(0xE74C3C).setFooter({ text: `Rejected by ${interaction.user.username}` });
+							await interaction.update({ embeds: [originalEmbed], components: row ? [row] : [] });
+
+							const typeText = quote_type === 'idle' ? 'idle phrase' : `trigger quote for \`${trigger_word}\``;
+							const rejectionMessage = `Hey <@${user_id}>, your Tony Quote submission for the ${typeText} wasn't approved this time. The **${refundAmount} Crowns** have been refunded to your account.`;
+							try {
+								await sendMessageToChannel(interaction.client, BOT_COMMANDS_CHANNEL_ID, rejectionMessage);
+							}
+							catch (error) {
+								console.warn('[Tony Quote Reject] Failed to send channel notice:', error);
+							}
+						}
+						return;
 					}
-					return;
+					catch (error) {
+						console.error('[Error] Failed to handle Tony Quote button interaction:', error);
+						if (!interaction.replied && !interaction.deferred) {
+							await interaction.reply({ content: 'An error occurred while handling this submission.', flags: MessageFlags.Ephemeral });
+						}
+						return;
+					}
 				}
 				// handle Tony Quote view button
 				else if (interaction.customId.startsWith('tonyquote_view_')) {

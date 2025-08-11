@@ -88,12 +88,13 @@ module.exports = {
 				db.prepare('INSERT OR IGNORE INTO tony_quotes_global_cooldown (id, last_triggered_at) VALUES (1, NULL)').run();
 
 				// Atomically claim the 5-minute cooldown window
+				const fiveMinutesAgoISO = new Date(Date.now() - 5 * 60 * 1000).toISOString();
 				const claimed = db.prepare(`
-					UPDATE tony_quotes_global_cooldown
-					SET last_triggered_at = ?
-					WHERE id = 1
-						AND (last_triggered_at IS NULL OR last_triggered_at <= datetime(?, '-5 minutes'))
-                `).run(nowISO, nowISO);
+                  UPDATE tony_quotes_global_cooldown
+                  SET last_triggered_at = ?
+                  WHERE id = 1
+                    AND (last_triggered_at IS NULL OR last_triggered_at <= ?)
+                `).run(nowISO, fiveMinutesAgoISO);
 				if (claimed.changes === 1) {
 					// Find all possible quotes that could be triggered by the words in the message
 					const tokens = (message.content.toLowerCase().match(/[a-z0-9&]+/gi) || []);

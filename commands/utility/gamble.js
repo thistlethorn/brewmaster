@@ -620,76 +620,79 @@ async function endPokerGame(interaction, gameState, result) {
 	let finalDescription = '';
 	let finalFooterText = '';
 
-	if (result.winner === 'player') {
-		if (!result.reason.includes('ante')) {
-			db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(gameState.pot, userId);
-		}
-		const finalBalance = getUserBalance(userId);
-		finalDescription = '**YOU WIN!**';
-		embed.setColor(0x2ECC71);
-
-		if (result.reason.includes('ante')) {
-			finalFooterText = `Your Final Balance: 👑 ${finalBalance.toLocaleString()}`;
-		}
-		else {
-			// In the case of a fold, the current balance is pre-payout.
-			const preWinBalance = finalBalance - gameState.pot;
-			finalFooterText = `Your Balance: 👑 ${preWinBalance.toLocaleString()} + 👑 ${gameState.pot.toLocaleString()} = 👑 ${finalBalance.toLocaleString()}`;
-		}
-	}
-	else if (result.winner === 'greg') {
-		addToJackpot(Math.floor(gameState.pot * 0.5));
-		finalDescription = '**GREG WINS!**';
-		embed.setColor(0xE74C3C);
-		finalFooterText = `Your Final Balance: 👑 ${currentBalance.toLocaleString()} | Greg Wins Pot: 👑 ${gameState.pot.toLocaleString()}`;
-	}
-	else if (result.winner === 'showdown') {
-		const playerResult = evaluateHand([...gameState.playerHand, ...gameState.communityCards]);
-		const dealerResult = evaluateHand([...gameState.dealerHand, ...gameState.communityCards]);
-		const comparison = compareHands(playerResult, dealerResult);
-		embed.setTitle(SUITS['hearts'] + ' 💥 Showdown! 💥 ' + SUITS['diamonds']);
-
-		if (comparison > 0) {
-			db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(gameState.pot, userId);
-			const finalBalance = currentBalance + gameState.pot;
-			finalDescription = `**YOU WIN!** You take the pot with a **${playerResult.name}**.`;
+	  if (!result.reason.includes('ante')) {
+		if (result.winner === 'player') {
+			const isAnteOnlyWin = !!result.reason && result.reason.includes('ante');
+			if (!isAnteOnlyWin) {
+				db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(gameState.pot, userId);
+			}
+			const finalBalance = getUserBalance(userId);
+			finalDescription = '**YOU WIN!**';
 			embed.setColor(0x2ECC71);
-			finalFooterText = `Your Balance: 👑 ${currentBalance.toLocaleString()} + 👑 ${gameState.pot.toLocaleString()} = 👑 ${finalBalance.toLocaleString()}`;
-			if (playerResult.rank >= HAND_RANKS['Straight Flush'].rank) {
-				const jackpot = getJackpot();
-				db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(jackpot, userId);
-				resetJackpot();
-				embed.addFields({ name: '🎉🎉 JACKPOT! 🎉🎉', value: `Your **${playerResult.name}** has won the Jackpot of **👑 ${jackpot.toLocaleString()}**!` });
+
+			if (isAnteOnlyWin) {
+				finalFooterText = `Your Final Balance: 👑 ${finalBalance.toLocaleString()}`;
+			}
+			else {
+				// In the case of a fold, the current balance is pre-payout.
+				const preWinBalance = finalBalance - gameState.pot;
+				finalFooterText = `Your Balance: 👑 ${preWinBalance.toLocaleString()} + 👑 ${gameState.pot.toLocaleString()} = 👑 ${finalBalance.toLocaleString()}`;
 			}
 		}
-		else if (comparison < 0) {
+		else if (result.winner === 'greg') {
 			addToJackpot(Math.floor(gameState.pot * 0.5));
-			finalDescription = `**Greg Wins!** The house takes the pot with a **${dealerResult.name}**.`;
+			finalDescription = '**GREG WINS!**';
 			embed.setColor(0xE74C3C);
 			finalFooterText = `Your Final Balance: 👑 ${currentBalance.toLocaleString()} | Greg Wins Pot: 👑 ${gameState.pot.toLocaleString()}`;
 		}
-		else {
-			const refund = Math.floor(gameState.pot / 2);
-			db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(refund, userId);
-			const finalBalance = currentBalance + refund;
-			finalDescription = `**It's a TIE!** The pot of **👑 ${gameState.pot.toLocaleString()}** is split. Your bets are returned.`;
-			embed.setColor(0x95A5A6);
-			finalFooterText = `Your Final Balance: 👑 ${finalBalance.toLocaleString()}`;
+		else if (result.winner === 'showdown') {
+			const playerResult = evaluateHand([...gameState.playerHand, ...gameState.communityCards]);
+			const dealerResult = evaluateHand([...gameState.dealerHand, ...gameState.communityCards]);
+			const comparison = compareHands(playerResult, dealerResult);
+			embed.setTitle(SUITS['hearts'] + ' 💥 Showdown! 💥 ' + SUITS['diamonds']);
+
+			if (comparison > 0) {
+				db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(gameState.pot, userId);
+				const finalBalance = currentBalance + gameState.pot;
+				finalDescription = `**YOU WIN!** You take the pot with a **${playerResult.name}**.`;
+				embed.setColor(0x2ECC71);
+				finalFooterText = `Your Balance: 👑 ${currentBalance.toLocaleString()} + 👑 ${gameState.pot.toLocaleString()} = 👑 ${finalBalance.toLocaleString()}`;
+				if (playerResult.rank >= HAND_RANKS['Straight Flush'].rank) {
+					const jackpot = getJackpot();
+					db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(jackpot, userId);
+					resetJackpot();
+					embed.addFields({ name: '🎉🎉 JACKPOT! 🎉🎉', value: `Your **${playerResult.name}** has won the Jackpot of **👑 ${jackpot.toLocaleString()}**!` });
+				}
+			}
+			else if (comparison < 0) {
+				addToJackpot(Math.floor(gameState.pot * 0.5));
+				finalDescription = `**Greg Wins!** The house takes the pot with a **${dealerResult.name}**.`;
+				embed.setColor(0xE74C3C);
+				finalFooterText = `Your Final Balance: 👑 ${currentBalance.toLocaleString()} | Greg Wins Pot: 👑 ${gameState.pot.toLocaleString()}`;
+			}
+			else {
+				const refund = Math.floor(gameState.pot / 2);
+				db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(refund, userId);
+				const finalBalance = currentBalance + refund;
+				finalDescription = `**It's a TIE!** The pot of **👑 ${gameState.pot.toLocaleString()}** is split. Your bets are returned.`;
+				embed.setColor(0x95A5A6);
+				finalFooterText = `Your Final Balance: 👑 ${finalBalance.toLocaleString()}`;
+			}
+			embed.addFields(
+				{ name: `Your Best Hand: ${playerResult.name}`, value: `> ${handToString(playerResult.cards)}`, inline: true },
+				{ name: `Greg's Best Hand: ${dealerResult.name}`, value: `> ${handToString(dealerResult.cards)}`, inline: true },
+			);
 		}
-		embed.addFields(
-			{ name: `Your Best Hand: ${playerResult.name}`, value: `> ${handToString(playerResult.cards)}`, inline: true },
-			{ name: `Greg's Best Hand: ${dealerResult.name}`, value: `> ${handToString(dealerResult.cards)}`, inline: true },
-		);
+
+		embed
+			.setDescription(finalDescription)
+			.setFooter({ text: finalFooterText });
+
+		// Safely add the hand history, splitting it into multiple fields if needed.
+		addLogFieldsToEmbed(embed, gameState.log);
+
+		await interaction.editReply({ embeds: [embed], components: [] });
 	}
-
-	embed
-		.setDescription(finalDescription)
-		.setFooter({ text: finalFooterText });
-
-	// Safely add the hand history, splitting it into multiple fields if needed.
-	addLogFieldsToEmbed(embed, gameState.log);
-
-	await interaction.editReply({ embeds: [embed], components: [] });
 }
 
 function buildPokerButtons(gameState, userId, messageId) {
