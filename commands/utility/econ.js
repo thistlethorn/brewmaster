@@ -357,7 +357,7 @@ async function handleDaily(interaction) {
 
 	// --- HANDLE SUCCESSFUL CLAIM ---
 	const newBalance = (userEcon?.crowns || 0) + payout;
-	const daysNeededForNextPrestige = 22 - currentStreak;
+	const daysNeededForNextPrestige = Math.max(1, 22 - currentStreak);
 	const prestigeText = currentPrestige > 0 ? ` [Prestige ${currentPrestige}]` : '';
 	let streakFooter;
 

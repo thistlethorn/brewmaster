@@ -472,23 +472,25 @@ const setupTables = db.transaction(() => {
 		const whereClause = `quote_type = '${type}'`;
 		const subQuery = `SELECT MIN(id) FROM ${table} WHERE ${whereClause} GROUP BY ${groupBy}`;
 
-		// 1. Archive duplicates before deleting
-		db.prepare(`
-            INSERT INTO tony_quotes_archive (id, source_table, trigger_word, quote_text, user_id, approval_message_id, submitted_at, quote_type, reason)
-            SELECT id, '${table === 'tony_quotes_pending' ? 'pending' : 'active'}', trigger_word, quote_text, user_id, ${table === 'tony_quotes_pending' ? 'approval_message_id' : 'NULL'}, ${table === 'tony_quotes_pending' ? 'submitted_at' : 'NULL'}, quote_type, 'duplicate_cleanup'
-            FROM ${table}
-            WHERE ${whereClause} AND id NOT IN (${subQuery})
-        `).run();
+		db.transaction(() => {
+			// 1. Archive duplicates before deleting
+			db.prepare(`
+                INSERT INTO tony_quotes_archive (id, source_table, trigger_word, quote_text, user_id, approval_message_id, submitted_at, quote_type, reason)
+                SELECT id, '${table === 'tony_quotes_pending' ? 'pending' : 'active'}', trigger_word, quote_text, user_id, ${table === 'tony_quotes_pending' ? 'approval_message_id' : 'NULL'}, ${table === 'tony_quotes_pending' ? 'submitted_at' : 'NULL'}, quote_type, 'duplicate_cleanup'
+                FROM ${table}
+                WHERE ${whereClause} AND id NOT IN (${subQuery})
+            `).run();
 
-		// 2. Delete the duplicates and capture the number of changes
-		const result = db.prepare(`
-            DELETE FROM ${table}
-            WHERE ${whereClause} AND id NOT IN (${subQuery})
-        `).run();
+			// 2. Delete the duplicates and capture the number of changes
+			const result = db.prepare(`
+                DELETE FROM ${table}
+                WHERE ${whereClause} AND id NOT IN (${subQuery})
+            `).run();
 
-		if (result.changes > 0) {
-			console.log(`[DB Cleanup] Archived and removed ${result.changes} duplicate quotes from ${table} (type: ${type}).`);
-		}
+			if (result.changes > 0) {
+				console.log(`[DB Cleanup] Archived and removed ${result.changes} duplicate quotes from ${table} (type: ${type}).`);
+			}
+		})();
 	};
 
 	// Perform cleanup for all 4 unique index types

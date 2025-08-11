@@ -68,7 +68,7 @@ function scheduleNextChatter() {
 
 	console.log(`[Idle Chatter] Next message scheduled for: ${nextChatterTime.toISOString()}`);
 
-	  if (delayMs <= 0) {
+	if (delayMs <= 0) {
 		console.log('[Idle Chatter] Chatter time is overdue. Attempting to claim and send.');
 		const holdUntil = new Date(Date.now() + 60_000).toISOString();
 		const nowIso = new Date().toISOString();

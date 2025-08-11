@@ -3644,7 +3644,7 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 		nextTime = getNextActionTime();
 		const attackEmbed = new EmbedBuilder()
 			.setColor(0xC0392B)
-			.setTitle('💥 The Assualt Begins: Press the Advantage! 🤺')
+			.setTitle('💥 The Assault Begins: Press the Advantage! 🤺')
 			.setDescription(replacePlaceholders(attackerMsgs.raiding_attack || DEFAULT_RAID_MESSAGES.raiding_attack))
 			.addFields(
 				{ name: 'Next Phase: Final Battle Outcome', value: `Starting <t:${nextTime}:R>`, inline: false },

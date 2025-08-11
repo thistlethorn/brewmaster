@@ -24,8 +24,13 @@ module.exports = {
 		console.log('[Ready.js] resumeDailyReminders is complete');
 		resumeTempRoleRemovals(client);
 		console.log('[Ready.js] resumeTempRoleRemovals is complete');
-		setupIdleChatter(client);
-		console.log('[Ready.js] setupIdleChatter is complete');
+ 		try {
+ 			setupIdleChatter(client);
+ 			console.log('[Ready.js] setupIdleChatter is complete');
+ 		}
+		catch (error) {
+ 			console.error('[Ready.js] Failed to setup idle chatter:', error);
+ 		}
 
 	},
 };
