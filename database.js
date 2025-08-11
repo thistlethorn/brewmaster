@@ -494,6 +494,7 @@ const setupTables = db.transaction(() => {
 	};
 
 	// Perform cleanup for all 4 unique index types
+	// The values for table, type, and groupBy are hardcoded. They are not, and can never be, supplied by a user.
 	cleanupAndLog('tony_quotes_active', 'trigger', 'LOWER(TRIM(trigger_word)), LOWER(TRIM(quote_text))');
 	cleanupAndLog('tony_quotes_active', 'idle', 'LOWER(TRIM(quote_text))');
 	cleanupAndLog('tony_quotes_pending', 'trigger', 'LOWER(TRIM(trigger_word)), LOWER(TRIM(quote_text))');
