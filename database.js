@@ -134,7 +134,7 @@ const setupTables = db.transaction(() => {
             lore TEXT DEFAULT '',
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             guildmember_title TEXT DEFAULT 'Member',
-            attitude TEXT DEFAULT 'Neutral'
+            attitude TEXT DEFAULT 'Neutral',
             UNIQUE(guild_name)
         )
     `).run();
@@ -219,18 +219,21 @@ const setupTables = db.transaction(() => {
 
 	// "Guild diplomacy and relationships" via /commands/utility/ @ [guild.js]
 
+	// Enforce ordered pairs (lexicographically) so (A,B) only
 	db.prepare(`
 		CREATE TABLE IF NOT EXISTS guild_relationships (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			guild_one_tag TEXT NOT NULL,
-			guild_two_tag TEXT NOT NULL,
-			status TEXT NOT NULL CHECK (status IN ('alliance', 'enemy', 'truce')),
-			initiator_tag TEXT NOT NULL,
-			expires_at TEXT,
-			created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY(guild_one_tag) REFERENCES guild_list(guild_tag) ON DELETE CASCADE,
-			FOREIGN KEY(guild_two_tag) REFERENCES guild_list(guild_tag) ON DELETE CASCADE,
-			UNIQUE(guild_one_tag, guild_two_tag)
+            guild_one_tag TEXT NOT NULL,
+            guild_two_tag TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('alliance', 'enemy', 'truce')),
+            initiator_tag TEXT NOT NULL,
+            expires_at TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(guild_one_tag) REFERENCES guild_list(guild_tag) ON DELETE CASCADE,
+            FOREIGN KEY(guild_two_tag) REFERENCES guild_list(guild_tag) ON DELETE CASCADE,
+            FOREIGN KEY(initiator_tag) REFERENCES guild_list(guild_tag) ON DELETE CASCADE,
+            CHECK (guild_one_tag < guild_two_tag),
+            UNIQUE(guild_one_tag, guild_two_tag)
 		)
 	`).run();
 
@@ -486,6 +489,9 @@ const setupTables = db.transaction(() => {
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_tony_quotes_by_user ON tony_quotes_active(user_id, quote_type, trigger_word)').run();
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_tqa_archive_lookup ON tony_quotes_archive(quote_type, trigger_word, archived_at)').run();
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_tony_quotes_trigger_by_type ON tony_quotes_active(quote_type, trigger_word)').run();
+	db.prepare('CREATE INDEX IF NOT EXISTS idx_relationships_one ON guild_relationships(guild_one_tag)').run();
+	db.prepare('CREATE INDEX IF NOT EXISTS idx_relationships_two ON guild_relationships(guild_two_tag)').run();
+
 
 	// All of the unique indexes
 	// NOTE: Uniqueness for quotes is GLOBAL, not per-user. The same quote/trigger cannot exist twice

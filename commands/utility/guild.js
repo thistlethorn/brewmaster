@@ -4763,13 +4763,13 @@ module.exports = {
 
 				console.log(`[ALLIANCE JOIN] Checking guild data for ${userId}`);
 				const joiningGuildData = db.prepare(`
-      SELECT gmt.guild_tag, gl.guild_name, COALESCE(gt.tier, 1) as tier, COALESCE(ge.balance, 0) as balance
-      FROM guildmember_tracking gmt
-      JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
-      LEFT JOIN guild_tiers gt ON gmt.guild_tag = gt.guild_tag
-      LEFT JOIN guild_economy ge ON gmt.guild_tag = ge.guild_tag
-      WHERE gmt.user_id = ? AND (gmt.owner = 1 OR gmt.vice_gm = 1)
-    `).get(userId);
+					SELECT gmt.guild_tag, gl.guild_name, gl.attitude, COALESCE(gt.tier, 1) as tier, COALESCE(ge.balance, 0) as balance
+					FROM guildmember_tracking gmt
+					JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
+					LEFT JOIN guild_tiers gt ON gmt.guild_tag = gt.guild_tag
+					LEFT JOIN guild_economy ge ON gmt.guild_tag = ge.guild_tag
+					WHERE gmt.user_id = ? AND (gmt.owner = 1 OR gmt.vice_gm = 1)
+				`).get(userId);
 
 				if (!joiningGuildData) {
 					console.log('[ALLIANCE JOIN] User not authorized');
@@ -4936,7 +4936,7 @@ module.exports = {
 
 						console.log(`${logPrefix} Checking authorization for user ID: ${buttonUser.id}`);
 						const joiningGuildData = db.prepare(`
-							SELECT gmt.guild_tag, gl.guild_name, COALESCE(gt.tier, 1) as tier, COALESCE(ge.balance, 0) as balance
+							SELECT gmt.guild_tag, gl.guild_name, gl.attitude, COALESCE(gt.tier, 1) as tier, COALESCE(ge.balance, 0) as balance
 							FROM guildmember_tracking gmt
 							JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
 							LEFT JOIN guild_tiers gt ON gmt.guild_tag = gt.guild_tag
