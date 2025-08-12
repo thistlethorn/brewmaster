@@ -1616,6 +1616,22 @@ async function handleFullInfo(interaction) {
 		if (isMember || isOwner) {
 			embed.addFields({ name: '⚠️ Treasury Status', value: vulnerableStatus, inline: false });
 		}
+		const relationships = db.prepare(`
+			SELECT * FROM guild_relationships 
+			WHERE guild_one_tag = ? OR guild_two_tag = ?
+		`).all(guildTag, guildTag);
+
+		const attitude = guildInfo.attitude || 'Neutral';
+		const allies = relationships.filter(r => r.status === 'alliance').map(r => `[${r.guild_one_tag === guildTag ? r.guild_two_tag : r.guild_one_tag}]`);
+		const enemies = relationships.filter(r => r.status === 'enemy').map(r => `[${r.guild_one_tag === guildTag ? r.guild_two_tag : r.guild_one_tag}]`);
+		const truces = relationships.filter(r => r.status === 'truce').map(r => `[${r.guild_one_tag === guildTag ? r.guild_two_tag : r.guild_one_tag}]`);
+
+		let diplomacyValue = `**Attitude:** ${attitude}\n`;
+		if (allies.length > 0) diplomacyValue += `**Allies:** ${allies.join(', ')}\n`;
+		if (enemies.length > 0) diplomacyValue += `**Enemies:** ${enemies.join(', ')}\n`;
+		if (truces.length > 0) diplomacyValue += `**Truces:** ${truces.join(', ')}\n`;
+
+		embed.addFields({ name: 'Diplomatic Standing', value: diplomacyValue, inline: false });
 
 		embed.setFooter({ text: `Guild Tag: ${guildInfo.guild_tag} • Created on ${new Date(guildInfo.created_at).toLocaleDateString()}` }).setTimestamp();
 
@@ -1749,6 +1765,7 @@ async function buildDetailEmbed(guildTag, view, interaction, parts) {
 	case 'warfare': {
 		const warfareInfo = db.prepare(`
             SELECT
+                gl.attitude,
                 COALESCE(gt.tier, 1) as tier,
                 rl.successful_raids,
 				rl.guilds_destroyed,
@@ -1756,11 +1773,19 @@ async function buildDetailEmbed(guildTag, view, interaction, parts) {
                 rc.shield_expiry,
                 rc.last_raid_time
             FROM guild_list gl
-            LEFT JOIN guild_tiers gt ON gt.guild_tag = gl.guild_tag
+            LEFT JOIN guild_tiers gt ON gl.guild_tag = gt.guild_tag
 			LEFT JOIN raid_leaderboard rl ON rl.guild_tag = gl.guild_tag
             LEFT JOIN raid_cooldowns rc ON rc.guild_tag = gl.guild_tag
             WHERE gl.guild_tag = ?
         `).get(guildTag);
+
+		// --- Diplomacy Info ---
+		const relationships = db.prepare('SELECT * FROM guild_relationships WHERE guild_one_tag = ? OR guild_two_tag = ?').all(guildTag, guildTag);
+		const allies = relationships.filter(r => r.status === 'alliance').map(r => `[${r.guild_one_tag === guildTag ? r.guild_two_tag : r.guild_one_tag}]`);
+		const enemies = relationships.filter(r => r.status === 'enemy').map(r => `[${r.guild_one_tag === guildTag ? r.guild_two_tag : r.guild_one_tag}]`);
+		let diplomacyText = `**Attitude:** ${warfareInfo.attitude || 'Neutral'}`;
+		if (allies.length > 0) diplomacyText += `\n**Allies:** ${allies.join(', ')}`;
+		if (enemies.length > 0) diplomacyText += `\n**Enemies:** ${enemies.join(', ')}`;
 
 		const now = new Date();
 		const creationDate = new Date(guild.created_at);
@@ -1786,8 +1811,9 @@ async function buildDetailEmbed(guildTag, view, interaction, parts) {
 			}
 		}
 
-		embed.setTitle(`⚔️ Warfare & Defense of ${guild.guild_name}`)
+		embed.setTitle(`⚔️ Warfare & Diplomacy of ${guild.guild_name}`)
 			.addFields(
+				{ name: 'Diplomatic Status', value: diplomacyText, inline: false },
 				{ name: 'Shield Status', value: finalShieldStatus, inline: false },
 				{ name: `Stats & Defences (Tier ${warfareInfo.tier})`, value: getTierBenefits(warfareInfo.tier), inline: false },
 				{
@@ -2048,6 +2074,30 @@ async function handleSettings(interaction, settingType) {
 	}
 	try {
 		switch (settingType) {
+		case 'attitude': {
+			const style = interaction.options.getString('style');
+			const cooldown = db.prepare('SELECT changed_at FROM attitude_cooldowns WHERE guild_tag = ?').get(guildData.guild_tag);
+
+			if (cooldown) {
+				const lastChange = new Date(cooldown.changed_at);
+				const nextChange = new Date(lastChange.getTime() + 7 * 24 * 60 * 60 * 1000);
+				if (new Date() < nextChange) {
+					errorEmbed.setTitle('Attitude Locked')
+						.setDescription(`You can change your guild's attitude again <t:${Math.floor(nextChange.getTime() / 1000)}:R>.`);
+					return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+				}
+			}
+
+			db.transaction(() => {
+				db.prepare('UPDATE guild_list SET attitude = ? WHERE guild_tag = ?').run(style, guildData.guild_tag);
+				db.prepare('INSERT INTO attitude_cooldowns (guild_tag, changed_at) VALUES (?, ?) ON CONFLICT(guild_tag) DO UPDATE SET changed_at = excluded.changed_at')
+					.run(guildData.guild_tag, new Date().toISOString());
+			})();
+
+			successEmbed.setTitle('✅ Attitude Updated')
+				.setDescription(`Your guild's public attitude is now set to **${style}**. You will not be able to change it again for 7 days.`);
+			return interaction.reply({ embeds: [successEmbed], flags: [MessageFlags.Ephemeral] });
+		}
 		case 'name': {
 			const newName = interaction.options.getString('new_name');
 			// Validate new name
@@ -2646,6 +2696,7 @@ async function handleList(interaction) {
                 gl.guild_tag, 
                 gl.is_open, 
                 gl.motto,
+				gl.attitude,
                 COALESCE(gt.tier, 1) AS tier,
                 (SELECT COUNT(*) FROM guildmember_tracking WHERE guild_tag = gl.guild_tag) as member_count,
                 (SELECT user_id FROM guildmember_tracking WHERE guild_tag = gl.guild_tag AND owner = 1 LIMIT 1) as owner_id
@@ -2676,11 +2727,12 @@ async function handleList(interaction) {
 				const owner = guild.owner_id ? `<@${guild.owner_id}>` : '*(Unknown)*';
 				const crest = getCrestForTier(guild.tier);
 				const statusIcon = guild.is_open ? '🔓' : '🔒';
+				const attitude = guild.attitude || 'Neutral';
 
 				return {
 					name: `${crest} ${statusIcon} ${guild.guild_name}`,
 					value: [
-						`**Tag:** \`${guild.guild_tag}\``,
+						`**Tag:** \`${guild.guild_tag}\` | **Attitude:** \`${attitude}\``,
 						guild.motto && `📜 *"${guild.motto}"*`,
 						`**Owner:** ${owner}`,
 						`**Members:** ${guild.member_count}`,
@@ -3031,12 +3083,12 @@ async function handleRaidAutocomplete(interaction) {
 
 
 /**
-* Autocomplete handler for /guild fund -> guild_tag option.
+* Autocomplete handler for /guild, pulling up all guild_tag options.
 * Returns up to configured limit (NUMBER_OF_GUILDS_LIMIT) of guilds matching tag or name.
 * @param {import('discord.js').AutocompleteInteraction} interaction
 * @returns {Promise<void>}
 */
-async function handleFundAutocomplete(interaction) {
+async function fetchAllGuildsByTagAutocomplete(interaction) {
 	try {
 		const focusedValue = interaction.options.getFocused();
 
@@ -3155,6 +3207,32 @@ async function handleRaid(interaction) {
 	const userId = interaction.user.id;
 	const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Raid Cannot Proceed');
 
+	const attackerGuildTag = db.prepare('SELECT guild_tag FROM guildmember_tracking WHERE user_id = ?').get(userId)?.guild_tag;
+	if (attackerGuildTag) {
+		const tags = [attackerGuildTag, guildTag].sort();
+		const relationship = db.prepare('SELECT * FROM guild_relationships WHERE guild_one_tag = ? AND guild_two_tag = ?').get(tags[0], tags[1]);
+
+		if (relationship) {
+			if (relationship.status === 'alliance') {
+				errorEmbed.setDescription('You cannot raid a guild you have an alliance with!');
+				return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
+			}
+			if (relationship.status === 'truce') {
+				const expiry = new Date(relationship.expires_at);
+				if (expiry > new Date()) {
+					errorEmbed.setDescription(`You have a truce with this guild that ends <t:${Math.floor(expiry.getTime() / 1000)}:R>!`);
+					return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
+				}
+			}
+		}
+		const cooldown = db.prepare('SELECT * FROM diplomacy_cooldowns WHERE guild_one_tag = ? AND guild_two_tag = ?').get(tags[0], tags[1]);
+		if (cooldown && new Date(cooldown.expires_at) > new Date()) {
+			if (cooldown.cooldown_type === 'alliance_break') {
+				errorEmbed.setDescription(`You cannot raid this guild. A recently broken alliance has a non-aggression pact that ends <t:${Math.floor(new Date(cooldown.expires_at).getTime() / 1000)}:R>.`);
+				return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
+			}
+		}
+	}
 	// Check if user is in a guild
 	const attackerGuild = db.prepare(`
 		SELECT gmt.guild_tag, gl.guild_name, COALESCE(gt.tier, 1) as tier, ge.balance
@@ -3544,7 +3622,6 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 		const defenderGM = db.prepare('SELECT u.user_id FROM guildmember_tracking gmt JOIN user_economy u ON gmt.user_id = u.user_id WHERE gmt.guild_tag = ? AND gmt.owner = 1').get(defenderTag);
 		console.log(`[Raid Resolution LOG] [${raidId}] Attacker GM: ${attackerGM ? attackerGM.user_id : 'Not Found'}. Defender GM: ${defenderGM ? defenderGM.user_id : 'Not Found'}.`);
 
-
 		const placeholders = {
 			raidingGuild: `**${finalAttackerData.guild_name}**`,
 			defendingGuild: `**${finalDefenderData.guild_name}**`,
@@ -3561,36 +3638,82 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 			return result;
 		};
 
-		// 2. Battle Calculation
+		// 2. Pre-Battle Checks & Final Calculations
+		let cataclysmicFailure = false;
+		let defensiveGuildTrigger = null;
+
+		// Check primary defender's attitude
+		const defensivePrimary = db.prepare('SELECT attitude, tier, guild_name FROM guild_list WHERE guild_tag = ?').get(defenderTag);
+		let highestChance = 0;
+
+		if (defensivePrimary && defensivePrimary.attitude === 'Defensive') {
+			// 0-4 for Stone-Adamantium
+			const rank = Math.floor((defensivePrimary.tier - 1) / 3);
+
+			// 4% per rank for primary defender
+			highestChance = (rank + 1) * 0.04;
+			defensiveGuildTrigger = { name: defensivePrimary.guild_name, chance: highestChance };
+		}
+
+		// Check defending allies for a higher chance
+		const defensiveAllies = defendingParticipants
+			.map(p => db.prepare('SELECT guild_name, attitude, tier FROM guild_list WHERE guild_tag = ?').get(p.allied_guild_tag))
+			.filter(g => g && g.attitude === 'Defensive');
+
+		for (const ally of defensiveAllies) {
+			const rank = Math.floor((ally.tier - 1) / 3);
+			// 2% per rank for supporting defender
+			const chance = (rank + 1) * 0.02;
+			if (chance > highestChance) {
+				highestChance = chance;
+				defensiveGuildTrigger = { name: ally.guild_name, chance: highestChance };
+			}
+		}
+
+		if (defensiveGuildTrigger && Math.random() < defensiveGuildTrigger.chance) {
+			cataclysmicFailure = true;
+		}
+
+		// --- Standard Battle Calculation ---
+		let modifier = 0;
+		let attackerModifierText = '';
+
+		// Enemy bonus check
+		const sortedTags = [attackerTag, defenderTag].sort();
+		const relationship = db.prepare('SELECT status FROM guild_relationships WHERE guild_one_tag = ? AND guild_two_tag = ?').get(sortedTags[0], sortedTags[1]);
+		if (relationship?.status === 'enemy') {
+			modifier += 1;
+			attackerModifierText += '- `+1` (Grudge Bonus - Attacking Enemy)\n';
+		}
+
+		// Tier difference bonus/penalty
+		if (finalAttackerData.tier > finalDefenderData.tier) {
+			modifier -= 4;
+			attackerModifierText += '- `-4` (Bully Penalty - Attacking Lower Tier)\n';
+		}
+		else if (finalAttackerData.tier < finalDefenderData.tier) {
+			modifier += 3;
+			attackerModifierText += '- `+3` (Kingslayer Bonus - Attacking Higher Tier)\n';
+		}
+
+		const attackerRoll = Math.floor(Math.random() * 20) + 1;
 		const attackerBasePower = getTierPowerBonus(finalAttackerData.tier);
 		const defenderBasePower = TIER_DATA[finalDefenderData.tier - 1].ac;
 
-		// Calculate power from allies
 		const attackerAllyPower = attackingParticipants
 			.filter(p => p.allied_guild_tag !== attackerTag)
 			.reduce((sum, ally) => sum + getTierPowerBonus(ally.tier), 0);
-
 		const defenderAllyPower = defendingParticipants
 			.filter(p => p.allied_guild_tag !== defenderTag)
 			.reduce((sum, ally) => sum + getTierPowerBonus(ally.tier), 0);
 
-
-		let modifier = 0;
-		let attackerModifierText = '';
-		if (getTierPowerBonus(finalAttackerData.tier) < getTierPowerBonus(finalDefenderData.tier)) {
-			modifier = 3;
-			attackerModifierText = '- `+3` (Kingslayer Bonus - Attacking Higher Tier)\n';
-		}
-		else if (getTierPowerBonus(finalAttackerData.tier) > getTierPowerBonus(finalDefenderData.tier)) {
-			modifier = -4;
-			attackerModifierText = '- `-4` (Bully Penalty - Attacking Lower Tier)\n';
-		}
-		const attackerRoll = Math.floor(Math.random() * 20) + 1;
 		const finalAttackPower = attackerRoll + attackerBasePower + attackerAllyPower + modifier;
 		const attackerModifierTotal = finalAttackPower - attackerRoll;
 		const finalDefensePower = defenderBasePower + defenderAllyPower;
-		const success = finalAttackPower >= finalDefensePower;
 
+		const success = cataclysmicFailure ? false : finalAttackPower >= finalDefensePower;
+
+		// Prepare text for the final result embed
 		const attackerTierList = attackingParticipants
 			.filter(p => p.allied_guild_tag !== attackerTag)
 			.map(p => `- \`+${getTierPowerBonus(p.tier)}\` (${p.guild_name} - Supporting Tier Bonus)`)
@@ -3599,6 +3722,7 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 			.filter(p => p.allied_guild_tag !== defenderTag)
 			.map(p => `- \`+${getTierPowerBonus(p.tier)}\` (${p.guild_name} - Supporting Tier Bonus)`)
 			.join('\n');
+
 		attackerModifierText += `${attackerTierList}\n- \`+${attackerBasePower}\` (Base Tier Power of Attacking Guild)\n__**MODIFIERS TOTAL**__ = \`+${attackerModifierTotal}\``;
 		const defenderModifierText = `${defenderTierList}\n__**MODIFIERS TOTAL**__ = \`+${defenderAllyPower}\``;
 		// 3. Narrative Sequence with Separate Messages & Countdown Timers
@@ -3722,10 +3846,27 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 				inline: false,
 			};
 
+			// --- Opportunist Payout Logic ---
+			let opportunistWinningsText = '';
+			const raidPot = db.prepare('SELECT wager_pot FROM raid_history WHERE id = ?').get(raidId)?.wager_pot || 0;
+			if (raidPot > 0) {
+				const opportunistWinners = attackingParticipants.filter(p => db.prepare('SELECT attitude FROM guild_list WHERE guild_tag = ?').get(p.allied_guild_tag)?.attitude === 'Opportunist');
+				if (opportunistWinners.length > 0) {
+					const individualWinnings = Math.floor((raidPot * 2) / opportunistWinners.length);
+					opportunistWinningsText = `\n\n**Opportunist Wagers Won:**\nEach of the **${opportunistWinners.length}** winning opportunists has claimed **${individualWinnings.toLocaleString()}** Crowns!`;
+					const payoutTx = db.transaction(() => {
+						for (const winner of opportunistWinners) {
+							db.prepare('UPDATE guild_economy SET balance = balance + ? WHERE guild_tag = ?').run(individualWinnings, winner.allied_guild_tag);
+						}
+					});
+					payoutTx();
+				}
+			}
+
 			resultEmbed = new EmbedBuilder()
 				.setTitle('⚔️ VICTORY FOR THE ATTACKERS! ⚔️')
 				.setColor(0x2ECC71)
-				.setDescription(description)
+				.setDescription(description + opportunistWinningsText)
 				.addFields(
 					{ name: 'Attacker Power Calculations', value: `__Attacker Roll:__ **${attackerRoll}**\n__Attacker Modifiers:__\n${attackerModifierText}`, inline: true },
 					{ name: 'Guild Defence Calculations', value: `__Guild AC:__ **${defenderBasePower}**\n__Defender Modifiers:__\n${defenderModifierText}`, inline: true },
@@ -3797,10 +3938,27 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 				inline: false,
 			};
 
+			// --- Opportunist Payout Logic ---
+			let opportunistWinningsText = '';
+			const raidPot = db.prepare('SELECT wager_pot FROM raid_history WHERE id = ?').get(raidId)?.wager_pot || 0;
+			if (raidPot > 0) {
+				const opportunistWinners = defendingParticipants.filter(p => db.prepare('SELECT attitude FROM guild_list WHERE guild_tag = ?').get(p.allied_guild_tag)?.attitude === 'Opportunist');
+				if (opportunistWinners.length > 0) {
+					const individualWinnings = Math.floor((raidPot * 2) / opportunistWinners.length);
+					opportunistWinningsText = `\n\n**Opportunist Wagers Won:**\nEach of the **${opportunistWinners.length}** winning opportunists has claimed **${individualWinnings.toLocaleString()}** Crowns!`;
+					const payoutTx = db.transaction(() => {
+						for (const winner of opportunistWinners) {
+							db.prepare('UPDATE guild_economy SET balance = balance + ? WHERE guild_tag = ?').run(individualWinnings, winner.allied_guild_tag);
+						}
+					});
+					payoutTx();
+				}
+			}
+
 			resultEmbed = new EmbedBuilder()
 				.setTitle('🛡️ VICTORY FOR THE DEFENDERS! 🛡️')
 				.setColor(0x3498DB)
-				.setDescription(description)
+				.setDescription(description + opportunistWinningsText)
 				.addFields(
 					{ name: 'Attacker Power Calculations', value: `__Attacker Roll:__ **${attackerRoll}**\n__Attacker Modifiers:__\n${attackerModifierText}`, inline: true },
 					{ name: 'Guild Defence Calculations', value: `__Guild AC:__ **${defenderBasePower}**\n__Defender Modifiers:__\n${defenderModifierText}`, inline: true },
@@ -3853,11 +4011,254 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 	}
 }
 
+async function handleDiplomacy(interaction, action) {
+	const userId = interaction.user.id;
+	const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Diplomacy Failed');
+
+	const guildData = db.prepare(`
+        SELECT gl.guild_tag, gl.guild_name
+        FROM guildmember_tracking gmt
+        JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
+        WHERE gmt.user_id = ? AND (gmt.owner = 1 OR gmt.vice_gm = 1)
+    `).get(userId);
+
+	if (!guildData) {
+		errorEmbed.setDescription('You must be a Guildmaster or Vice-GM to manage diplomacy.');
+		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+	}
+
+	if (action === 'view') {
+		return handleViewRelationships(interaction, guildData);
+	}
+
+	const targetTag = interaction.options.getString('guild_tag').toUpperCase();
+	if (targetTag === guildData.guild_tag) {
+		errorEmbed.setDescription('You cannot perform diplomatic actions with your own guild.');
+		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+	}
+	const targetGuild = db.prepare('SELECT guild_name FROM guild_list WHERE guild_tag = ?').get(targetTag);
+	if (!targetGuild) {
+		errorEmbed.setDescription(`No guild found with the tag [${targetTag}].`);
+		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+	}
+
+	switch (action) {
+	case 'offer':
+		return handleDiplomacyOffer(interaction, guildData, targetGuild, targetTag);
+	case 'break':
+		return handleBreak(interaction, guildData, targetGuild, targetTag);
+	case 'declare_enemy':
+		return handleDeclareEnemy(interaction, guildData, targetGuild, targetTag);
+	case 'withdraw':
+		return handleWithdraw(interaction, guildData, targetGuild, targetTag);
+	}
+}
+
+async function handleViewRelationships(interaction, guildData) {
+	const relationships = db.prepare(`
+		SELECT * FROM guild_relationships 
+		WHERE guild_one_tag = ? OR guild_two_tag = ?
+	`).all(guildData.guild_tag, guildData.guild_tag);
+
+	const embed = new EmbedBuilder()
+		.setColor(0x95A5A6)
+		.setTitle(`📜 Diplomatic Status for ${guildData.guild_name}`)
+		.setDescription('Here are all of your current formal relationships.');
+
+	const alliances = relationships.filter(r => r.status === 'alliance');
+	const enemies = relationships.filter(r => r.status === 'enemy');
+	const truces = relationships.filter(r => r.status === 'truce');
+
+	embed.addFields(
+		{ name: '🤝 Alliances', value: alliances.length > 0 ? alliances.map(r => `• [${r.guild_one_tag === guildData.guild_tag ? r.guild_two_tag : r.guild_one_tag}]`).join('\n') : '*None*', inline: true },
+		{ name: '⚔️ Enemies', value: enemies.length > 0 ? enemies.map(r => `• [${r.guild_one_tag === guildData.guild_tag ? r.guild_two_tag : r.guild_one_tag}] (Declared by ${r.initiator_tag === guildData.guild_tag ? 'You' : 'Them'})`).join('\n') : '*None*', inline: true },
+		{ name: '🕊️ Truces', value: truces.length > 0 ? truces.map(r => `• [${r.guild_one_tag === guildData.guild_tag ? r.guild_two_tag : r.guild_one_tag}] (Expires <t:${Math.floor(new Date(r.expires_at).getTime() / 1000)}:R>)`).join('\n') : '*None*', inline: true },
+	);
+
+	await interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+}
+
+async function handleDiplomacyOffer(interaction, guildData, targetGuild, targetTag) {
+	const type = interaction.options.getString('type');
+	const durationDays = interaction.options.getInteger('duration_days');
+
+	if (type === 'truce' && (!durationDays || durationDays <= 0)) {
+		return interaction.reply({ content: 'You must provide a positive duration in days for a truce.', flags: [MessageFlags.Ephemeral] });
+	}
+
+	const tags = [guildData.guild_tag, targetTag].sort();
+	const existing = db.prepare('SELECT * FROM guild_relationships WHERE guild_one_tag = ? AND guild_two_tag = ?').get(tags[0], tags[1]);
+	if (existing) {
+		return interaction.reply({ content: `You already have a diplomatic relationship (${existing.status}) with this guild.`, flags: [MessageFlags.Ephemeral] });
+	}
+
+	const targetGuildData = db.prepare('SELECT channel_id FROM guild_list WHERE guild_tag = ?').get(targetTag);
+	if (!targetGuildData?.channel_id) {
+		return interaction.reply({ content: 'Cannot send offer: Target guild\'s private channel not found.', flags: [MessageFlags.Ephemeral] });
+	}
+
+	try {
+		const targetChannel = await interaction.client.channels.fetch(targetGuildData.channel_id);
+		const offerId = `${type}_${guildData.guild_tag}_${targetTag}_${durationDays || 0}`;
+
+		const embed = new EmbedBuilder()
+			.setColor(0xFEE75C)
+			.setTitle(`Incoming Diplomatic Offer from ${guildData.guild_name}`)
+			.setDescription(`${interaction.user} has offered a **${type.toUpperCase()}** to your guild.`);
+
+		if (type === 'truce') {
+			embed.addFields({ name: 'Duration', value: `${durationDays} days` });
+		}
+
+		const row = new ActionRowBuilder().addComponents(
+			new ButtonBuilder().setCustomId(`guild_diplomacy_accept_${offerId}`).setLabel('Accept').setStyle(ButtonStyle.Success),
+			new ButtonBuilder().setCustomId(`guild_diplomacy_decline_${offerId}`).setLabel('Decline').setStyle(ButtonStyle.Danger),
+		);
+
+		await targetChannel.send({ embeds: [embed], components: [row] });
+		await interaction.reply({ content: `Your ${type} offer has been sent to [${targetTag}].`, flags: [MessageFlags.Ephemeral] });
+	}
+	catch (error) {
+		console.error('Diplomacy offer error:', error);
+		await interaction.reply({ content: 'Failed to send the offer. The target guild\'s channel may be inaccessible.', flags: [MessageFlags.Ephemeral] });
+	}
+}
+
+async function handleDeclareEnemy(interaction, guildData, targetGuild, targetTag) {
+	const targetAttitude = db.prepare('SELECT attitude FROM guild_list WHERE guild_tag = ?').get(targetTag)?.attitude;
+	if (targetAttitude === 'Neutral') {
+		return interaction.reply({ content: `You cannot declare war on **${targetGuild.guild_name}**. As a Neutral guild, they are exempt from being declared enemies.`, flags: [MessageFlags.Ephemeral] });
+	}
+	const tags = [guildData.guild_tag, targetTag].sort();
+
+	const cooldown = db.prepare('SELECT * FROM diplomacy_cooldowns WHERE guild_one_tag = ? AND guild_two_tag = ? AND cooldown_type = ?').get(tags[0], tags[1], 'enemy_declaration');
+	if (cooldown && new Date(cooldown.expires_at) > new Date()) {
+		return interaction.reply({ content: `You cannot declare this guild as an enemy again so soon. The cooldown ends <t:${Math.floor(new Date(cooldown.expires_at).getTime() / 1000)}:R>.`, flags: [MessageFlags.Ephemeral] });
+	}
+
+	const existing = db.prepare('SELECT * FROM guild_relationships WHERE guild_one_tag = ? AND guild_two_tag = ?').get(tags[0], tags[1]);
+	if (existing) {
+		return interaction.reply({ content: `You cannot declare an enemy while another relationship (${existing.status}) is active.`, flags: [MessageFlags.Ephemeral] });
+	}
+
+	db.prepare('INSERT INTO guild_relationships (guild_one_tag, guild_two_tag, status, initiator_tag) VALUES (?, ?, ?, ?)')
+		.run(tags[0], tags[1], 'enemy', guildData.guild_tag);
+
+	// Notify target guild
+	const targetGuildData = db.prepare('SELECT channel_id FROM guild_list WHERE guild_tag = ?').get(targetTag);
+	if (targetGuildData?.channel_id) {
+		const notifyEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('Hostile Declaration!').setDescription(`**${guildData.guild_name} [${guildData.guild_tag}]** has officially declared your guild as their ENEMY!`);
+		const targetChannel = await interaction.client.channels.fetch(targetGuildData.channel_id).catch(() => null);
+		if (targetChannel) await targetChannel.send({ embeds: [notifyEmbed] });
+	}
+
+	await interaction.reply({ content: `You have successfully declared **${targetGuild.guild_name} [${targetTag}]** as your enemy.`, flags: [MessageFlags.Ephemeral] });
+}
+
+async function handleWithdraw(interaction, guildData, targetGuild, targetTag) {
+	const tags = [guildData.guild_tag, targetTag].sort();
+	const relationship = db.prepare('SELECT * FROM guild_relationships WHERE guild_one_tag = ? AND guild_two_tag = ?').get(tags[0], tags[1]);
+
+	if (!relationship) {
+		return interaction.reply({ content: 'You have no active relationship with this guild to withdraw from.', flags: [MessageFlags.Ephemeral] });
+	}
+	if (relationship.initiator_tag !== guildData.guild_tag) {
+		return interaction.reply({ content: 'You cannot withdraw from this relationship as you were not the initiator.', flags: [MessageFlags.Ephemeral] });
+	}
+
+	db.prepare('DELETE FROM guild_relationships WHERE id = ?').run(relationship.id);
+
+	let message = `You have withdrawn your **${relationship.status}** with **${targetGuild.guild_name}**.`;
+
+	if (relationship.status === 'enemy') {
+		const expires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+		db.prepare('INSERT INTO diplomacy_cooldowns (guild_one_tag, guild_two_tag, cooldown_type, expires_at) VALUES (?, ?, ?, ?)')
+			.run(tags[0], tags[1], 'enemy_declaration', expires.toISOString());
+		message += ' You cannot declare them as an enemy again for 7 days.';
+	}
+
+	// Notify target guild
+	const targetGuildData = db.prepare('SELECT channel_id FROM guild_list WHERE guild_tag = ?').get(targetTag);
+	if (targetGuildData?.channel_id) {
+		const notifyEmbed = new EmbedBuilder().setColor(0x3498DB).setTitle('Diplomatic Update').setDescription(`**${guildData.guild_name} [${guildData.guild_tag}]** has withdrawn their **${relationship.status}** with your guild. You are now neutral.`);
+		const targetChannel = await interaction.client.channels.fetch(targetGuildData.channel_id).catch(() => null);
+		if (targetChannel) await targetChannel.send({ embeds: [notifyEmbed] });
+	}
+
+	await interaction.reply({ content: message, flags: [MessageFlags.Ephemeral] });
+}
+
+async function handleBreak(interaction, guildData, targetGuild, targetTag) {
+	const tags = [guildData.guild_tag, targetTag].sort();
+	const relationship = db.prepare('SELECT * FROM guild_relationships WHERE guild_one_tag = ? AND guild_two_tag = ?').get(tags[0], tags[1]);
+
+	if (!relationship || relationship.status !== 'alliance') {
+		return interaction.reply({ content: 'You do not have an alliance with this guild to break.', flags: [MessageFlags.Ephemeral] });
+	}
+
+	// Delete the alliance and set the 24h cooldown
+	db.transaction(() => {
+		db.prepare('DELETE FROM guild_relationships WHERE id = ?').run(relationship.id);
+		const expires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+		db.prepare('INSERT INTO diplomacy_cooldowns (guild_one_tag, guild_two_tag, cooldown_type, expires_at) VALUES (?, ?, ?, ?)')
+			.run(tags[0], tags[1], 'alliance_break', expires.toISOString());
+	})();
+
+	// Notify target guild
+	const targetGuildData = db.prepare('SELECT channel_id FROM guild_list WHERE guild_tag = ?').get(targetTag);
+	if (targetGuildData?.channel_id) {
+		const notifyEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('Alliance Broken!').setDescription(`**${guildData.guild_name} [${guildData.guild_tag}]** has officially broken their alliance with your guild! A 24-hour non-aggression pact is now in effect.`);
+		const targetChannel = await interaction.client.channels.fetch(targetGuildData.channel_id).catch(() => null);
+		if (targetChannel) await targetChannel.send({ embeds: [notifyEmbed] });
+	}
+
+	await interaction.reply({ content: `You have broken your alliance with **${targetGuild.guild_name}**. Neither guild may attack the other for 24 hours.`, flags: [MessageFlags.Ephemeral] });
+}
 
 module.exports = {
 	category: 'utility',
 	buttons: {
 		handleGuildInfoButton,
+		async handleDiplomacyResponse(interaction) {
+			const parts = interaction.customId.split('_');
+			// accept or decline
+			const action = parts[2];
+			const type = parts[3];
+			const initiatorTag = parts[4];
+			const targetTag = parts[5];
+			const durationDays = parseInt(parts[6]);
+
+			const userGuild = db.prepare('SELECT gmt.guild_tag, gl.guild_name FROM guildmember_tracking gmt JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag WHERE gmt.user_id = ? AND (gmt.owner = 1 OR gmt.vice_gm = 1)').get(interaction.user.id);
+
+			if (!userGuild || userGuild.guild_tag !== targetTag) {
+				return interaction.reply({ content: 'You are not a leader of the guild this offer was sent to.', flags: [MessageFlags.Ephemeral] });
+			}
+
+			const initiatorGuild = db.prepare('SELECT guild_name FROM guild_list WHERE guild_tag = ?').get(initiatorTag);
+
+			if (action === 'decline') {
+				await interaction.update({ content: `The offer of ${type} from **${initiatorGuild.guild_name}** has been declined.`, embeds: [], components: [] });
+				return;
+			}
+
+			// On Accept
+			const tags = [initiatorTag, targetTag].sort();
+			const existing = db.prepare('SELECT 1 FROM guild_relationships WHERE guild_one_tag = ? AND guild_two_tag = ?').get(tags[0], tags[1]);
+			if (existing) {
+				await interaction.update({ content: 'A relationship has already been formed with this guild since the offer was sent.', embeds: [], components: [] });
+				return;
+			}
+
+			let expires_at = null;
+			if (type === 'truce') {
+				expires_at = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString();
+			}
+
+			db.prepare('INSERT INTO guild_relationships (guild_one_tag, guild_two_tag, status, initiator_tag, expires_at) VALUES (?, ?, ?, ?, ?)')
+				.run(tags[0], tags[1], type, initiatorTag, expires_at);
+
+			await interaction.update({ content: `You have accepted the ${type} from **${initiatorGuild.guild_name}**! Your guilds are now formally linked.`, embeds: [], components: [] });
+		},
 		async handleRaidMessageButton(interaction) {
 			const closedEmbed = new EmbedBuilder().setColor(0x3498DB).setDescription('Raid message editor closed.');
 			if (interaction.customId === 'raidmsg_close_editor') {
@@ -4581,19 +4982,44 @@ module.exports = {
 						const isPrimaryAttacker = joiningGuildTag === originalRaid.attacker_tag;
 						const isPrimaryDefender = joiningGuildTag === originalRaid.defender_tag;
 
-						let successMessage;
 
 						console.log(`${logPrefix} Primary Attacker: ${isPrimaryAttacker}, Primary Defender: ${isPrimaryDefender}`);
-						if (isPrimaryAttacker || isPrimaryDefender) {
+						let successMessage;
+						let wager = 0;
 
+						if (isPrimaryAttacker || isPrimaryDefender) {
 							successMessage = `Your guild has officially joined as the ${isPrimaryAttacker ? 'leading attacker' : 'primary defender'}!`;
 						}
 						else {
-							successMessage = `Your guild, **${joiningGuildData.guild_name}**, has joined the war as a **${side}** for __free__!`;
+							// Check for formal alliance for a free join
+							const primaryCombatantTag = (side === 'attacker') ? originalRaid.attacker_tag : originalRaid.defender_tag;
+							const tags = [joiningGuildTag, primaryCombatantTag].sort();
+							const alliance = db.prepare('SELECT 1 FROM guild_relationships WHERE guild_one_tag = ? AND guild_two_tag = ? AND status = ?').get(tags[0], tags[1], 'alliance');
+
+							successMessage = `Your guild, **${joiningGuildData.guild_name}**, has joined the war as a **${side}**!`;
+
+							if (alliance) {
+								successMessage += '\nAs a formal ally, you join the fight beside your **BRETHREN**.';
+							}
+							else if (joiningGuildData.attitude === 'Opportunist') {
+								wager = 100 * joiningGuildData.tier;
+								if (joiningGuildData.balance < wager) {
+									return i.editReply({ content: `Your guild vault doesn't have enough to cover the opportunist wager of **${wager} Crowns**!` });
+								}
+								successMessage += `\nAs an Opportunist, you wager **👑 ${wager.toLocaleString()}** on the outcome!`;
+							}
+							else {
+								successMessage += '\nYou join the fight for **FREE** to aid the cause!';
+							}
 						}
 
 						console.log(`${logPrefix} Starting database transaction to add guild [${joiningGuildTag}] to the raid...`);
 						db.transaction(() => {
+							if (wager > 0) {
+								db.prepare('UPDATE guild_economy SET balance = balance - ? WHERE guild_tag = ?').run(wager, joiningGuildTag);
+								// Change the line below
+								db.prepare('UPDATE raid_history SET wager_pot = COALESCE(wager_pot, 0) + ? WHERE id = ?').run(wager, collectedRaidId);
+							}
 							db.prepare('INSERT INTO active_raid_allies (raid_id, allied_guild_tag, side) VALUES (?, ?, ?)').run(collectedRaidId, joiningGuildTag, side);
 							console.log(`${logPrefix} -> Inserted guild [${joiningGuildTag}] into 'active_raid_allies' for side '${side}'.`);
 						})();
@@ -5118,12 +5544,81 @@ module.exports = {
 						.addUserOption(option =>
 							option.setName('user')
 								.setDescription('The member to demote')
-								.setRequired(true))),
-		),
+								.setRequired(true)))
+				.addSubcommand(subcommand =>
+					subcommand
+						.setName('attitude')
+						.setDescription('Set your guild\'s official playstyle attitude.')
+						.addStringOption(option =>
+							option.setName('style')
+								.setDescription('Choose the attitude that best describes your guild.')
+								.setRequired(true)
+								.addChoices(
+									{ name: 'Neutral - Balanced gameplay.', value: 'Neutral' },
+									{ name: 'Aggressive - Focused on raiding and PvP.', value: 'Aggressive' },
+									{ name: 'Defensive - Focused on building and protecting allies.', value: 'Defensive' },
+									{ name: 'Opportunist - Mercenaries who fight for profit.', value: 'Opportunist' },
+								))))
+		.addSubcommandGroup(subcommandGroup =>
+			subcommandGroup
+				.setName('diplomacy')
+				.setDescription('Manage your guild\'s relationships with other guilds.')
+				.addSubcommand(subcommand =>
+					subcommand
+						.setName('offer')
+						.setDescription('Offer an alliance or truce to another guild.')
+						.addStringOption(option =>
+							option.setName('type')
+								.setDescription('The type of relationship to offer.')
+								.setRequired(true)
+								.addChoices(
+									{ name: 'Alliance (Permanent)', value: 'alliance' },
+									{ name: 'Truce (Temporary)', value: 'truce' },
+								))
+						.addStringOption(option =>
+							option.setName('guild_tag')
+								.setDescription('The tag of the guild to make an offer to.')
+								.setRequired(true)
+								.setAutocomplete(true))
+						.addIntegerOption(option =>
+							option.setName('duration_days')
+								.setDescription('For truces, the duration in days (e.g., 7).')))
+				.addSubcommand(subcommand =>
+					subcommand
+						.setName('declare_enemy')
+						.setDescription('Declare another guild as your official enemy.')
+						.addStringOption(option =>
+							option.setName('guild_tag')
+								.setDescription('The tag of the guild to declare as an enemy.')
+								.setRequired(true)
+								.setAutocomplete(true)))
+				.addSubcommand(subcommand =>
+					subcommand
+						.setName('withdraw')
+						.setDescription('End an enemy declaration.')
+						.addStringOption(option =>
+							option.setName('guild_tag')
+								.setDescription('The tag of the guild to withdraw a relationship from.')
+								.setRequired(true)
+								.setAutocomplete(true)))
+				.addSubcommand(subcommand =>
+					subcommand
+						.setName('break')
+						.setDescription('Unilaterally break an alliance with another guild.')
+						.addStringOption(option =>
+							option.setName('guild_tag')
+								.setDescription('The tag of the guild to break the alliance with.')
+								.setRequired(true)
+								.setAutocomplete(true)))
+				.addSubcommand(subcommand =>
+					subcommand
+						.setName('view')
+						.setDescription('View all of your guild\'s current diplomatic relationships.'))),
 	async execute(interaction) {
 		if (interaction.isAutocomplete()) {
 			if (interaction.commandName === 'guild') {
 				const subcommand = interaction.options.getSubcommand();
+				const subcommandGroup = interaction.options.getSubcommandGroup(false);
 				if (subcommand === 'join') {
 					return handleJoinAutocomplete(interaction);
 				}
@@ -5134,7 +5629,10 @@ module.exports = {
 					return handleRaidAutocomplete(interaction);
 				}
 				else if (subcommand === 'fund') {
-					return handleFundAutocomplete(interaction);
+					return fetchAllGuildsByTagAutocomplete(interaction);
+				}
+				else if (subcommandGroup === 'diplomacy') {
+					return fetchAllGuildsByTagAutocomplete(interaction);
 				}
 			}
 			return;
@@ -5179,6 +5677,9 @@ module.exports = {
 
 		if (subcommandGroup === 'settings') {
 			await handleSettings(interaction, subcommand);
+		}
+		else if (subcommandGroup === 'diplomacy') {
+			await handleDiplomacy(interaction, subcommand);
 		}
 		else if (subcommandGroup === 'payout') {
 			if (subcommand === 'member') {

@@ -134,6 +134,7 @@ const setupTables = db.transaction(() => {
             lore TEXT DEFAULT '',
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             guildmember_title TEXT DEFAULT 'Member',
+            attitude TEXT DEFAULT 'Neutral'
             UNIQUE(guild_name)
         )
     `).run();
@@ -216,6 +217,44 @@ const setupTables = db.transaction(() => {
         )
     `).run();
 
+	// "Guild diplomacy and relationships" via /commands/utility/ @ [guild.js]
+
+	db.prepare(`
+		CREATE TABLE IF NOT EXISTS guild_relationships (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			guild_one_tag TEXT NOT NULL,
+			guild_two_tag TEXT NOT NULL,
+			status TEXT NOT NULL CHECK (status IN ('alliance', 'enemy', 'truce')),
+			initiator_tag TEXT NOT NULL,
+			expires_at TEXT,
+			created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY(guild_one_tag) REFERENCES guild_list(guild_tag) ON DELETE CASCADE,
+			FOREIGN KEY(guild_two_tag) REFERENCES guild_list(guild_tag) ON DELETE CASCADE,
+			UNIQUE(guild_one_tag, guild_two_tag)
+		)
+	`).run();
+
+	db.prepare(`
+		CREATE TABLE IF NOT EXISTS diplomacy_cooldowns (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			guild_one_tag TEXT NOT NULL,
+			guild_two_tag TEXT NOT NULL,
+			cooldown_type TEXT NOT NULL CHECK (cooldown_type IN ('enemy_declaration', 'alliance_break')),
+			expires_at TEXT NOT NULL,
+			FOREIGN KEY(guild_one_tag) REFERENCES guild_list(guild_tag) ON DELETE CASCADE,
+			FOREIGN KEY(guild_two_tag) REFERENCES guild_list(guild_tag) ON DELETE CASCADE,
+			UNIQUE(guild_one_tag, guild_two_tag, cooldown_type)
+		)
+	`).run();
+
+	db.prepare(`
+		CREATE TABLE IF NOT EXISTS attitude_cooldowns (
+			guild_tag TEXT PRIMARY KEY,
+			changed_at TEXT NOT NULL,
+			FOREIGN KEY(guild_tag) REFERENCES guild_list(guild_tag) ON DELETE CASCADE
+		)
+	`).run();
+
 	// "Guild raiding backend" via /commands/utility/ @ [guild.js]
 
 	db.prepare(`
@@ -227,6 +266,7 @@ const setupTables = db.transaction(() => {
             success INTEGER NOT NULL,
             stolen_amount INTEGER,
             lost_amount INTEGER,
+            wager_pot INTEGER DEFAULT 0,
             attacker_roll INTEGER,
             defender_ac INTEGER,
             attacker_allies TEXT,
@@ -525,6 +565,32 @@ const setupTables = db.transaction(() => {
 });
 
 setupTables();
+
+try {
+	db.prepare(`
+			ALTER TABLE guild_list
+			ADD COLUMN attitude TEXT DEFAULT 'Neutral'
+		`).run();
+	console.log('[DB Migration] Successfully added "attitude" column to guild_list table.');
+}
+catch (error) {
+	if (!error.message.includes('duplicate column name')) {
+		console.error('[DB Migration] Failed to add "attitude" column:', error);
+	}
+}
+
+try {
+	db.prepare(`
+        ALTER TABLE raid_history
+        ADD COLUMN wager_pot INTEGER DEFAULT 0
+    `).run();
+	console.log('[DB Migration] Successfully added "wager_pot" column to raid_history table.');
+}
+catch (error) {
+	if (!error.message.includes('duplicate column name')) {
+		console.error('[DB Migration] Failed to add "wager_pot" column:', error);
+	}
+}
 
 module.exports = db;
 module.exports.JACKPOT_BASE_AMOUNT = JACKPOT_BASE_AMOUNT;

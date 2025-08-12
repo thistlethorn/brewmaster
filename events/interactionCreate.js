@@ -344,6 +344,9 @@ module.exports = {
 						else if (interaction.customId.startsWith('shield_confirm_')) {
 							await guildCommand.buttons.handleShieldConfirmation(interaction);
 						}
+						else if (interaction.customId.startsWith('guild_diplomacy_')) {
+							await guildCommand.buttons.handleDiplomacyResponse(interaction);
+						}
 						else if (interaction.customId.startsWith('fundraise_')) {
 							await guildCommand.buttons.handleFundraiseButton(interaction);
 						}
