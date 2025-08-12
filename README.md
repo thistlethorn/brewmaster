@@ -1,6 +1,6 @@
 # Brewmaster Discord Bot
 
-Brewmaster is a custom-coded, multifunctional Discord.js bot designed exclusively for the **Westwind Tavern**... ahem, shall I call it, *Tony's* palace. While the wires underneath lead him to be called Brewmaster, the frontman running the show up top is **Tony "Meatball", the Brewmaster**. He's a friendly tavern keeper, if a bit... direct. As he'd say, *"Listen up, folks: We got rules, we got games, and we got opportunities. Don't be a stranger, capisce?"*
+Brewmaster is a custom-coded, multifunctional Discord.js bot designed exclusively for the **Westwind Tavern**... ahem, shall I call it, *Tony's* palace. While the wires underneath lead him to be called Brewmaster, the frontman running the show up top is **Tony, the Brewmaster of Westwind Tavern**. He's quite a friendly tavern keeper, if a bit... direct. As he'd say, *"Listen up, folks: We got rules, we got games, and we got opportunities. Don't be a stranger, capisce?"*
 
 Tony's primary goal as the Brewmaster for Westwind Tavern: Creating a dynamic, engaging, and rewarding experience for all server members by integrating unique economy, guild warfare, and character progression systems directly into the Discord environment.
 
@@ -25,7 +25,7 @@ Brewmaster is packed with features designed to enrich the Westwind Tavern commun
 
 ### 🏰 Guild System (AKA Tony's World)
 Well, you heard it here first, folks. In the server, you'll need a guild to help yourself earn more money on the daily, boost yourself with passive income, and create alliances with all the right people. Forge your own destiny by creating or joining a guild. This system is the cornerstone of the server's social and competitive structure.
-*   **Create & Customize**: Found your own guild with a unique name, tag, motto, and description. Just don't get any funny ideas. The Brewmaster sees all. *"Whoa woah woah pal, that right there's got some 'words' we uh, keep off the books. Let's try somethin’ a lil' classier, alright? Alright."*
+*   **Create & Customize**: Found your own guild with a unique name, tag, motto, and lore. Just don't get any funny ideas. The Brewmaster sees all. *"Whoa woah woah pal, that right there's got some 'words' we uh, keep off the books. Let's try somethin’ a lil' classier, alright? Alright."*
 *   **Recruit & Manage**: Invite members, promote a Vice-Guildmaster, and manage your roster. Can't invite people if you're not in a crew yourself, though. *"Bud, ya can't be sellin' rooms in a house that don't exist. How's 'bout I set you up with a nice guild here, then you can do with the invitations."*
 *   **Warfare & Alliances**: Declare war on rival guilds, initiate raids to plunder their treasury, purchase shields for defense, and forge alliances.
 *   **Upgrade & Prosper**: Use your guild's funds to upgrade its Tier, unlocking powerful benefits, better defenses, and higher compound interest on your vault. On top of that, you start off with one free guild emoji and guild sticker slot, and you can earn more by upgrading your tier! Go find your place and represent your clan!
@@ -33,7 +33,7 @@ Well, you heard it here first, folks. In the server, you'll need a guild to help
 ### 💰 Economy System
 In 'Tony's establishment', Crowns (👑) are king.
 *   **Earn Crowns**:
-    *   Claim a daily reward with `/econ daily`.
+    *   Claim a daily reward with `/econ daily` and build a streak for prestige bonuses.
     *   Build a `/bump` streak for the server.
     *   Become an `Active Chatter` by participating in conversations.
     *   Be the first to welcome new members.
@@ -42,7 +42,13 @@ In 'Tony's establishment', Crowns (👑) are king.
     *   Fund your guild to pay for upgrades and shields.
     *   Pay other users.
     *   Gamble at The Weary Wager.
-    *   Purchase vanity roles and other server perks.
+    *   Submit custom quotes for Tony to say.
+
+### 💬 Tony Quote System
+Make the Brewmaster your own personal mouthpiece. Members can spend Crowns to submit custom quotes for Tony to say in chat, making the bot a living, breathing part of the community.
+*   **Trigger Quotes**: Submit a quote tied to a specific keyword. When someone says the word, Tony has a chance to reply with your quote, earning you Crowns!
+*   **Idle Chatter**: Submit a random phrase or joke. Tony will periodically say these in chat during quiet moments, keeping the tavern lively and earning you a small reward.
+*   **Approval System**: All quotes are submitted to the Innkeepers (moderators) for approval, ensuring everything stays in character and appropriate for the Tavern.
 
 ### 🎲 The Weary Wager (Gambling)
 Feeling lucky? Visit Greg, one of Tony's dealers (card dealer) at The Weary Wager, for a variety of games of chance. Just don't try to pull a fast one. Not because you'd get caught, but because Greg's not paid enough to deal with it and is overworked enough as it.
@@ -73,6 +79,7 @@ Here is a list of the primary commands available for Brewmaster. For detailed in
 | **/econ** | Manage your Crowns, claim dailies, pay users, and view leaderboards. |
 | **/guild** | The central command for all guild-related actions: create, manage, raid, upgrade, etc. |
 | **/gamble** | Play games of chance like Blackjack, Poker, Slots, and Coinflip. |
+| **/tonyquote**| Submit and manage your custom quotes for Tony to say in the server. |
 | **/pin** | Allows Section DMs and Guildmasters to pin important messages in their channels. |
 
 ---
@@ -89,12 +96,14 @@ Here is a list of the primary commands available for Brewmaster. For detailed in
 ```
 /
 ├── commands/
+│ ├── admin/
 │ └── utility/
 │ │ ├── econ.js
 │ │ ├── gamble.js
 │ │ ├── guild.js
 │ │ ├── help.js
-│ │ └── pin.js
+│ │ ├── pin.js
+│ │ └── tonyQuote.js
 ├── events/
 │ ├── guildMemberAdd.js
 │ ├── interactionCreate.js
@@ -104,6 +113,8 @@ Here is a list of the primary commands available for Brewmaster. For detailed in
 │ ├── bumpReminder.js
 │ ├── dailyReminder.js
 │ ├── dailyReset.js
+│ ├── idleChatter.js
+│ ├── tempRoleManager.js
 │ └── weeklyReset.js
 ├── utils/
 │ ├── chatFilters.js
@@ -113,6 +124,7 @@ Here is a list of the primary commands available for Brewmaster. For detailed in
 │ ├── handleCrownRewards.js
 │ ├── handleMotwGiveaway.js
 │ ├── sendMessageToChannel.js
+│ ├── tonyDialogue.js
 │ └── updateLeaderboard.js
 ├── bump_data.db
 ├── database.js
