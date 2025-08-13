@@ -25,6 +25,7 @@ const {
 const { getTonyQuote } = require('../../utils/tonyDialogue.js');
 const { getTierBenefits, getTierData } = require('../../utils/getTierBenefits');
 const { scheduleRoleRemoval } = require('../../tasks/tempRoleManager');
+const { updateMultiplier } = require('../../utils/handleCrownRewards');
 
 const TIER_DATA = getTierData();
 const tierEmojis = arrayTierEmoji();
@@ -3225,13 +3226,12 @@ async function handleRaid(interaction) {
 				}
 			}
 		}
-		const cooldown = db.prepare('SELECT * FROM diplomacy_cooldowns WHERE guild_one_tag = ? AND guild_two_tag = ?').get(tags[0], tags[1]);
+		const cooldown = db.prepare('SELECT expires_at FROM diplomacy_cooldowns WHERE guild_one_tag = ? AND guild_two_tag = ? AND cooldown_type = ?').get(tags[0], tags[1], 'alliance_break');
 		if (cooldown && new Date(cooldown.expires_at) > new Date()) {
-			if (cooldown.cooldown_type === 'alliance_break') {
-				errorEmbed.setDescription(`You cannot raid this guild. A recently broken alliance has a non-aggression pact that ends <t:${Math.floor(new Date(cooldown.expires_at).getTime() / 1000)}:R>.`);
-				return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
-			}
+			errorEmbed.setDescription(`You cannot raid this guild. A recently broken alliance has a non-aggression pact that ends <t:${Math.floor(new Date(cooldown.expires_at).getTime() / 1000)}:R>.`);
+			return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 		}
+
 	}
 	// Check if user is in a guild
 	const attackerGuild = db.prepare(`
