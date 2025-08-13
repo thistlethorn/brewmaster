@@ -3127,6 +3127,77 @@ async function handleInfoAutocomplete(interaction) {
 		})),
 	);
 }
+
+/**
+ * Notifies relevant guilds (allies/enemies) about a new raid.
+ * @param {import('discord.js').Interaction} interaction The interaction object.
+ * @param {string} raidId The ID of the raid history record.
+ * @param {object} attackerData The attacker's guild data.
+ * @param {object} defenderData The defender's guild data.
+ */
+async function notifyAlliesAndEnemies(interaction, raidId, attackerData, defenderData) {
+	const attackerTag = attackerData.guild_tag;
+	const defenderTag = defenderData.guild_tag;
+
+	// Find allies of the defender
+	const defenderAllies = db.prepare(`
+        SELECT
+            CASE WHEN guild_one_tag = ? THEN guild_two_tag ELSE guild_one_tag END as ally_tag,
+            (SELECT public_channel_id FROM guild_list WHERE guild_tag = ally_tag) as channel_id,
+            (SELECT role_id FROM guild_list WHERE guild_tag = ally_tag) as role_id
+        FROM guild_relationships
+        WHERE (guild_one_tag = ? OR guild_two_tag = ?) AND status = 'alliance'
+    `).all(defenderTag, defenderTag, defenderTag);
+
+	// Find enemies of the attacker
+	const attackerEnemies = db.prepare(`
+        SELECT
+            CASE WHEN guild_one_tag = ? THEN guild_two_tag ELSE guild_one_tag END as enemy_tag,
+            (SELECT public_channel_id FROM guild_list WHERE guild_tag = enemy_tag) as channel_id,
+            (SELECT role_id FROM guild_list WHERE guild_tag = enemy_tag) as role_id
+        FROM guild_relationships
+        WHERE (guild_one_tag = ? OR guild_two_tag = ?) AND status = 'enemy'
+    `).all(attackerTag, attackerTag, attackerTag);
+
+	const callToArmsRow = new ActionRowBuilder().addComponents(
+		new ButtonBuilder().setCustomId(`join_attack_${raidId}`).setLabel('Join Attack').setStyle(ButtonStyle.Danger).setEmoji('⚔️'),
+		new ButtonBuilder().setCustomId(`aid_defence_${raidId}`).setLabel('Aid Defense').setStyle(ButtonStyle.Success).setEmoji('🛡️'),
+	);
+
+	// Send notifications
+	for (const ally of defenderAllies) {
+		if (ally.channel_id) {
+			const embed = new EmbedBuilder()
+				.setColor(0x3498DB)
+				.setTitle('🛡️ Call to Arms! 🛡️')
+				.setDescription(`Your ally, **${defenderData.guild_name}**, is under attack by **${attackerData.guild_name}**! Your aid is requested in their public channel: <#${defenderData.public_channel_id}>`);
+			try {
+				const channel = await interaction.client.channels.fetch(ally.channel_id);
+				await channel.send({ content: `<@&${ally.role_id}>`, embeds: [embed], components: [callToArmsRow] });
+			}
+			catch (e) {
+				console.error(`Failed to notify ally ${ally.ally_tag}:`, e);
+			}
+		}
+	}
+
+	for (const enemy of attackerEnemies) {
+		if (enemy.channel_id) {
+			const embed = new EmbedBuilder()
+				.setColor(0xC0392B)
+				.setTitle('⚔️ Opportunity Strikes! ⚔️')
+				.setDescription(`Your enemy, **${attackerData.guild_name}**, has declared war on **${defenderData.guild_name}**! Now is your chance to join the fray in their public channel: <#${defenderData.public_channel_id}>`);
+			try {
+				const channel = await interaction.client.channels.fetch(enemy.channel_id);
+				await channel.send({ content: `<@&${enemy.role_id}>`, embeds: [embed], components: [callToArmsRow] });
+			}
+			catch (e) {
+				console.error(`Failed to notify enemy ${enemy.enemy_tag}:`, e);
+			}
+		}
+	}
+}
+
 async function handleRaidStats(interaction) {
 	try {
 		// Top raiders
@@ -3543,6 +3614,42 @@ function getTierPowerBonus(tier) {
 	if (tier >= 4) return 2;
 	return 1;
 }
+
+/**
+ * Calculates the chance of a cataclysmic failure based on the defending coalition.
+ * @param {object} primaryDefender - The main defending guild.
+ * @param {Array<object>} defendingAllies - An array of allied defending guilds.
+ * @returns {{chance: number, triggeredBy: string|null}} - The final chance (0-1) and the name of the guild that triggered it.
+ */
+function calculateCataclysmicFailureChance(primaryDefender, defendingAllies) {
+	let highestChance = 0;
+	let triggeredBy = null;
+
+	// Check the primary defender first
+	if (primaryDefender && primaryDefender.attitude === 'Defensive') {
+		const rank = Math.floor((primaryDefender.tier - 1) / 3);
+		// 0-4 for Stone-Adamantium
+		highestChance = (rank + 1) * 0.04;
+		// 4% per rank
+		triggeredBy = primaryDefender.guild_name;
+	}
+
+	// Now check allies to see if any have a higher chance
+	for (const ally of defendingAllies) {
+		if (ally && ally.attitude === 'Defensive') {
+			const rank = Math.floor((ally.tier - 1) / 3);
+			const allyChance = (rank + 1) * 0.02;
+			// 2% per rank for allies
+			if (allyChance > highestChance) {
+				highestChance = allyChance;
+				triggeredBy = ally.guild_name;
+			}
+		}
+	}
+
+	return { chance: highestChance, triggeredBy };
+}
+
 async function resolveBattleSequentially(interaction, warMessage, raidId, attackerTag, defenderTag) {
 	console.log(`[Raid Resolution] Collector ended for raid ID ${raidId}. Starting battle resolution.`);
 
@@ -3603,8 +3710,19 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 			// Shared cooldown logic for forfeits
 			const shieldExpiry = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
 			db.prepare('INSERT INTO raid_cooldowns (guild_tag, shield_expiry) VALUES (?, ?) ON CONFLICT(guild_tag) DO UPDATE SET shield_expiry = ?').run(defenderTag, shieldExpiry, shieldExpiry);
-			const attackerLastRaid = now.toISOString();
-			db.prepare('INSERT INTO raid_cooldowns (guild_tag, last_raid_time) VALUES (?, ?) ON CONFLICT(guild_tag) DO UPDATE SET last_raid_time = ?').run(attackerTag, attackerLastRaid, attackerLastRaid);
+			const attackerAttitude = db.prepare('SELECT attitude FROM guild_list WHERE guild_tag = ?').get(attackerTag)?.attitude;
+			let raidCooldownMs = 24 * 60 * 60 * 1000;
+			if (attackerAttitude === 'Aggressive') {
+				const tier = finalAttackerData.tier;
+				let reductionHours = 4;
+				if (tier >= 13) reductionHours = 20;
+				else if (tier >= 10) reductionHours = 16;
+				else if (tier >= 7) reductionHours = 12;
+				else if (tier >= 4) reductionHours = 8;
+				raidCooldownMs -= reductionHours * 60 * 60 * 1000;
+			}
+			const attackerNextRaid = new Date(now.getTime() + raidCooldownMs);
+			db.prepare('INSERT INTO raid_cooldowns (guild_tag, last_raid_time) VALUES (?, ?) ON CONFLICT(guild_tag) DO UPDATE SET last_raid_time = ?').run(attackerTag, attackerNextRaid, attackerNextRaid);
 			await sendGuildAnnouncement(interaction.client, announceEmbed);
 			await warMessage.edit({ embeds: [resultEmbed], components: [] });
 			return;
@@ -3639,40 +3757,14 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 		};
 
 		// 2. Pre-Battle Checks & Final Calculations
-		let cataclysmicFailure = false;
-		let defensiveGuildTrigger = null;
-
-		// Check primary defender's attitude
-		const defensivePrimary = db.prepare('SELECT attitude, tier, guild_name FROM guild_list WHERE guild_tag = ?').get(defenderTag);
-		let highestChance = 0;
-
-		if (defensivePrimary && defensivePrimary.attitude === 'Defensive') {
-			// 0-4 for Stone-Adamantium
-			const rank = Math.floor((defensivePrimary.tier - 1) / 3);
-
-			// 4% per rank for primary defender
-			highestChance = (rank + 1) * 0.04;
-			defensiveGuildTrigger = { name: defensivePrimary.guild_name, chance: highestChance };
-		}
-
-		// Check defending allies for a higher chance
-		const defensiveAllies = defendingParticipants
+		const primaryDefenderForCheck = db.prepare('SELECT attitude, tier, guild_name FROM guild_list WHERE guild_tag = ?').get(defenderTag);
+		const defendingAlliesForCheck = defendingParticipants
 			.map(p => db.prepare('SELECT guild_name, attitude, tier FROM guild_list WHERE guild_tag = ?').get(p.allied_guild_tag))
-			.filter(g => g && g.attitude === 'Defensive');
+			.filter(g => g);
+		// Filter out any nulls if a guild was deleted mid-raid
 
-		for (const ally of defensiveAllies) {
-			const rank = Math.floor((ally.tier - 1) / 3);
-			// 2% per rank for supporting defender
-			const chance = (rank + 1) * 0.02;
-			if (chance > highestChance) {
-				highestChance = chance;
-				defensiveGuildTrigger = { name: ally.guild_name, chance: highestChance };
-			}
-		}
-
-		if (defensiveGuildTrigger && Math.random() < defensiveGuildTrigger.chance) {
-			cataclysmicFailure = true;
-		}
+		const failureCheck = calculateCataclysmicFailureChance(primaryDefenderForCheck, defendingAlliesForCheck);
+		const cataclysmicFailure = Math.random() < failureCheck.chance;
 
 		// --- Standard Battle Calculation ---
 		let modifier = 0;
@@ -3988,8 +4080,19 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 		db.prepare('UPDATE raid_history SET success = ?, stolen_amount = ?, attacker_roll = ?, defender_ac = ?, attacker_allies = ?, defender_allies = ? WHERE id = ?').run(success ? 1 : 0, success ? netLoot : defenderGain, finalAttackPower, defenderBasePower, attackingParticipants.map(a => a.allied_guild_tag).join(','), defendingParticipants.map(a => a.allied_guild_tag).join(','), raidId);
 		const shieldExpiry = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
 		db.prepare('INSERT INTO raid_cooldowns (guild_tag, shield_expiry) VALUES (?, ?) ON CONFLICT(guild_tag) DO UPDATE SET shield_expiry = ?').run(defenderTag, shieldExpiry, shieldExpiry);
-		const attackerLastRaid = now.toISOString();
-		db.prepare('INSERT INTO raid_cooldowns (guild_tag, last_raid_time) VALUES (?, ?) ON CONFLICT(guild_tag) DO UPDATE SET last_raid_time = ?').run(attackerTag, attackerLastRaid, attackerLastRaid);
+		const attackerAttitude = db.prepare('SELECT attitude FROM guild_list WHERE guild_tag = ?').get(attackerTag)?.attitude;
+		let raidCooldownMs = 24 * 60 * 60 * 1000;
+		if (attackerAttitude === 'Aggressive') {
+			const tier = finalAttackerData.tier;
+			let reductionHours = 4;
+			if (tier >= 13) reductionHours = 20;
+			else if (tier >= 10) reductionHours = 16;
+			else if (tier >= 7) reductionHours = 12;
+			else if (tier >= 4) reductionHours = 8;
+			raidCooldownMs -= reductionHours * 60 * 60 * 1000;
+		}
+		const attackerNextRaid = new Date(now.getTime() + raidCooldownMs);
+		db.prepare('INSERT INTO raid_cooldowns (guild_tag, last_raid_time) VALUES (?, ?) ON CONFLICT(guild_tag) DO UPDATE SET last_raid_time = ?').run(attackerTag, attackerNextRaid, attackerNextRaid);
 
 		// Global Announcement
 		await sendGuildAnnouncement(interaction.client, announceEmbed);
@@ -4916,6 +5019,14 @@ module.exports = {
 				});
 				console.log(`[RAID CONFIRM] War message sent with ID ${warMessage.id}`);
 
+				try {
+					await notifyAlliesAndEnemies(interaction, raidId, attackerData, defenderData);
+					console.log('[RAID CONFIRM] Sent notifications to allies and enemies.');
+				}
+				catch (e) {
+					console.error('[RAID CONFIRM] Failed to send notifications:', e);
+				}
+
 				const collector = warMessage.createMessageComponentCollector({ time: ALLIANCE_RAID_DURATION_MS });
 				console.log('[RAID CONFIRM] Collector created');
 
@@ -5718,3 +5829,5 @@ module.exports = {
 	},
 
 };
+
+module.exports.calculateCataclysmicFailureChance = calculateCataclysmicFailureChance;

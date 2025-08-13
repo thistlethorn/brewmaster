@@ -320,16 +320,16 @@ async function handleDaily(interaction) {
 	// it will instead try to UPDATE. The UPDATE only succeeds if the WHERE condition is met,
 	// making the cooldown check atomic.
 	const stmt = db.prepare(`
-        INSERT INTO user_economy (user_id, crowns, last_daily, multiplier, daily_streak, daily_prestige)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(user_id) DO UPDATE SET
-            crowns = crowns + ?,
-            last_daily = ?,
-            multiplier = ?,
-            daily_streak = ?,
-            daily_prestige = ?
-        WHERE (strftime('%s', ?) - strftime('%s', user_economy.last_daily)) >= 86400
-    `);
+		INSERT INTO user_economy (user_id, crowns, last_daily, multiplier, daily_streak, daily_prestige)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(user_id) DO UPDATE SET
+			crowns = crowns + ?,
+			last_daily = ?,
+			multiplier = ?,
+			daily_streak = ?,
+			daily_prestige = ?
+		WHERE user_economy.last_daily IS NULL OR (strftime('%s', ?) - strftime('%s', user_economy.last_daily)) >= 86400
+	`);
 
 	const info = stmt.run(
 		// For INSERT
