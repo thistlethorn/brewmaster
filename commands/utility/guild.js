@@ -3656,8 +3656,8 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 	try {
 		console.log(`[Raid Resolution LOG] [${raidId}] Starting battle resolution function.`);
 		// --- DATA FETCHING ---
-		const finalAttackerData = db.prepare('SELECT gl.guild_name, gl.role_id, COALESCE(gt.tier, 1) as tier, ge.balance FROM guild_list gl LEFT JOIN guild_tiers gt ON gl.guild_tag = gt.guild_tag LEFT JOIN guild_economy ge ON gl.guild_tag = ge.guild_tag WHERE gl.guild_tag = ?').get(attackerTag);
-		const finalDefenderData = db.prepare('SELECT gl.guild_name, gl.public_channel_id, gl.role_id, COALESCE(gt.tier, 1) as tier, ge.balance FROM guild_list gl LEFT JOIN guild_tiers gt ON gl.guild_tag = gt.guild_tag LEFT JOIN guild_economy ge ON gl.guild_tag = ge.guild_tag WHERE gl.guild_tag = ?').get(defenderTag);
+		const finalAttackerData = db.prepare('SELECT gl.guild_name, gl.role_id, gl.attitude, COALESCE(gt.tier, 1) as tier, ge.balance FROM guild_list gl LEFT JOIN guild_tiers gt ON gl.guild_tag = gt.guild_tag LEFT JOIN guild_economy ge ON gl.guild_tag = ge.guild_tag WHERE gl.guild_tag = ?').get(attackerTag);
+		const finalDefenderData = db.prepare('SELECT gl.guild_name, gl.public_channel_id, gl.role_id, gl.attitude, COALESCE(gt.tier, 1) as tier, ge.balance FROM guild_list gl LEFT JOIN guild_tiers gt ON gl.guild_tag = gt.guild_tag LEFT JOIN guild_economy ge ON gl.guild_tag = ge.guild_tag WHERE gl.guild_tag = ?').get(defenderTag);
 		const allParticipants = db.prepare('SELECT ara.side, gl.guild_name, gl.role_id, gt.tier, ara.allied_guild_tag FROM active_raid_allies ara JOIN guild_list gl ON ara.allied_guild_tag = gl.guild_tag LEFT JOIN guild_tiers gt ON ara.allied_guild_tag = gt.guild_tag WHERE ara.raid_id = ?').all(raidId);
 		const attackingParticipants = allParticipants.filter(a => a.side === 'attacker');
 		const defendingParticipants = allParticipants.filter(a => a.side === 'defender');
@@ -3690,13 +3690,12 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 				db.prepare('UPDATE raid_history SET success = 0, stolen_amount = ? WHERE id = ?').run(defenderGain, raidId);
 			}
 			else {
-				const isVulnerable = finalDefenderData.balance < 200;
+				const isVulnerable = finalDefenderData.balance < GUILD_VULNERABILITY_THRESHOLD;
 				const defenderTierInfo = TIER_DATA[finalDefenderData.tier - 1];
-				const maxStolenPercent = isVulnerable ? 25 : defenderTierInfo.stolen;
+				const maxStolenPercent = isVulnerable ? GUILD_RAID_MAX_STOLEN_PERCENT : defenderTierInfo.stolen;
 				const stolenFromGuild = Math.floor((finalDefenderData.balance || 0) * (maxStolenPercent / 100));
 				db.transaction(() => {
 					db.prepare('UPDATE guild_economy SET balance = balance - ? WHERE guild_tag = ?').run(stolenFromGuild, defenderTag);
-					// In a forfeit, the sole attacker gets all the loot
 					db.prepare('UPDATE guild_economy SET balance = balance + ? WHERE guild_tag = ?').run(stolenFromGuild, attackerTag);
 				})();
 				await checkAndDestroyGuildOnRaid(defenderTag, attackerTag, interaction);
@@ -3710,19 +3709,24 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 			// Shared cooldown logic for forfeits
 			const shieldExpiry = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
 			db.prepare('INSERT INTO raid_cooldowns (guild_tag, shield_expiry) VALUES (?, ?) ON CONFLICT(guild_tag) DO UPDATE SET shield_expiry = ?').run(defenderTag, shieldExpiry, shieldExpiry);
-			const attackerAttitude = db.prepare('SELECT attitude FROM guild_list WHERE guild_tag = ?').get(attackerTag)?.attitude;
+
+			// AGGRESSIVE COOLDOWN LOGIC (FORFEIT)
+			const attackerAttitude = finalAttackerData.attitude;
 			let raidCooldownMs = 24 * 60 * 60 * 1000;
+			// 24 hours default
+
 			if (attackerAttitude === 'Aggressive') {
 				const tier = finalAttackerData.tier;
-				let reductionHours = 4;
-				if (tier >= 13) reductionHours = 20;
-				else if (tier >= 10) reductionHours = 16;
-				else if (tier >= 7) reductionHours = 12;
-				else if (tier >= 4) reductionHours = 8;
+				let reductionHours = 0;
+				if (tier >= 13) reductionHours = 16;
+				else if (tier >= 10) reductionHours = 12;
+				else if (tier >= 7) reductionHours = 8;
+				else if (tier >= 4) reductionHours = 4;
 				raidCooldownMs -= reductionHours * 60 * 60 * 1000;
 			}
 			const attackerNextRaid = new Date(now.getTime() + raidCooldownMs);
 			db.prepare('INSERT INTO raid_cooldowns (guild_tag, last_raid_time) VALUES (?, ?) ON CONFLICT(guild_tag) DO UPDATE SET last_raid_time = ?').run(attackerTag, attackerNextRaid, attackerNextRaid);
+
 			await sendGuildAnnouncement(interaction.client, announceEmbed);
 			await warMessage.edit({ embeds: [resultEmbed], components: [] });
 			return;
@@ -3756,142 +3760,121 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 			return result;
 		};
 
-		// 2. Pre-Battle Checks & Final Calculations
 		const primaryDefenderForCheck = db.prepare('SELECT attitude, tier, guild_name FROM guild_list WHERE guild_tag = ?').get(defenderTag);
-		const defendingAlliesForCheck = defendingParticipants
-			.map(p => db.prepare('SELECT guild_name, attitude, tier FROM guild_list WHERE guild_tag = ?').get(p.allied_guild_tag))
-			.filter(g => g);
-		// Filter out any nulls if a guild was deleted mid-raid
+		const defendingAlliesForCheck = defendingParticipants.map(p => db.prepare('SELECT guild_name, attitude, tier FROM guild_list WHERE guild_tag = ?').get(p.allied_guild_tag)).filter(g => g);
 
 		const failureCheck = calculateCataclysmicFailureChance(primaryDefenderForCheck, defendingAlliesForCheck);
 		const cataclysmicFailure = Math.random() < failureCheck.chance;
 
-		// --- Standard Battle Calculation ---
-		let modifier = 0;
-		let attackerModifierText = '';
+		// --- Attitude & Combat Modifier Calculations ---
+		let attackModifier = 0;
+		let defenseModifier = 0;
+		let attitudeAttackerText = '';
+		let attitudeDefenderText = '';
 
-		// Enemy bonus check
-		const sortedTags = [attackerTag, defenderTag].sort();
-		const relationship = db.prepare('SELECT status FROM guild_relationships WHERE guild_one_tag = ? AND guild_two_tag = ?').get(sortedTags[0], sortedTags[1]);
-		if (relationship?.status === 'enemy') {
-			modifier += 1;
-			attackerModifierText += '- `+1` (Grudge Bonus - Attacking Enemy)\n';
+		const isNeutralDefender = finalDefenderData.attitude === 'Neutral';
+
+		// 1. Calculate Attitude Bonuses for all participants
+		if (!isNeutralDefender) {
+			for (const participant of allParticipants) {
+				const attitude = db.prepare('SELECT attitude FROM guild_list WHERE guild_tag = ?').get(participant.allied_guild_tag)?.attitude;
+				if (participant.side === 'attacker') {
+					if (attitude === 'Aggressive') {
+						attackModifier += 1;
+						attitudeAttackerText += `- \`+1\` (${participant.guild_name} - Aggressive Buff)\n`;
+					}
+					else if (attitude === 'Opportunist' && Math.random() < 0.5) {
+						// Debuff opposing side
+						defenseModifier -= 1;
+						attitudeDefenderText += `- \`-1\` (${participant.guild_name} - Opportunist 50% Chance)\n`;
+					}
+				}
+				else if (participant.side !== 'attacker') {
+					if (attitude === 'Defensive') {
+						defenseModifier += 1;
+						attitudeDefenderText += `- \`+1\` (${participant.guild_name} - Defensive Buff)\n`;
+					}
+					else if (attitude === 'Opportunist' && Math.random() < 0.5) {
+						// Debuff opposing side
+						attackModifier -= 1;
+						attitudeAttackerText += `- \`-1\` (${participant.guild_name} - Opportunist 50% Chance)\n`;
+					}
+				}
+
+			}
+		}
+		else {
+			attitudeAttackerText += '- `±0` (Defender is Neutral)\n';
+			attitudeDefenderText += '- `±0` (Defender is Neutral)\n';
 		}
 
-		// Tier difference bonus/penalty
+		// 2. Add standard tier-difference modifiers
 		if (finalAttackerData.tier > finalDefenderData.tier) {
-			modifier -= 4;
-			attackerModifierText += '- `-4` (Bully Penalty - Attacking Lower Tier)\n';
+			attackModifier -= 4;
+			attitudeAttackerText += '- `-4` (Bully Penalty)\n';
 		}
 		else if (finalAttackerData.tier < finalDefenderData.tier) {
-			modifier += 3;
-			attackerModifierText += '- `+3` (Kingslayer Bonus - Attacking Higher Tier)\n';
+			attackModifier += 3;
+			attitudeAttackerText += '- `+3` (Kingslayer Bonus)\n';
 		}
 
+		// 3. Final Power Calculation
 		const attackerRoll = Math.floor(Math.random() * 20) + 1;
 		const attackerBasePower = getTierPowerBonus(finalAttackerData.tier);
 		const defenderBasePower = TIER_DATA[finalDefenderData.tier - 1].ac;
 
-		const attackerAllyPower = attackingParticipants
-			.filter(p => p.allied_guild_tag !== attackerTag)
-			.reduce((sum, ally) => sum + getTierPowerBonus(ally.tier), 0);
-		const defenderAllyPower = defendingParticipants
-			.filter(p => p.allied_guild_tag !== defenderTag)
-			.reduce((sum, ally) => sum + getTierPowerBonus(ally.tier), 0);
+		const attackerAllyPower = attackingParticipants.filter(p => p.allied_guild_tag !== attackerTag).reduce((sum, ally) => sum + getTierPowerBonus(ally.tier), 0);
+		const defenderAllyPower = defendingParticipants.filter(p => p.allied_guild_tag !== defenderTag).reduce((sum, ally) => sum + getTierPowerBonus(ally.tier), 0);
 
-		const finalAttackPower = attackerRoll + attackerBasePower + attackerAllyPower + modifier;
-		const attackerModifierTotal = finalAttackPower - attackerRoll;
-		const finalDefensePower = defenderBasePower + defenderAllyPower;
+		const finalAttackPower = attackerRoll + attackerBasePower + attackerAllyPower + attackModifier;
+		const finalDefensePower = defenderBasePower + defenderAllyPower + defenseModifier;
 
 		const success = cataclysmicFailure ? false : finalAttackPower >= finalDefensePower;
 
-		// Prepare text for the final result embed
-		const attackerTierList = attackingParticipants
-			.filter(p => p.allied_guild_tag !== attackerTag)
-			.map(p => `- \`+${getTierPowerBonus(p.tier)}\` (${p.guild_name} - Supporting Tier Bonus)`)
-			.join('\n');
-		const defenderTierList = defendingParticipants
-			.filter(p => p.allied_guild_tag !== defenderTag)
-			.map(p => `- \`+${getTierPowerBonus(p.tier)}\` (${p.guild_name} - Supporting Tier Bonus)`)
-			.join('\n');
+		// 4. Prepare text for the final result embed
+		const attackerAllyTierList = attackingParticipants.filter(p => p.allied_guild_tag !== attackerTag).map(p => `- \`+${getTierPowerBonus(p.tier)}\` (${p.guild_name} - Ally Tier)`).join('\n');
+		const defenderAllyTierList = defendingParticipants.filter(p => p.allied_guild_tag !== defenderTag).map(p => `- \`+${getTierPowerBonus(p.tier)}\` (${p.guild_name} - Ally Tier)`).join('\n');
 
-		attackerModifierText += `${attackerTierList}\n- \`+${attackerBasePower}\` (Base Tier Power of Attacking Guild)\n__**MODIFIERS TOTAL**__ = \`+${attackerModifierTotal}\``;
-		const defenderModifierText = `${defenderTierList}\n__**MODIFIERS TOTAL**__ = \`+${defenderAllyPower}\``;
-		// 3. Narrative Sequence with Separate Messages & Countdown Timers
+		const fullAttackerModifierText = `${attitudeAttackerText}${attackerAllyTierList}\n- \`+${attackerBasePower}\` (Base Tier Power)\n__**MODIFIERS TOTAL**__ = \`${finalAttackPower - attackerRoll}\``;
+		const fullDefenderModifierText = `${attitudeDefenderText}${defenderAllyTierList}\n__**MODIFIERS TOTAL**__ = \`${finalDefensePower - defenderBasePower}\``;
+
 		const NARRATIVE_DELAY_MS = 60000;
-
-		// Edit the original message to disable buttons and show the battle is starting
-		const battleStartEmbed = new EmbedBuilder(warMessage.embeds[0].data)
-			.setDescription('The time for talk is over! The battle begins now...');
+		const battleStartEmbed = new EmbedBuilder(warMessage.embeds[0].data).setDescription('The time for talk is over! The battle begins now...');
 		await warMessage.edit({ embeds: [battleStartEmbed], components: [] });
-
-		// Helper function to create a Discord timestamp for the future
 		const getNextActionTime = () => Math.floor((Date.now() + NARRATIVE_DELAY_MS) / 1000);
 
-		// Step 1: Attacker's Approach
 		let nextTime = getNextActionTime();
-		const raidingDescEmbed = new EmbedBuilder()
-			.setTitle('⚔️ Attacker\'s Approach: Amassing of the Army! ⚔️')
-			.setColor(0xE67E22)
-			.setDescription(replacePlaceholders(attackerMsgs.raiding_description || DEFAULT_RAID_MESSAGES.raiding_description))
-			.addFields(
-				{ name: 'Next Phase: Defender\'s Stance', value: `Starting <t:${nextTime}:R>`, inline: false },
-			)
-			.setFooter({ text: `⚔️ [${attackerTag}] vs. 🛡️ [${defenderTag}]` })
-			.setTimestamp();
+		const raidingDescEmbed = new EmbedBuilder().setTitle('⚔️ Attacker\'s Approach: Amassing of the Army! ⚔️').setColor(0xE67E22).setDescription(replacePlaceholders(attackerMsgs.raiding_description || DEFAULT_RAID_MESSAGES.raiding_description)).addFields({ name: 'Next Phase: Defender\'s Stance', value: `Starting <t:${nextTime}:R>` }).setFooter({ text: `⚔️ [${attackerTag}] vs. 🛡️ [${defenderTag}]` }).setTimestamp();
 		await warMessage.channel.send({ embeds: [raidingDescEmbed] });
 		await wait(NARRATIVE_DELAY_MS);
 
-		// Step 2: Defender's Stance
 		nextTime = getNextActionTime();
-		const defendingDescEmbed = new EmbedBuilder()
-			.setTitle('🛡️ Defender\'s Stance: Prepare for Siege! 🛡️')
-			.setColor(0x3498DB)
-			.setDescription(replacePlaceholders(defenderMsgs.defending_description || DEFAULT_RAID_MESSAGES.defending_description))
-			.addFields(
-				{ name: 'Next Phase: The Assault Begins', value: `Starting <t:${nextTime}:R>`, inline: false },
-			)
-			.setFooter({ text: `⚔️ [${attackerTag}] vs. 🛡️ [${defenderTag}]` })
-			.setTimestamp();
+		const defendingDescEmbed = new EmbedBuilder().setTitle('🛡️ Defender\'s Stance: Prepare for Siege! 🛡️').setColor(0x3498DB).setDescription(replacePlaceholders(defenderMsgs.defending_description || DEFAULT_RAID_MESSAGES.defending_description)).addFields({ name: 'Next Phase: The Assault Begins', value: `Starting <t:${nextTime}:R>` }).setFooter({ text: `⚔️ [${attackerTag}] vs. 🛡️ [${defenderTag}]` }).setTimestamp();
 		await warMessage.channel.send({ embeds: [defendingDescEmbed] });
 		await wait(NARRATIVE_DELAY_MS);
 
-		// Step 3: The Assault Begins
 		nextTime = getNextActionTime();
-		const attackEmbed = new EmbedBuilder()
-			.setColor(0xC0392B)
-			.setTitle('💥 The Assault Begins: Press the Advantage! 🤺')
-			.setDescription(replacePlaceholders(attackerMsgs.raiding_attack || DEFAULT_RAID_MESSAGES.raiding_attack))
-			.addFields(
-				{ name: 'Next Phase: Final Battle Outcome', value: `Starting <t:${nextTime}:R>`, inline: false },
-			)
-			.setFooter({ text: `⚔️ [${attackerTag}] vs. 🛡️ [${defenderTag}]` })
-			.setTimestamp();
+		const attackEmbed = new EmbedBuilder().setTitle('💥 The Assault Begins: Press the Advantage! 🤺').setColor(0xC0392B).setDescription(replacePlaceholders(attackerMsgs.raiding_attack || DEFAULT_RAID_MESSAGES.raiding_attack)).addFields({ name: 'Next Phase: Final Battle Outcome', value: `Starting <t:${nextTime}:R>` }).setFooter({ text: `⚔️ [${attackerTag}] vs. 🛡️ [${defenderTag}]` }).setTimestamp();
 		await warMessage.channel.send({ embeds: [attackEmbed] });
 		await wait(NARRATIVE_DELAY_MS);
 
-
-		// 4. Reveal Outcome and Finalize
 		let finalDescription, resultEmbed, announceEmbed, netLoot = 0, defenderGain = 0;
-		const attackerParticipantList = attackingParticipants
-			.map((p, index) => `> ${attackerEmojis[index]} <@&${p.role_id}> (${tierEmojis[(p.tier || 1) - 1]})`)
-			.join('\n');
-		const defenderParticipantList = defendingParticipants
-			.map((p, index) => `> ${defenderEmojis[index]} <@&${p.role_id}> (${tierEmojis[(p.tier || 1) - 1]})`)
-			.join('\n');
+		const attackerParticipantList = attackingParticipants.map((p, index) => `> ${attackerEmojis[index]} <@&${p.role_id}> (${tierEmojis[(p.tier || 1) - 1]})`).join('\n');
+		const defenderParticipantList = defendingParticipants.map((p, index) => `> ${defenderEmojis[index]} <@&${p.role_id}> (${tierEmojis[(p.tier || 1) - 1]})`).join('\n');
+
 		if (success) {
 			finalDescription = replacePlaceholders(defenderMsgs.defending_failure || DEFAULT_RAID_MESSAGES.defending_failure) + '\n\n' + replacePlaceholders(attackerMsgs.raiding_victory || DEFAULT_RAID_MESSAGES.raiding_victory);
 			await warMessage.channel.send({ embeds: [new EmbedBuilder().setColor(0x2ECC71).setDescription(finalDescription).setTitle('⚔️📜 Final Battle Outcome: Attackers are Triumphant! 💥🏚️').setFooter({ text: `⚔️ [${attackerTag}] vs. 🛡️ [${defenderTag}]` }).setTimestamp()] });
 			await wait(5000);
 
-			const isVulnerable = finalDefenderData.balance < 200;
+			const isVulnerable = finalDefenderData.balance < GUILD_VULNERABILITY_THRESHOLD;
 			const defenderTierInfo = TIER_DATA[finalDefenderData.tier - 1];
-			const maxStolenPercent = isVulnerable ? 25 : defenderTierInfo.stolen;
+			const maxStolenPercent = isVulnerable ? GUILD_RAID_MAX_STOLEN_PERCENT : defenderTierInfo.stolen;
 			const stolenFromGuild = Math.floor((finalDefenderData.balance || 0) * (maxStolenPercent / 100));
 			const defenderMembers = db.prepare('SELECT ue.user_id, ue.crowns FROM guildmember_tracking gmt LEFT JOIN user_economy ue ON gmt.user_id = ue.user_id WHERE gmt.guild_tag = ?').all(defenderTag);
 			let stolenFromMembers = 0;
 			defenderMembers.forEach(member => {
-				const stealAmount = isVulnerable ? Math.floor((member.crowns || 0) * 0.25) : Math.min(100, Math.floor((member.crowns || 0) * 0.05));
+				const stealAmount = isVulnerable ? Math.floor((member.crowns || 0) * (GUILD_RAID_MAX_STOLEN_PERCENT / 100)) : Math.min(GUILD_RAID_MAX_PER_MEMBER_CAP, Math.floor((member.crowns || 0) * (GUILD_RAID_MIN_PER_MEMBER_PERCENT / 100)));
 				if (stealAmount > 0) {
 					db.prepare('UPDATE user_economy SET crowns = crowns - ? WHERE user_id = ?').run(stealAmount, member.user_id);
 					stolenFromMembers += stealAmount;
@@ -3901,44 +3884,17 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 			const totalLoot = stolenFromGuild + stolenFromMembers;
 			const lostDuringEscape = Math.floor(totalLoot * (escapeLossPercent / 100));
 			netLoot = totalLoot - lostDuringEscape;
-			console.log(`[Raid Resolution LOG] [${raidId}] Loot calculated. Vault: ${stolenFromGuild}, Members: ${stolenFromMembers}, Total: ${totalLoot}, Net: ${netLoot}.`);
 
-			// --- Loot Distribution & Logging ---
 			db.transaction(() => {
 				if (stolenFromGuild > 0) db.prepare('UPDATE guild_economy SET balance = balance - ? WHERE guild_tag = ?').run(stolenFromGuild, defenderTag);
-
-				// Give the entire net loot to the primary attacker
-				if (netLoot > 0) {
-					db.prepare('UPDATE guild_economy SET balance = balance + ? WHERE guild_tag = ?').run(netLoot, attackerTag);
-				}
+				if (netLoot > 0) db.prepare('UPDATE guild_economy SET balance = balance + ? WHERE guild_tag = ?').run(netLoot, attackerTag);
 			})();
-
-			db.prepare(`
-				INSERT INTO raid_leaderboard (guild_tag, successful_raids, crowns_stolen)
-				VALUES (?, 1, ?)
-				ON CONFLICT(guild_tag) DO UPDATE SET
-					successful_raids = successful_raids + 1,
-					crowns_stolen = crowns_stolen + ?
-			`).run(attackerTag, netLoot, netLoot);
-
+			db.prepare('INSERT INTO raid_leaderboard (guild_tag, successful_raids, crowns_stolen) VALUES (?, 1, ?) ON CONFLICT(guild_tag) DO UPDATE SET successful_raids = successful_raids + 1, crowns_stolen = crowns_stolen + ?').run(attackerTag, netLoot, netLoot);
 			await checkAndDestroyGuildOnRaid(defenderTag, attackerTag, interaction);
 			const isDestroyed = !db.prepare('SELECT 1 FROM guild_list WHERE guild_tag = ?').get(defenderTag);
 			const description = isDestroyed ? `The attacking alliance has utterly destroyed **${finalDefenderData.guild_name}**!` : `The attacking alliance has triumphed over **${finalDefenderData.guild_name}**!`;
 
-			const spoilsField = {
-				name: 'Spoils of War',
-				value: [
-					`Plunder from Vault: **${stolenFromGuild.toLocaleString()}**`,
-					`Plunder from Members: **${stolenFromMembers.toLocaleString()}**`,
-					`**Total Loot:** **${totalLoot.toLocaleString()}**`,
-					`Lost During Escape (-${escapeLossPercent}%): **-${lostDuringEscape.toLocaleString()}**`,
-					'---',
-					`The entire net plunder of **${netLoot.toLocaleString()} Crowns** has been transferred to **${finalAttackerData.guild_name}**'s vault.`,
-				].join('\n'),
-				inline: false,
-			};
-
-			// --- Opportunist Payout Logic ---
+			const spoilsField = { name: 'Spoils of War', value: `Plunder from Vault: **${stolenFromGuild.toLocaleString()}**\nPlunder from Members: **${stolenFromMembers.toLocaleString()}**\n**Total Loot:** **${totalLoot.toLocaleString()}**\nLost During Escape (-${escapeLossPercent}%): **-${lostDuringEscape.toLocaleString()}**\n---\nThe entire net plunder of **${netLoot.toLocaleString()} Crowns** has been transferred to **${finalAttackerData.guild_name}**'s vault.` };
 			let opportunistWinningsText = '';
 			const raidPot = db.prepare('SELECT wager_pot FROM raid_history WHERE id = ?').get(raidId)?.wager_pot || 0;
 			if (raidPot > 0) {
@@ -3955,29 +3911,16 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 				}
 			}
 
-			resultEmbed = new EmbedBuilder()
-				.setTitle('⚔️ VICTORY FOR THE ATTACKERS! ⚔️')
-				.setColor(0x2ECC71)
-				.setDescription(description + opportunistWinningsText)
-				.addFields(
-					{ name: 'Attacker Power Calculations', value: `__Attacker Roll:__ **${attackerRoll}**\n__Attacker Modifiers:__\n${attackerModifierText}`, inline: true },
-					{ name: 'Guild Defence Calculations', value: `__Guild AC:__ **${defenderBasePower}**\n__Defender Modifiers:__\n${defenderModifierText}`, inline: true },
-					{ name: 'Overall Scores:', value: `Final Attacking Power: 💥 **${finalAttackPower}**\nFinal Defending Resistance: 🛡️ **${finalDefensePower}**`, inline: false },
-					{ name: '⚔️ Attackers', value: attackerParticipantList, inline: true },
-					{ name: '🛡️ Defenders', value: defenderParticipantList, inline: true },
-					spoilsField,
-				);
-
-			announceEmbed = new EmbedBuilder()
-				.setTitle('⚔️ War Report: Attackers Win! ⚔️')
-				.setColor(0x2ECC71)
-				.setDescription(description)
-				.addFields(
-					{ name: '⚔️ Victorious Alliance', value: attackerParticipantList, inline: false },
-					{ name: '🛡️ Defeated Coalition', value: defenderParticipantList, inline: false },
-					{ name: 'Final Scores:', value: `\`[${attackerTag}]\` Total Power: 💥 **${finalAttackPower}** (Rolled \`${attackerRoll}\` + \`${attackerModifierTotal}\`)\n\`[${defenderTag}]\` Overall Resistance: 🛡️ **${finalDefensePower}** (AC of \`${defenderBasePower}\` + \`${defenderAllyPower}\` bonus)`, inline: false },
-				)
-				.setTimestamp();
+			resultEmbed = new EmbedBuilder().setTitle('⚔️ VICTORY FOR THE ATTACKERS! ⚔️').setColor(0x2ECC71).setDescription(description + opportunistWinningsText).addFields(
+				{ name: 'Attacker Power Calculations', value: `__Attacker Roll:__ **${attackerRoll}**\n__Attacker Modifiers:__\n${fullAttackerModifierText}`, inline: true },
+				{ name: 'Guild Defence Calculations', value: `__Guild AC:__ **${defenderBasePower}**\n__Defender Modifiers:__\n${fullDefenderModifierText}`, inline: true },
+				{ name: 'Overall Scores:', value: `Final Attacking Power: 💥 **${finalAttackPower}**\nFinal Defending Resistance: 🛡️ **${finalDefensePower}**`, inline: false },
+				{ name: '⚔️ Attackers', value: attackerParticipantList, inline: true }, { name: '🛡️ Defenders', value: defenderParticipantList, inline: true }, spoilsField,
+			);
+			announceEmbed = new EmbedBuilder().setTitle('⚔️ War Report: Attackers Win! ⚔️').setColor(0x2ECC71).setDescription(description).addFields(
+				{ name: '⚔️ Victorious Alliance', value: attackerParticipantList }, { name: '🛡️ Defeated Coalition', value: defenderParticipantList },
+				{ name: 'Final Scores:', value: `\`[${attackerTag}]\` Total Power: 💥 **${finalAttackPower}** (Rolled \`${attackerRoll}\` + \`${finalAttackPower - attackerRoll}\`)\n\`[${defenderTag}]\` Overall Resistance: 🛡️ **${finalDefensePower}** (AC of \`${defenderBasePower}\` + \`${finalDefensePower - defenderBasePower}\` bonus)` },
+			).setTimestamp();
 		}
 		else {
 			finalDescription = replacePlaceholders(defenderMsgs.defending_success || DEFAULT_RAID_MESSAGES.defending_success) + '\n\n' + replacePlaceholders(attackerMsgs.raiding_retreat || DEFAULT_RAID_MESSAGES.raiding_retreat);
@@ -3985,18 +3928,12 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 			await wait(5000);
 
 			defenderGain = Math.floor(raidCost * 0.5);
-
-			// Give the entire compensation to the primary defender's guild vault
 			db.prepare('UPDATE guild_economy SET balance = balance + ? WHERE guild_tag = ?').run(defenderGain, defenderTag);
-			console.log(`[Raid Resolution LOG] [${raidId}] Awarded ${defenderGain} compensation to primary defender ${defenderTag}.`);
 
 			const defenderMembers = db.prepare('SELECT user_id FROM guildmember_tracking WHERE guild_tag = ?').all(defenderTag);
-			let roleAwardedCount = 0;
 			const defenderGuild = await interaction.client.guilds.fetch(interaction.guild.id);
 			const raidDefenderRole = await defenderGuild.roles.fetch(RAID_DEFENDER_ROLE_ID);
-
 			if (raidDefenderRole) {
-				console.log(`[Raid Resolution] Awarding Raid Defender role to ${defenderMembers.length} members of [${defenderTag}].`);
 				for (const dMember of defenderMembers) {
 					try {
 						const member = await defenderGuild.members.fetch(dMember.user_id);
@@ -4004,33 +3941,15 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 							await member.roles.add(raidDefenderRole);
 							await updateMultiplier(member.id, defenderGuild);
 							await scheduleRoleRemoval(interaction.client, member.id, defenderGuild.id, RAID_DEFENDER_ROLE_ID, DEFENDER_ROLE_DURATION_MS);
-							roleAwardedCount++;
 							await wait(500);
 						}
 					}
-					catch (err) {
-						console.error(`[Raid Resolution] Failed to award defender role to user ${dMember.user_id}:`, err);
-					}
+					catch (err) { console.error(`[Raid Resolution] Failed to award defender role to user ${dMember.user_id}:`, err); }
 				}
-				console.log(`[Raid Resolution] Successfully awarded role to ${roleAwardedCount}/${defenderMembers.length} members.`);
 			}
-			else {
-				console.error(`[Raid Resolution] CRITICAL: Could not find the Raid Defender Role (${RAID_DEFENDER_ROLE_ID})`);
-			}
+
 			const description = `The defending coalition has repelled the invaders led by **${finalAttackerData.guild_name}**!`;
-
-			const compensationField = {
-				name: 'Defender\'s Compensation',
-				value: [
-					`Attacker's War Declaration Cost: **${raidCost.toLocaleString()}**`,
-					`Compensation Awarded (50%): **${defenderGain.toLocaleString()}**`,
-					'---',
-					`The entire compensation has been transferred to **${finalDefenderData.guild_name}**'s vault.`,
-				].join('\n'),
-				inline: false,
-			};
-
-			// --- Opportunist Payout Logic ---
+			const compensationField = { name: 'Defender\'s Compensation', value: `Attacker's War Declaration Cost: **${raidCost.toLocaleString()}**\nCompensation Awarded (50%): **${defenderGain.toLocaleString()}**\n---\nThe entire compensation has been transferred to **${finalDefenderData.guild_name}**'s vault.` };
 			let opportunistWinningsText = '';
 			const raidPot = db.prepare('SELECT wager_pot FROM raid_history WHERE id = ?').get(raidId)?.wager_pot || 0;
 			if (raidPot > 0) {
@@ -4047,54 +3966,38 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 				}
 			}
 
-			resultEmbed = new EmbedBuilder()
-				.setTitle('🛡️ VICTORY FOR THE DEFENDERS! 🛡️')
-				.setColor(0x3498DB)
-				.setDescription(description + opportunistWinningsText)
-				.addFields(
-					{ name: 'Attacker Power Calculations', value: `__Attacker Roll:__ **${attackerRoll}**\n__Attacker Modifiers:__\n${attackerModifierText}`, inline: true },
-					{ name: 'Guild Defence Calculations', value: `__Guild AC:__ **${defenderBasePower}**\n__Defender Modifiers:__\n${defenderModifierText}`, inline: true },
-					{ name: 'Overall Scores:', value: `Final Attacking Power: 💥 **${finalAttackPower}**\nFinal Defending Resistance: 🛡️ **${finalDefensePower}**`, inline: false },
-					{ name: '⚔️ Attackers', value: attackerParticipantList, inline: true },
-					{ name: '🛡️ Defenders', value: defenderParticipantList, inline: true },
-					compensationField,
-				);
-
-			announceEmbed = new EmbedBuilder()
-				.setTitle('🛡️ War Report: Defenders Win! ⚔️')
-				.setColor(0x3498DB)
-				.setDescription(description)
-				.addFields(
-					{ name: '🛡️ Victorious Coalition', value: defenderParticipantList, inline: false },
-					{ name: '⚔️ Defeated Alliance', value: attackerParticipantList, inline: false },
-					{ name: 'Final Scores:', value: `\`[${attackerTag}]\` Total Power: 💥 **${finalAttackPower}** (Rolled \`${attackerRoll}\` + \`${attackerModifierTotal}\`)\n\`[${defenderTag}]\` Overall Resistance: 🛡️ **${finalDefensePower}** (AC of \`${defenderBasePower}\` + \`${defenderAllyPower}\` bonus)`, inline: false },
-				)
-				.setTimestamp();
+			resultEmbed = new EmbedBuilder().setTitle('🛡️ VICTORY FOR THE DEFENDERS! 🛡️').setColor(0x3498DB).setDescription(description + opportunistWinningsText).addFields(
+				{ name: 'Attacker Power Calculations', value: `__Attacker Roll:__ **${attackerRoll}**\n__Attacker Modifiers:__\n${fullAttackerModifierText}`, inline: true },
+				{ name: 'Guild Defence Calculations', value: `__Guild AC:__ **${defenderBasePower}**\n__Defender Modifiers:__\n${fullDefenderModifierText}`, inline: true },
+				{ name: 'Overall Scores:', value: `Final Attacking Power: 💥 **${finalAttackPower}**\nFinal Defending Resistance: 🛡️ **${finalDefensePower}**`, inline: false },
+				{ name: '⚔️ Attackers', value: attackerParticipantList, inline: true }, { name: '🛡️ Defenders', value: defenderParticipantList, inline: true }, compensationField,
+			);
+			announceEmbed = new EmbedBuilder().setTitle('🛡️ War Report: Defenders Win! ⚔️').setColor(0x3498DB).setDescription(description).addFields(
+				{ name: '🛡️ Victorious Coalition', value: defenderParticipantList }, { name: '⚔️ Defeated Alliance', value: attackerParticipantList },
+				{ name: 'Final Scores:', value: `\`[${attackerTag}]\` Total Power: 💥 **${finalAttackPower}** (Rolled \`${attackerRoll}\` + \`${finalAttackPower - attackerRoll}\`)\n\`[${defenderTag}]\` Overall Resistance: 🛡️ **${finalDefensePower}** (AC of \`${defenderBasePower}\` + \`${finalDefensePower - defenderBasePower}\` bonus)` },
+			).setTimestamp();
 		}
-		const allParticipantRoles = allParticipants.map(p => `<@&${p.role_id}>`).join(' ');
 
-		// Send the final result embed to the channel
+		const allParticipantRoles = allParticipants.map(p => `<@&${p.role_id}>`).join(' ');
 		await warMessage.channel.send({ content: allParticipantRoles, embeds: [resultEmbed] });
 
-		// Shared DB updates
 		db.prepare('UPDATE raid_history SET success = ?, stolen_amount = ?, attacker_roll = ?, defender_ac = ?, attacker_allies = ?, defender_allies = ? WHERE id = ?').run(success ? 1 : 0, success ? netLoot : defenderGain, finalAttackPower, defenderBasePower, attackingParticipants.map(a => a.allied_guild_tag).join(','), defendingParticipants.map(a => a.allied_guild_tag).join(','), raidId);
 		const shieldExpiry = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
 		db.prepare('INSERT INTO raid_cooldowns (guild_tag, shield_expiry) VALUES (?, ?) ON CONFLICT(guild_tag) DO UPDATE SET shield_expiry = ?').run(defenderTag, shieldExpiry, shieldExpiry);
-		const attackerAttitude = db.prepare('SELECT attitude FROM guild_list WHERE guild_tag = ?').get(attackerTag)?.attitude;
+
+		const attackerAttitude = finalAttackerData.attitude;
 		let raidCooldownMs = 24 * 60 * 60 * 1000;
 		if (attackerAttitude === 'Aggressive') {
 			const tier = finalAttackerData.tier;
-			let reductionHours = 4;
-			if (tier >= 13) reductionHours = 20;
-			else if (tier >= 10) reductionHours = 16;
-			else if (tier >= 7) reductionHours = 12;
-			else if (tier >= 4) reductionHours = 8;
+			let reductionHours = 0;
+			if (tier >= 13) reductionHours = 16;
+			else if (tier >= 10) reductionHours = 12;
+			else if (tier >= 7) reductionHours = 8;
+			else if (tier >= 4) reductionHours = 4;
 			raidCooldownMs -= reductionHours * 60 * 60 * 1000;
 		}
-		const attackerNextRaid = new Date(now.getTime() + raidCooldownMs);
-		db.prepare('INSERT INTO raid_cooldowns (guild_tag, last_raid_time) VALUES (?, ?) ON CONFLICT(guild_tag) DO UPDATE SET last_raid_time = ?').run(attackerTag, attackerNextRaid, attackerNextRaid);
+		db.prepare('INSERT INTO raid_cooldowns (guild_tag, last_raid_time) VALUES (?, ?) ON CONFLICT(guild_tag) DO UPDATE SET last_raid_time = ?').run(attackerTag, raidCooldownMs, raidCooldownMs);
 
-		// Global Announcement
 		await sendGuildAnnouncement(interaction.client, announceEmbed);
 
 	}
@@ -4107,7 +4010,6 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 		await warMessage.channel.send({ embeds: [errorEmbed], components: [] });
 	}
 	finally {
-		// ALWAYS clean up the raid state
 		console.log(`[Raid Resolution] Cleaning up state for raid ID ${raidId}.`);
 		db.prepare('UPDATE raid_cooldowns SET is_under_raid = 0 WHERE guild_tag = ?').run(defenderTag);
 		db.prepare('DELETE FROM active_raid_allies WHERE raid_id = ?').run(raidId);
