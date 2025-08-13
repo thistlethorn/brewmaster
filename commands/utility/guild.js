@@ -1784,9 +1784,11 @@ async function buildDetailEmbed(guildTag, view, interaction, parts) {
 		const relationships = db.prepare('SELECT * FROM guild_relationships WHERE guild_one_tag = ? OR guild_two_tag = ?').all(guildTag, guildTag);
 		const allies = relationships.filter(r => r.status === 'alliance').map(r => `[${r.guild_one_tag === guildTag ? r.guild_two_tag : r.guild_one_tag}]`);
 		const enemies = relationships.filter(r => r.status === 'enemy').map(r => `[${r.guild_one_tag === guildTag ? r.guild_two_tag : r.guild_one_tag}]`);
+		const truces = relationships.filter(r => r.status === 'truce').map(r => `[${r.guild_one_tag === guildTag ? r.guild_two_tag : r.guild_one_tag}]`);
 		let diplomacyText = `**Attitude:** ${warfareInfo.attitude || 'Neutral'}`;
 		if (allies.length > 0) diplomacyText += `\n**Allies:** ${allies.join(', ')}`;
 		if (enemies.length > 0) diplomacyText += `\n**Enemies:** ${enemies.join(', ')}`;
+		if (truces.length > 0) diplomacyText += `\n**Truces:** ${truces.join(', ')}`;
 
 		const now = new Date();
 		const creationDate = new Date(guild.created_at);
@@ -3141,23 +3143,27 @@ async function notifyAlliesAndEnemies(interaction, raidId, attackerData, defende
 
 	// Find allies of the defender
 	const defenderAllies = db.prepare(`
-        SELECT
-            CASE WHEN guild_one_tag = ? THEN guild_two_tag ELSE guild_one_tag END as ally_tag,
-            (SELECT public_channel_id FROM guild_list WHERE guild_tag = ally_tag) as channel_id,
-            (SELECT role_id FROM guild_list WHERE guild_tag = ally_tag) as role_id
-        FROM guild_relationships
-        WHERE (guild_one_tag = ? OR guild_two_tag = ?) AND status = 'alliance'
-    `).all(defenderTag, defenderTag, defenderTag);
+   SELECT
+     CASE WHEN r.guild_one_tag = ? THEN r.guild_two_tag ELSE r.guild_one_tag END AS ally_tag,
+     gl.public_channel_id AS channel_id,
+     gl.role_id AS role_id
+   FROM guild_relationships r
+   JOIN guild_list gl
+     ON gl.guild_tag = CASE WHEN r.guild_one_tag = ? THEN r.guild_two_tag ELSE r.guild_one_tag END
+   WHERE (r.guild_one_tag = ? OR r.guild_two_tag = ?) AND r.status = 'alliance'
+ `).all(defenderTag, defenderTag, defenderTag, defenderTag);
 
 	// Find enemies of the attacker
 	const attackerEnemies = db.prepare(`
-        SELECT
-            CASE WHEN guild_one_tag = ? THEN guild_two_tag ELSE guild_one_tag END as enemy_tag,
-            (SELECT public_channel_id FROM guild_list WHERE guild_tag = enemy_tag) as channel_id,
-            (SELECT role_id FROM guild_list WHERE guild_tag = enemy_tag) as role_id
-        FROM guild_relationships
-        WHERE (guild_one_tag = ? OR guild_two_tag = ?) AND status = 'enemy'
-    `).all(attackerTag, attackerTag, attackerTag);
+   SELECT
+     CASE WHEN r.guild_one_tag = ? THEN r.guild_two_tag ELSE r.guild_one_tag END AS enemy_tag,
+     gl.public_channel_id AS channel_id,
+     gl.role_id AS role_id
+   FROM guild_relationships r
+   JOIN guild_list gl
+     ON gl.guild_tag = CASE WHEN r.guild_one_tag = ? THEN r.guild_two_tag ELSE r.guild_one_tag END
+   WHERE (r.guild_one_tag = ? OR r.guild_two_tag = ?) AND r.status = 'enemy'
+ `).all(attackerTag, attackerTag, attackerTag, attackerTag);
 
 	const callToArmsRow = new ActionRowBuilder().addComponents(
 		new ButtonBuilder().setCustomId(`join_attack_${raidId}`).setLabel('Join Attack').setStyle(ButtonStyle.Danger).setEmoji('⚔️'),
@@ -3274,6 +3280,17 @@ async function handleRaidStats(interaction) {
 		});
 	}
 }
+async function getRaidCooldownHours(attitude, tier) {
+	let hours = 24;
+	if (attitude === 'Aggressive') {
+		if (tier >= 13) hours -= 16;
+		else if (tier >= 10) hours -= 12;
+		else if (tier >= 7) hours -= 8;
+		else if (tier >= 4) hours -= 4;
+	}
+	return Math.max(1, hours);
+}
+
 async function handleRaid(interaction) {
 	const guildTag = interaction.options.getString('guild_tag').toUpperCase();
 	const userId = interaction.user.id;
@@ -3419,22 +3436,7 @@ async function handleRaid(interaction) {
 
 	if (attackerCooldown?.last_raid_time) {
 		// Determine the correct cooldown duration for this guild
-		let cooldownHours = 24;
-		// Default cooldown
-		if (attackerGuild.attitude === 'Aggressive') {
-			const tier = attackerGuild.tier;
-			let reductionHours = 0;
-			if (tier >= 13) reductionHours = 16;
-			// Adamantium (24 - 16 = 8hr cooldown)
-			else if (tier >= 10) reductionHours = 12;
-			// Gold (24 - 12 = 12hr cooldown)
-			else if (tier >= 7) reductionHours = 8;
-			// Silver (24 - 8 = 16hr cooldown)
-			else if (tier >= 4) reductionHours = 4;
-			// Bronze (24 - 4 = 20hr cooldown)
-			// Stone tier gets no reduction
-			cooldownHours -= reductionHours;
-		}
+		const cooldownHours = await getRaidCooldownHours(attackerGuild.attitude, attackerGuild.tier);
 
 		const lastRaid = new Date(attackerCooldown.last_raid_time);
 		const hoursSinceLastRaid = (now - lastRaid) / (1000 * 60 * 60);
@@ -4031,6 +4033,13 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 	}
 }
 
+
+/**
+ * Routes /guild diplomacy subcommands to specific handlers.
+ * @param {import('discord.js').ChatInputCommandInteraction} interaction
+ * @param {'offer'|'declare_enemy'|'withdraw'|'break'|'view'} action
+ * @returns {Promise<void>}
+ */
 async function handleDiplomacy(interaction, action) {
 	const userId = interaction.user.id;
 	const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Diplomacy Failed');
@@ -4277,6 +4286,9 @@ module.exports = {
 
 			let expires_at = null;
 			if (type === 'truce') {
+				if (!Number.isFinite(durationDays) || durationDays <= 0) {
+					return interaction.update({ content: 'Truce duration is invalid or missing; offer expired.', embeds: [], components: [] });
+				}
 				expires_at = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString();
 			}
 
