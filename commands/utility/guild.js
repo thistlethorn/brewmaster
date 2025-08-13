@@ -3306,7 +3306,7 @@ async function handleRaid(interaction) {
 	}
 	// Check if user is in a guild
 	const attackerGuild = db.prepare(`
-		SELECT gmt.guild_tag, gl.guild_name, COALESCE(gt.tier, 1) as tier, ge.balance
+		SELECT gmt.guild_tag, gl.guild_name, gl.attitude, COALESCE(gt.tier, 1) as tier, ge.balance
 		FROM guildmember_tracking gmt
 		JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
 		LEFT JOIN guild_tiers gt ON gmt.guild_tag = gt.guild_tag
@@ -3418,12 +3418,30 @@ async function handleRaid(interaction) {
     `).get(attackerGuild.guild_tag);
 
 	if (attackerCooldown?.last_raid_time) {
+		// Determine the correct cooldown duration for this guild
+		let cooldownHours = 24;
+		// Default cooldown
+		if (attackerGuild.attitude === 'Aggressive') {
+			const tier = attackerGuild.tier;
+			let reductionHours = 0;
+			if (tier >= 13) reductionHours = 16;
+			// Adamantium (24 - 16 = 8hr cooldown)
+			else if (tier >= 10) reductionHours = 12;
+			// Gold (24 - 12 = 12hr cooldown)
+			else if (tier >= 7) reductionHours = 8;
+			// Silver (24 - 8 = 16hr cooldown)
+			else if (tier >= 4) reductionHours = 4;
+			// Bronze (24 - 4 = 20hr cooldown)
+			// Stone tier gets no reduction
+			cooldownHours -= reductionHours;
+		}
+
 		const lastRaid = new Date(attackerCooldown.last_raid_time);
 		const hoursSinceLastRaid = (now - lastRaid) / (1000 * 60 * 60);
 
-		if (hoursSinceLastRaid < 24) {
-			const nextRaid = new Date(lastRaid.getTime() + 24 * 60 * 60 * 1000);
-			errorEmbed.setDescription(`Your guild can declare war again <t:${Math.floor(nextRaid.getTime() / 1000)}:R>!`);
+		if (hoursSinceLastRaid < cooldownHours) {
+			const nextRaidTime = new Date(lastRaid.getTime() + cooldownHours * 60 * 60 * 1000);
+			errorEmbed.setDescription(`Your guild can declare war again <t:${Math.floor(nextRaidTime.getTime() / 1000)}:R>!`);
 			return interaction.reply({
 				embeds: [errorEmbed],
 				flags: [MessageFlags.Ephemeral],
@@ -3706,26 +3724,10 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 				db.prepare('INSERT INTO raid_leaderboard (guild_tag, successful_raids, crowns_stolen) VALUES (?, 1, ?) ON CONFLICT(guild_tag) DO UPDATE SET successful_raids = successful_raids + 1, crowns_stolen = crowns_stolen + ?').run(attackerTag, stolenFromGuild, stolenFromGuild);
 				db.prepare('UPDATE raid_history SET success = 1, stolen_amount = ? WHERE id = ?').run(stolenFromGuild, raidId);
 			}
-			// Shared cooldown logic for forfeits
+
 			const shieldExpiry = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
 			db.prepare('INSERT INTO raid_cooldowns (guild_tag, shield_expiry) VALUES (?, ?) ON CONFLICT(guild_tag) DO UPDATE SET shield_expiry = ?').run(defenderTag, shieldExpiry, shieldExpiry);
-
-			// AGGRESSIVE COOLDOWN LOGIC (FORFEIT)
-			const attackerAttitude = finalAttackerData.attitude;
-			let raidCooldownMs = 24 * 60 * 60 * 1000;
-			// 24 hours default
-
-			if (attackerAttitude === 'Aggressive') {
-				const tier = finalAttackerData.tier;
-				let reductionHours = 0;
-				if (tier >= 13) reductionHours = 16;
-				else if (tier >= 10) reductionHours = 12;
-				else if (tier >= 7) reductionHours = 8;
-				else if (tier >= 4) reductionHours = 4;
-				raidCooldownMs -= reductionHours * 60 * 60 * 1000;
-			}
-			const attackerNextRaid = new Date(now.getTime() + raidCooldownMs);
-			db.prepare('INSERT INTO raid_cooldowns (guild_tag, last_raid_time) VALUES (?, ?) ON CONFLICT(guild_tag) DO UPDATE SET last_raid_time = ?').run(attackerTag, attackerNextRaid, attackerNextRaid);
+			db.prepare('INSERT INTO raid_cooldowns (guild_tag, last_raid_time) VALUES (?, ?) ON CONFLICT(guild_tag) DO UPDATE SET last_raid_time = ?').run(attackerTag, now.toISOString(), now.toISOString());
 
 			await sendGuildAnnouncement(interaction.client, announceEmbed);
 			await warMessage.edit({ embeds: [resultEmbed], components: [] });
@@ -3800,7 +3802,6 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 						attitudeAttackerText += `- \`-1\` (${participant.guild_name} - Opportunist 50% Chance)\n`;
 					}
 				}
-
 			}
 		}
 		else {
@@ -3985,18 +3986,8 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 		const shieldExpiry = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
 		db.prepare('INSERT INTO raid_cooldowns (guild_tag, shield_expiry) VALUES (?, ?) ON CONFLICT(guild_tag) DO UPDATE SET shield_expiry = ?').run(defenderTag, shieldExpiry, shieldExpiry);
 
-		const attackerAttitude = finalAttackerData.attitude;
-		let raidCooldownMs = 24 * 60 * 60 * 1000;
-		if (attackerAttitude === 'Aggressive') {
-			const tier = finalAttackerData.tier;
-			let reductionHours = 0;
-			if (tier >= 13) reductionHours = 16;
-			else if (tier >= 10) reductionHours = 12;
-			else if (tier >= 7) reductionHours = 8;
-			else if (tier >= 4) reductionHours = 4;
-			raidCooldownMs -= reductionHours * 60 * 60 * 1000;
-		}
-		db.prepare('INSERT INTO raid_cooldowns (guild_tag, last_raid_time) VALUES (?, ?) ON CONFLICT(guild_tag) DO UPDATE SET last_raid_time = ?').run(attackerTag, raidCooldownMs, raidCooldownMs);
+		// Store the time of the raid correctly
+		db.prepare('INSERT INTO raid_cooldowns (guild_tag, last_raid_time) VALUES (?, ?) ON CONFLICT(guild_tag) DO UPDATE SET last_raid_time = ?').run(attackerTag, now.toISOString(), now.toISOString());
 
 		await sendGuildAnnouncement(interaction.client, announceEmbed);
 
@@ -5029,8 +5020,11 @@ module.exports = {
 						console.log(`${logPrefix} Starting database transaction to add guild [${joiningGuildTag}] to the raid...`);
 						db.transaction(() => {
 							if (wager > 0) {
-								db.prepare('UPDATE guild_economy SET balance = balance - ? WHERE guild_tag = ?').run(wager, joiningGuildTag);
-								// Change the line below
+								const result = db.prepare('UPDATE guild_economy SET balance = balance - ? WHERE guild_tag = ? AND balance >= ?')
+									.run(wager, joiningGuildTag, wager);
+								if (result.changes === 0) {
+									throw new Error('Insufficient funds for wager');
+								}
 								db.prepare('UPDATE raid_history SET wager_pot = COALESCE(wager_pot, 0) + ? WHERE id = ?').run(wager, collectedRaidId);
 							}
 							db.prepare('INSERT INTO active_raid_allies (raid_id, allied_guild_tag, side) VALUES (?, ?, ?)').run(collectedRaidId, joiningGuildTag, side);
