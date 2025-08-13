@@ -3902,13 +3902,25 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 				const opportunistWinners = attackingParticipants.filter(p => db.prepare('SELECT attitude FROM guild_list WHERE guild_tag = ?').get(p.allied_guild_tag)?.attitude === 'Opportunist');
 				if (opportunistWinners.length > 0) {
 					const individualWinnings = Math.floor((raidPot * 2) / opportunistWinners.length);
-					opportunistWinningsText = `\n\n**Opportunist Wagers Won:**\nEach of the **${opportunistWinners.length}** winning opportunists has claimed **${individualWinnings.toLocaleString()}** Crowns!`;
-					const payoutTx = db.transaction(() => {
-						for (const winner of opportunistWinners) {
-							db.prepare('UPDATE guild_economy SET balance = balance + ? WHERE guild_tag = ?').run(individualWinnings, winner.allied_guild_tag);
-						}
-					});
-					payoutTx();
+					try {
+						// Transaction ensures all payouts succeed or none do.
+						db.transaction(() => {
+							for (const winner of opportunistWinners) {
+								const result = db.prepare('UPDATE guild_economy SET balance = balance + ? WHERE guild_tag = ?')
+									.run(individualWinnings, winner.allied_guild_tag);
+								// If a guild was deleted mid-raid, this will be 0.
+								if (result.changes === 0) {
+									throw new Error(`Failed to update balance for guild ${winner.allied_guild_tag}; it may no longer exist.`);
+								}
+							}
+						})();
+						// Immediately execute the transaction
+						opportunistWinningsText = `\n\n**Opportunist Wagers Won:**\nEach of the **${opportunistWinners.length}** winning opportunists has claimed **${individualWinnings.toLocaleString()}** Crowns!`;
+					}
+					catch (error) {
+						console.error('[RAID RESOLUTION] CRITICAL: Failed to distribute all opportunist winnings. Transaction rolled back.', error);
+						opportunistWinningsText = '\n\n**Opportunist Wagers:** Payout failed due to an error. Wagers have been lost to the chaos of war.';
+					}
 				}
 			}
 
@@ -3954,16 +3966,28 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 			let opportunistWinningsText = '';
 			const raidPot = db.prepare('SELECT wager_pot FROM raid_history WHERE id = ?').get(raidId)?.wager_pot || 0;
 			if (raidPot > 0) {
-				const opportunistWinners = defendingParticipants.filter(p => db.prepare('SELECT attitude FROM guild_list WHERE guild_tag = ?').get(p.allied_guild_tag)?.attitude === 'Opportunist');
+				const opportunistWinners = attackingParticipants.filter(p => db.prepare('SELECT attitude FROM guild_list WHERE guild_tag = ?').get(p.allied_guild_tag)?.attitude === 'Opportunist');
 				if (opportunistWinners.length > 0) {
 					const individualWinnings = Math.floor((raidPot * 2) / opportunistWinners.length);
-					opportunistWinningsText = `\n\n**Opportunist Wagers Won:**\nEach of the **${opportunistWinners.length}** winning opportunists has claimed **${individualWinnings.toLocaleString()}** Crowns!`;
-					const payoutTx = db.transaction(() => {
-						for (const winner of opportunistWinners) {
-							db.prepare('UPDATE guild_economy SET balance = balance + ? WHERE guild_tag = ?').run(individualWinnings, winner.allied_guild_tag);
-						}
-					});
-					payoutTx();
+					try {
+						// Transaction ensures all payouts succeed or none do.
+						db.transaction(() => {
+							for (const winner of opportunistWinners) {
+								const result = db.prepare('UPDATE guild_economy SET balance = balance + ? WHERE guild_tag = ?')
+									.run(individualWinnings, winner.allied_guild_tag);
+								// If a guild was deleted mid-raid, this will be 0.
+								if (result.changes === 0) {
+									throw new Error(`Failed to update balance for guild ${winner.allied_guild_tag}; it may no longer exist.`);
+								}
+							}
+						})();
+						// Immediately execute the transaction
+						opportunistWinningsText = `\n\n**Opportunist Wagers Won:**\nEach of the **${opportunistWinners.length}** winning opportunists has claimed **${individualWinnings.toLocaleString()}** Crowns!`;
+					}
+					catch (error) {
+						console.error('[RAID RESOLUTION] CRITICAL: Failed to distribute all opportunist winnings. Transaction rolled back.', error);
+						opportunistWinningsText = '\n\n**Opportunist Wagers:** Payout failed due to an error. Wagers have been lost to the chaos of war.';
+					}
 				}
 			}
 
@@ -4028,6 +4052,12 @@ async function handleDiplomacy(interaction, action) {
 	}
 
 	const targetTag = interaction.options.getString('guild_tag').toUpperCase();
+
+	if (!/^[A-Z]{3}$/.test(targetTag)) {
+		errorEmbed.setDescription('Guild tag must be exactly 3 uppercase letters!');
+		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+	}
+
 	if (targetTag === guildData.guild_tag) {
 		errorEmbed.setDescription('You cannot perform diplomatic actions with your own guild.');
 		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
