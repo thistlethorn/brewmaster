@@ -1,0 +1,40 @@
+{
+	"clientId": "1369686472709378101",
+	"guildId": "1353623582411984928",
+	"discord": {
+    "guildCategoryId": "1396211786008756254",
+    "staffRoleId": "1354145856345083914",
+    "botsRoleId": "1362247491101262106",
+    "raidDefenderRoleId": "1387473320093548724",
+    "bumpChannelId": "1354187940246327316",
+    "bumpRoleId": "1380398838333968436",
+    "idleChatterChannelId" : "1353623582411984931",
+    "botCommandsId" : "1354187940246327316"
+  },
+  "tonyQuote" : {
+    "triggerSubmissionCost" : 200,
+    "idleSubmissionCost" : 100,
+    "maxUserQuotes" : 20,
+    "maxQuoteLength" : 200,
+    "quotesPerPage" : 5,
+    "approvalChannelId": "1403817767081082960",
+    "maxIdleUses" : 40,
+    "maxTriggerUses" : 20
+  },
+  "guild": {
+    "vulnerabilityThreshold": 500,
+    "raidMaxStolenPercent": 25,
+    "raidMinPerMemberPercent": 5,
+    "raidMaxPerMemberCap": 100,
+    "creationWithdrawalLimit": 5000,
+    "allianceRaidDurationMs": 600000,
+    "defenderRoleDurationMs": 86400000,
+    "maxAmountOfGuildsExisting": 15
+  },
+  "bump": {
+    "cooldownMs": 7200000
+  },
+  "gamble" : {
+    "jackpotBaseAmount" : 5000
+  }
+}
