@@ -4186,7 +4186,14 @@ async function handleDeclareEnemy(interaction, guildData, targetGuild, targetTag
 		const targetChannel = await interaction.client.channels.fetch(targetGuildData.channel_id).catch(() => null);
 		if (targetChannel) await targetChannel.send({ embeds: [notifyEmbed] });
 	}
+	// Red for enemy
+	const announceEmbed = new EmbedBuilder()
+		.setColor(0xE74C3C)
+		.setTitle('⚔️ A Rivalry is Born! ⚔️')
+		.setDescription(`Hostilities have been declared! **${guildData.guild_name} [${guildData.guild_tag}]** has officially named **${targetGuild.guild_name} [${targetTag}]** as their enemy.`)
+		.setTimestamp();
 
+	await sendGuildAnnouncement(interaction.client, announceEmbed);
 	await interaction.reply({ content: `You have successfully declared **${targetGuild.guild_name} [${targetTag}]** as your enemy.`, flags: [MessageFlags.Ephemeral] });
 }
 
@@ -4215,11 +4222,18 @@ async function handleWithdraw(interaction, guildData, targetGuild, targetTag) {
 	// Notify target guild
 	const targetGuildData = db.prepare('SELECT channel_id FROM guild_list WHERE guild_tag = ?').get(targetTag);
 	if (targetGuildData?.channel_id) {
-		const notifyEmbed = new EmbedBuilder().setColor(0x3498DB).setTitle('Diplomatic Update').setDescription(`**${guildData.guild_name} [${guildData.guild_tag}]** has withdrawn their **${relationship.status}** with your guild. You are now neutral.`);
+		const notifyEmbed = new EmbedBuilder().setColor(0x3498DB).setTitle('Diplomatic Update').setDescription(`**${guildData.guild_name} [${guildData.guild_tag}]** has withdrawn their **${relationship.status}** with your guild. They now regard you as neutral.`);
 		const targetChannel = await interaction.client.channels.fetch(targetGuildData.channel_id).catch(() => null);
 		if (targetChannel) await targetChannel.send({ embeds: [notifyEmbed] });
 	}
+	 // A calm blue to signify peace
+	 const announceEmbed = new EmbedBuilder()
+		.setColor(0x3498DB)
+		.setTitle('🕊️ Hostilities Have Ceased! 🕊️')
+		.setDescription(`Peace has been restored. **${guildData.guild_name} [${guildData.guild_tag}]** has withdrawn their enemy declaration against **${targetGuild.guild_name} [${targetTag}]**. The two guilds are now neutral.`)
+		.setTimestamp();
 
+	await sendGuildAnnouncement(interaction.client, announceEmbed);
 	await interaction.reply({ content: message, flags: [MessageFlags.Ephemeral] });
 }
 
@@ -4246,6 +4260,14 @@ async function handleBreak(interaction, guildData, targetGuild, targetTag) {
 		const targetChannel = await interaction.client.channels.fetch(targetGuildData.channel_id).catch(() => null);
 		if (targetChannel) await targetChannel.send({ embeds: [notifyEmbed] });
 	}
+	// Grey for neutral/broken
+	const announceEmbed = new EmbedBuilder()
+		.setColor(0x95A5A6)
+		.setTitle('🛡️ An Alliance has Shattered! 🛡️')
+		.setDescription(`The pact is broken! **${guildData.guild_name} [${guildData.guild_tag}]** has formally broken their alliance with **${targetGuild.guild_name} [${targetTag}]**.`)
+		.setTimestamp();
+
+	await sendGuildAnnouncement(interaction.client, announceEmbed);
 
 	await interaction.reply({ content: `You have broken your alliance with **${targetGuild.guild_name}**. Neither guild may attack the other for 24 hours.`, flags: [MessageFlags.Ephemeral] });
 }
@@ -4294,6 +4316,29 @@ module.exports = {
 
 			db.prepare('INSERT INTO guild_relationships (guild_one_tag, guild_two_tag, status, initiator_tag, expires_at) VALUES (?, ?, ?, ?, ?)')
 				.run(tags[0], tags[1], type, initiatorTag, expires_at);
+
+			const announceEmbed = new EmbedBuilder()
+				.setTimestamp();
+
+			if (type === 'alliance') {
+				// Blue for alliance
+				announceEmbed
+					.setColor(0x3498DB)
+					.setTitle('🤝 A New Alliance is Forged! 🤝')
+					.setDescription(`**${initiatorGuild.guild_name} [${initiatorTag}]** and **${userGuild.guild_name} [${targetTag}]** have formally entered into an alliance!`);
+			}
+			 // Truce
+			else {
+				const expiryTimestamp = Math.floor(new Date(expires_at).getTime() / 1000);
+				 // Green for truce
+				announceEmbed
+					.setColor(0x2ECC71)
+					.setTitle('🕊️ A Truce has been Declared! 🕊️')
+					.setDescription(`**${initiatorGuild.guild_name} [${initiatorTag}]** and **${userGuild.guild_name} [${targetTag}]** have agreed to a temporary truce.`)
+					.addFields({ name: 'Truce Expires', value: `<t:${expiryTimestamp}:R>` });
+			}
+
+			await sendGuildAnnouncement(interaction.client, announceEmbed);
 
 			await interaction.update({ content: `You have accepted the ${type} from **${initiatorGuild.guild_name}**! Your guilds are now formally linked.`, embeds: [], components: [] });
 		},
