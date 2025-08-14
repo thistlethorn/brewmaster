@@ -3280,6 +3280,14 @@ async function handleRaidStats(interaction) {
 		});
 	}
 }
+
+/**
+ * Computes raid cooldown hours based on attitude/tier.
+ * Aggressive reduces base 24h by rank brackets; min 1h.
+ * @param {'Neutral'|'Aggressive'|'Defensive'|'Opportunist'} attitude
+ * @param {number} tier
+ * @returns {number}
+ */
 async function getRaidCooldownHours(attitude, tier) {
 	let hours = 24;
 	if (attitude === 'Aggressive') {
@@ -3898,33 +3906,10 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 			const description = isDestroyed ? `The attacking alliance has utterly destroyed **${finalDefenderData.guild_name}**!` : `The attacking alliance has triumphed over **${finalDefenderData.guild_name}**!`;
 
 			const spoilsField = { name: 'Spoils of War', value: `Plunder from Vault: **${stolenFromGuild.toLocaleString()}**\nPlunder from Members: **${stolenFromMembers.toLocaleString()}**\n**Total Loot:** **${totalLoot.toLocaleString()}**\nLost During Escape (-${escapeLossPercent}%): **-${lostDuringEscape.toLocaleString()}**\n---\nThe entire net plunder of **${netLoot.toLocaleString()} Crowns** has been transferred to **${finalAttackerData.guild_name}**'s vault.` };
-			let opportunistWinningsText = '';
-			const raidPot = db.prepare('SELECT wager_pot FROM raid_history WHERE id = ?').get(raidId)?.wager_pot || 0;
-			if (raidPot > 0) {
-				const opportunistWinners = attackingParticipants.filter(p => db.prepare('SELECT attitude FROM guild_list WHERE guild_tag = ?').get(p.allied_guild_tag)?.attitude === 'Opportunist');
-				if (opportunistWinners.length > 0) {
-					const individualWinnings = Math.floor((raidPot * 2) / opportunistWinners.length);
-					try {
-						// Transaction ensures all payouts succeed or none do.
-						db.transaction(() => {
-							for (const winner of opportunistWinners) {
-								const result = db.prepare('UPDATE guild_economy SET balance = balance + ? WHERE guild_tag = ?')
-									.run(individualWinnings, winner.allied_guild_tag);
-								// If a guild was deleted mid-raid, this will be 0.
-								if (result.changes === 0) {
-									throw new Error(`Failed to update balance for guild ${winner.allied_guild_tag}; it may no longer exist.`);
-								}
-							}
-						})();
-						// Immediately execute the transaction
-						opportunistWinningsText = `\n\n**Opportunist Wagers Won:**\nEach of the **${opportunistWinners.length}** winning opportunists has claimed **${individualWinnings.toLocaleString()}** Crowns!`;
-					}
-					catch (error) {
-						console.error('[RAID RESOLUTION] CRITICAL: Failed to distribute all opportunist winnings. Transaction rolled back.', error);
-						opportunistWinningsText = '\n\n**Opportunist Wagers:** Payout failed due to an error. Wagers have been lost to the chaos of war.';
-					}
-				}
-			}
+			const opportunistWinningsText = await processOpportunistPayouts(raidId,
+			    success ? 'attacker' : 'defender',
+			    success ? attackingParticipants : defendingParticipants);
+
 
 			resultEmbed = new EmbedBuilder().setTitle('⚔️ VICTORY FOR THE ATTACKERS! ⚔️').setColor(0x2ECC71).setDescription(description + opportunistWinningsText).addFields(
 				{ name: 'Attacker Power Calculations', value: `__Attacker Roll:__ **${attackerRoll}**\n__Attacker Modifiers:__\n${fullAttackerModifierText}`, inline: true },
@@ -3965,33 +3950,9 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 
 			const description = `The defending coalition has repelled the invaders led by **${finalAttackerData.guild_name}**!`;
 			const compensationField = { name: 'Defender\'s Compensation', value: `Attacker's War Declaration Cost: **${raidCost.toLocaleString()}**\nCompensation Awarded (50%): **${defenderGain.toLocaleString()}**\n---\nThe entire compensation has been transferred to **${finalDefenderData.guild_name}**'s vault.` };
-			let opportunistWinningsText = '';
-			const raidPot = db.prepare('SELECT wager_pot FROM raid_history WHERE id = ?').get(raidId)?.wager_pot || 0;
-			if (raidPot > 0) {
-				const opportunistWinners = attackingParticipants.filter(p => db.prepare('SELECT attitude FROM guild_list WHERE guild_tag = ?').get(p.allied_guild_tag)?.attitude === 'Opportunist');
-				if (opportunistWinners.length > 0) {
-					const individualWinnings = Math.floor((raidPot * 2) / opportunistWinners.length);
-					try {
-						// Transaction ensures all payouts succeed or none do.
-						db.transaction(() => {
-							for (const winner of opportunistWinners) {
-								const result = db.prepare('UPDATE guild_economy SET balance = balance + ? WHERE guild_tag = ?')
-									.run(individualWinnings, winner.allied_guild_tag);
-								// If a guild was deleted mid-raid, this will be 0.
-								if (result.changes === 0) {
-									throw new Error(`Failed to update balance for guild ${winner.allied_guild_tag}; it may no longer exist.`);
-								}
-							}
-						})();
-						// Immediately execute the transaction
-						opportunistWinningsText = `\n\n**Opportunist Wagers Won:**\nEach of the **${opportunistWinners.length}** winning opportunists has claimed **${individualWinnings.toLocaleString()}** Crowns!`;
-					}
-					catch (error) {
-						console.error('[RAID RESOLUTION] CRITICAL: Failed to distribute all opportunist winnings. Transaction rolled back.', error);
-						opportunistWinningsText = '\n\n**Opportunist Wagers:** Payout failed due to an error. Wagers have been lost to the chaos of war.';
-					}
-				}
-			}
+			const opportunistWinningsText = await processOpportunistPayouts(raidId,
+			    success ? 'attacker' : 'defender',
+			    success ? attackingParticipants : defendingParticipants);
 
 			resultEmbed = new EmbedBuilder().setTitle('🛡️ VICTORY FOR THE DEFENDERS! 🛡️').setColor(0x3498DB).setDescription(description + opportunistWinningsText).addFields(
 				{ name: 'Attacker Power Calculations', value: `__Attacker Roll:__ **${attackerRoll}**\n__Attacker Modifiers:__\n${fullAttackerModifierText}`, inline: true },
@@ -4032,7 +3993,38 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 		db.prepare('DELETE FROM active_raid_allies WHERE raid_id = ?').run(raidId);
 	}
 }
+async function processOpportunistPayouts(raidId, participantsSide, participants) {
+	let opportunistWinningsText = '';
+	const raidPot = db.prepare('SELECT wager_pot FROM raid_history WHERE id = ?').get(raidId)?.wager_pot || 0;
 
+	if (raidPot > 0) {
+		const opportunistWinners = participants.filter(p =>
+			db.prepare('SELECT attitude FROM guild_list WHERE guild_tag = ?')
+				.get(p.allied_guild_tag)?.attitude === 'Opportunist',
+		);
+
+		if (opportunistWinners.length > 0) {
+			const individualWinnings = Math.floor((raidPot * 2) / opportunistWinners.length);
+			try {
+				db.transaction(() => {
+					for (const winner of opportunistWinners) {
+						const result = db.prepare('UPDATE guild_economy SET balance = balance + ? WHERE guild_tag = ?')
+							.run(individualWinnings, winner.allied_guild_tag);
+						if (result.changes === 0) {
+							throw new Error(`Failed to update balance for guild ${winner.allied_guild_tag}; it may no longer exist.`);
+						}
+					}
+				})();
+				opportunistWinningsText = `\n\n**Opportunist Wagers Won:**\nEach of the **${opportunistWinners.length}** winning opportunists has claimed **${individualWinnings.toLocaleString()}** Crowns!`;
+			}
+			catch (error) {
+				console.error('[RAID RESOLUTION] CRITICAL: Failed to distribute all opportunist winnings. Transaction rolled back.', error);
+				opportunistWinningsText = '\n\n**Opportunist Wagers:** Payout failed due to an error. Wagers have been lost to the chaos of war.';
+			}
+		}
+	}
+	return opportunistWinningsText;
+}
 
 /**
  * Routes /guild diplomacy subcommands to specific handlers.
@@ -4175,9 +4167,10 @@ async function handleDeclareEnemy(interaction, guildData, targetGuild, targetTag
 	if (existing) {
 		return interaction.reply({ content: `You cannot declare an enemy while another relationship (${existing.status}) is active.`, flags: [MessageFlags.Ephemeral] });
 	}
-
-	db.prepare('INSERT INTO guild_relationships (guild_one_tag, guild_two_tag, status, initiator_tag) VALUES (?, ?, ?, ?)')
-		.run(tags[0], tags[1], 'enemy', guildData.guild_tag);
+	db.transaction(() => {
+		db.prepare('INSERT INTO guild_relationships (guild_one_tag, guild_two_tag, status, initiator_tag) VALUES (?, ?, ?, ?)')
+			.run(tags[0], tags[1], 'enemy', guildData.guild_tag);
+	})();
 
 	// Notify target guild
 	const targetGuildData = db.prepare('SELECT channel_id FROM guild_list WHERE guild_tag = ?').get(targetTag);
@@ -4313,10 +4306,10 @@ module.exports = {
 				}
 				expires_at = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString();
 			}
-
-			db.prepare('INSERT INTO guild_relationships (guild_one_tag, guild_two_tag, status, initiator_tag, expires_at) VALUES (?, ?, ?, ?, ?)')
-				.run(tags[0], tags[1], type, initiatorTag, expires_at);
-
+			db.transaction(() => {
+				db.prepare('INSERT INTO guild_relationships (guild_one_tag, guild_two_tag, status, initiator_tag, expires_at) VALUES (?, ?, ?, ?, ?)')
+					.run(tags[0], tags[1], type, initiatorTag, expires_at);
+			})();
 			const announceEmbed = new EmbedBuilder()
 				.setTimestamp();
 
