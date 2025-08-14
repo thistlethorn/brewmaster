@@ -172,7 +172,7 @@ async function handleLeave(interaction) {
 			.setColor(0xE74C3C)
 			.setTitle(getTonyQuote('leave_notInGuild_title'))
 			.setDescription(getTonyQuote('leave_notInGuild_desc'));
-		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 
 	// Check if user is owner
@@ -181,7 +181,7 @@ async function handleLeave(interaction) {
 			.setColor(0xE74C3C)
 			.setTitle(getTonyQuote('leave_isOwner_title'))
 			.setDescription(getTonyQuote('leave_isOwner_desc', userGuild.guild_name, userGuild.guild_tag));
-		return interaction.reply({ embeds: [ownerEmbed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [ownerEmbed], flags: MessageFlags.Ephemeral });
 	}
 
 	// Remove guild role
@@ -206,7 +206,7 @@ async function handleLeave(interaction) {
 			.setColor(0x2ECC71)
 			.setTitle(getTonyQuote('leave_success_title'))
 			.setDescription(getTonyQuote('leave_success_desc', userGuild.guild_name, userGuild.guild_tag));
-		return interaction.reply({ embeds: [successEmbed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
 	}
 	catch (error) {
 		console.error('Leave guild error:', error);
@@ -214,7 +214,7 @@ async function handleLeave(interaction) {
 			.setColor(0xE74C3C)
 			.setTitle(getTonyQuote('leave_error_title'))
 			.setDescription(getTonyQuote('leave_error_desc'));
-		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 }
 async function handleInvite(interaction) {
@@ -242,7 +242,7 @@ async function handleInvite(interaction) {
 			.setDescription(getTonyQuote('invite_notInGuild_desc'));
 		return interaction.reply({
 			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 
@@ -255,7 +255,7 @@ async function handleInvite(interaction) {
 			.setDescription(getTonyQuote('invite_targetInGuild_desc', targetUser));
 		return interaction.reply({
 			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 
@@ -345,17 +345,17 @@ async function handleCreate(interaction) {
 	// Validate guild tag
 	if (!/^[A-Z]{3}$/.test(tag)) {
 		errorEmbed.setDescription(getTonyQuote('create_badTag_desc'));
-		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 
 	// Validate guild name (alphanumeric + spaces only)
 	if (!/^[a-zA-Z0-9 ]+$/.test(name)) {
 		errorEmbed.setDescription(getTonyQuote('create_badName_desc'));
-		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 	if (name.length < 3 || name.length > 35) {
 		errorEmbed.setDescription(getTonyQuote('create_badLength_desc'));
-		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 
 	// Validate against reserved terms
@@ -366,7 +366,7 @@ async function handleCreate(interaction) {
 
 	if (hasReservedTerm) {
 		errorEmbed.setDescription(getTonyQuote('create_reservedName_desc', RESERVED_TERMS.join(', ')));
-		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 
 
@@ -381,7 +381,7 @@ async function handleCreate(interaction) {
 		}
 		else {
 			errorEmbed.setDescription(getTonyQuote('create_alreadyInGuild_desc', userGuild.guild_name, tagOfGuild.guild_tag));
-			return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+			return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 		}
 	}
 
@@ -389,7 +389,7 @@ async function handleCreate(interaction) {
 	const existingGuild = db.prepare('SELECT * FROM guild_list WHERE guild_tag = ?').get(tag);
 	if (existingGuild) {
 		errorEmbed.setDescription(getTonyQuote('create_tagTaken_desc', tag));
-		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 
 	const startingBalance = 5000;
@@ -524,7 +524,7 @@ async function handleCreate(interaction) {
 		await publicChannel.send({ content: getTonyQuote('create_publicChannelWelcome', name, tag, interaction.user) });
 
 
-		return interaction.reply({ embeds: [replyEmbed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [replyEmbed], flags: MessageFlags.Ephemeral });
 
 
 	}
@@ -538,7 +538,7 @@ async function handleCreate(interaction) {
 			.setColor(0xE74C3C)
 			.setTitle(getTonyQuote('create_error_title'))
 			.setDescription(getTonyQuote('create_error_desc'));
-		return interaction.reply({ embeds: [finalErrorEmbed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [finalErrorEmbed], flags: MessageFlags.Ephemeral });
 	}
 }
 
@@ -559,7 +559,7 @@ async function handleDelete(interaction) {
 			.setColor(0xE74C3C)
 			.setTitle(getTonyQuote('delete_notAllowed_title'))
 			.setDescription(getTonyQuote('delete_notAllowed_desc'));
-		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 	const confirmationEmbed = new EmbedBuilder()
 		.setColor(0xFEE75C)
@@ -583,7 +583,7 @@ async function handleDelete(interaction) {
 	// Send confirmation message
 	await interaction.reply({
 		embeds: [confirmationEmbed],
-		components: [row], flags: [MessageFlags.Ephemeral] });
+		components: [row], flags: MessageFlags.Ephemeral });
 
 	// Collect button responses
 	const collector = interaction.channel.createMessageComponentCollector({
@@ -596,7 +596,7 @@ async function handleDelete(interaction) {
 				.setColor(0xE74C3C)
 				.setTitle(getTonyQuote('delete_notForYou_title'))
 				.setDescription(getTonyQuote('delete_notForYou_desc'));
-			return buttonInteraction.reply({ embeds: [notOwnerEmbed], flags: [MessageFlags.Ephemeral] });
+			return buttonInteraction.reply({ embeds: [notOwnerEmbed], flags: MessageFlags.Ephemeral });
 		}
 
 		if (buttonInteraction.customId === 'guild_delete_confirm') {
@@ -709,7 +709,7 @@ async function handleRaidMessagesSettings(interaction, guildData) {
 			.setEmoji('📖'),
 	);
 
-	await interaction.reply({ embeds: [mainEmbed], components: [mainRow], flags: [MessageFlags.Ephemeral] });
+	await interaction.reply({ embeds: [mainEmbed], components: [mainRow], flags: MessageFlags.Ephemeral });
 }
 
 async function showAllRaidMessages(interaction, guildData) {
@@ -799,7 +799,7 @@ async function processSingleMessage(interaction, guildData, keyToEdit) {
 	);
 
 	// Update the message from the button press to show the prompt
-	await interaction.update({ embeds: [embed], components: [row], flags: [MessageFlags.Ephemeral] });
+	await interaction.update({ embeds: [embed], components: [row], flags: MessageFlags.Ephemeral });
 
 	const filter = (i) => i.user.id === interaction.user.id;
 	const msgFilter = (m) => m.author.id === interaction.user.id;
@@ -876,7 +876,7 @@ async function processGuidedSetup(interaction, guildData) {
 				.setColor(0x2ECC71)
 				.setTitle(getTonyQuote('raidmsg_complete_title'))
 				.setDescription(getTonyQuote('raidmsg_complete_desc'));
-			await interaction.followUp({ embeds: [completeEmbed], flags: [MessageFlags.Ephemeral] });
+			await interaction.followUp({ embeds: [completeEmbed], flags: MessageFlags.Ephemeral });
 			return;
 		}
 
@@ -898,7 +898,7 @@ async function processGuidedSetup(interaction, guildData) {
 			new ButtonBuilder().setCustomId('exit_editor').setLabel('Exit Editor').setStyle(ButtonStyle.Danger),
 		);
 
-		const promptMessage = await interaction.followUp({ embeds: [embed], components: [row], flags: [MessageFlags.Ephemeral], fetchReply: true });
+		const promptMessage = await interaction.followUp({ embeds: [embed], components: [row], flags: MessageFlags.Ephemeral, fetchReply: true });
 
 		const filter = (i) => i.user.id === interaction.user.id;
 		const msgFilter = (m) => m.author.id === interaction.user.id;
@@ -953,7 +953,7 @@ async function handleGuildFund(interaction) {
 			.setColor(0xed4245)
 			.setTitle('❌ Invalid Funding Amount')
 			.setDescription(`Sorry, ${amount} must be greater than 0 to fund a guild.`);
-		return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 	}
 	const guildInfo = db.prepare('SELECT guild_name FROM guild_list WHERE guild_tag = ?').get(guildTag);
 	if (!guildInfo) {
@@ -961,7 +961,7 @@ async function handleGuildFund(interaction) {
 			.setColor(0xed4245)
 			.setTitle('❌ Guild Not Found')
 			.setDescription(`Couldn't find any guild with the tag [${guildTag}]. Please double-check the tag.`);
-		return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 	}
 
 	// Get user's balance
@@ -984,7 +984,7 @@ async function handleGuildFund(interaction) {
 					inline: false,
 				},
 			);
-		return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 	}
 
 	const fundTxn = db.transaction((uid, gTag, amt) => {
@@ -1037,7 +1037,7 @@ async function handleGuildFund(interaction) {
 					inline: false,
 				},
 			);
-		await interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+		await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 	}
 }
 
@@ -1060,7 +1060,7 @@ async function handlePayout(interaction, targetUser = null) {
 		errorEmbed.setDescription('You must be the owner or vice-guildmaster of a guild to make payouts!');
 		return interaction.reply({
 			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 
@@ -1072,7 +1072,7 @@ async function handlePayout(interaction, targetUser = null) {
 			errorEmbed.setDescription(`Your guild only has **${currentBalance.toLocaleString()}** crowns - not enough for this payout!`);
 			return interaction.reply({
 				embeds: [errorEmbed],
-				flags: [MessageFlags.Ephemeral],
+				flags: MessageFlags.Ephemeral,
 			});
 		}
 		// Check withdrawal limit
@@ -1080,7 +1080,7 @@ async function handlePayout(interaction, targetUser = null) {
 			errorEmbed.setDescription(`You cannot withdraw funds if it would drop the guild balance below **${GUILD_CREATION_WITHDRAWAL_LIMIT.toLocaleString()}** Crowns. This is to protect the guild's founding bonus.`);
 			return interaction.reply({
 				embeds: [errorEmbed],
-				flags: [MessageFlags.Ephemeral],
+				flags: MessageFlags.Ephemeral,
 			});
 		}
 
@@ -1095,7 +1095,7 @@ async function handlePayout(interaction, targetUser = null) {
 				errorEmbed.setDescription(`${targetUser} is not a member of your guild!`);
 				return interaction.reply({
 					embeds: [errorEmbed],
-					flags: [MessageFlags.Ephemeral],
+					flags: MessageFlags.Ephemeral,
 				});
 			}
 
@@ -1119,7 +1119,7 @@ async function handlePayout(interaction, targetUser = null) {
 			errorEmbed.setTitle('❌ Payout Error').setDescription('An unexpected error occurred during the payout. The transaction was rolled back.');
 			return interaction.reply({
 				embeds: [errorEmbed],
-				flags: [MessageFlags.Ephemeral],
+				flags: MessageFlags.Ephemeral,
 			});
 		}
 	}
@@ -1134,7 +1134,7 @@ async function handlePayout(interaction, targetUser = null) {
 			errorEmbed.setDescription('Your guild has no other members to pay out to!');
 			return interaction.reply({
 				embeds: [errorEmbed],
-				flags: [MessageFlags.Ephemeral],
+				flags: MessageFlags.Ephemeral,
 			});
 		}
 
@@ -1144,7 +1144,7 @@ async function handlePayout(interaction, targetUser = null) {
 			errorEmbed.setDescription(`Your guild needs **${totalPayout.toLocaleString()}** crowns to pay **${amount.toLocaleString()}** to each of the ${members.length} members, but only has **${currentBalance.toLocaleString()}**!`);
 			return interaction.reply({
 				embeds: [errorEmbed],
-				flags: [MessageFlags.Ephemeral],
+				flags: MessageFlags.Ephemeral,
 			});
 		}
 		// Check withdrawal limit
@@ -1152,7 +1152,7 @@ async function handlePayout(interaction, targetUser = null) {
 			errorEmbed.setDescription(`You cannot withdraw funds if it would drop the guild balance below **${GUILD_CREATION_WITHDRAWAL_LIMIT.toLocaleString()}** Crowns. This payout requires **${totalPayout.toLocaleString()}** Crowns.`);
 			return interaction.reply({
 				embeds: [errorEmbed],
-				flags: [MessageFlags.Ephemeral],
+				flags: MessageFlags.Ephemeral,
 			});
 		}
 
@@ -1179,7 +1179,7 @@ async function handlePayout(interaction, targetUser = null) {
 			errorEmbed.setTitle('❌ Payout Error').setDescription('An unexpected error occurred during the mass payout. The transaction was rolled back.');
 			return interaction.reply({
 				embeds: [errorEmbed],
-				flags: [MessageFlags.Ephemeral],
+				flags: MessageFlags.Ephemeral,
 			});
 		}
 	}
@@ -1239,7 +1239,7 @@ async function handleDues(interaction) {
 			.setDescription('Only the guild owner or vice-guildmaster can collect dues!');
 		return interaction.reply({
 			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 	const today = new Date().toISOString().slice(0, 10);
@@ -1263,7 +1263,7 @@ async function handleDues(interaction) {
 			.setDescription('Your guild has already collected its dues for today. This command can be used once per day (resets at Midnight UTC).');
 		return interaction.reply({
 			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 	// Fetch the guild's dedicated public channel
@@ -1282,7 +1282,7 @@ async function handleDues(interaction) {
 			.setDescription(`Could not find the guild's public channel (<#${guildData.public_channel_id}>). It may have been deleted.`);
 		return interaction.reply({
 			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 
@@ -1292,7 +1292,7 @@ async function handleDues(interaction) {
 		.setDescription(`Starting the dues collection process in ${guildChannel}.`);
 	await interaction.reply({
 		embeds: [ackEmbed],
-		flags: [MessageFlags.Ephemeral],
+		flags: MessageFlags.Ephemeral,
 	});
 
 	// Send announcement
@@ -1463,7 +1463,7 @@ async function handleInfo(interaction) {
 			.setDescription('No guild found with that tag!');
 		return interaction.reply({
 			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 
@@ -1516,7 +1516,7 @@ async function handleFullInfo(interaction) {
 
 		if (!guildInfo) {
 			const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Not Found').setDescription('No guild found with that tag!');
-			return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+			return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 		}
 
 		const memberData = db.prepare('SELECT owner, vice_gm FROM guildmember_tracking WHERE user_id = ? AND guild_tag = ?').get(interaction.user.id, guildTag);
@@ -1619,7 +1619,8 @@ async function handleFullInfo(interaction) {
 		}
 		const relationships = db.prepare(`
 			SELECT * FROM guild_relationships 
-			WHERE guild_one_tag = ? OR guild_two_tag = ?
+			WHERE (guild_one_tag = ? OR guild_two_tag = ?)
+			AND (status != 'truce' OR expires_at > datetime('now'))
 		`).all(guildTag, guildTag);
 
 		const attitude = guildInfo.attitude || 'Neutral';
@@ -1648,7 +1649,7 @@ async function handleFullInfo(interaction) {
 	catch (error) {
 		console.error('Error in handleFullInfo:', error);
 		const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Error').setDescription('An error occurred while fetching guild info.');
-		await interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		await interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 }
 
@@ -1781,7 +1782,11 @@ async function buildDetailEmbed(guildTag, view, interaction, parts) {
         `).get(guildTag);
 
 		// --- Diplomacy Info ---
-		const relationships = db.prepare('SELECT * FROM guild_relationships WHERE guild_one_tag = ? OR guild_two_tag = ?').all(guildTag, guildTag);
+		const relationships = db.prepare(`
+			SELECT * FROM guild_relationships 
+			WHERE (guild_one_tag = ? OR guild_two_tag = ?)
+			AND (status != 'truce' OR expires_at > datetime('now'))
+		`).all(guildTag, guildTag);
 		const allies = relationships.filter(r => r.status === 'alliance').map(r => `[${r.guild_one_tag === guildTag ? r.guild_two_tag : r.guild_one_tag}]`);
 		const enemies = relationships.filter(r => r.status === 'enemy').map(r => `[${r.guild_one_tag === guildTag ? r.guild_two_tag : r.guild_one_tag}]`);
 		const truces = relationships.filter(r => r.status === 'truce').map(r => `[${r.guild_one_tag === guildTag ? r.guild_two_tag : r.guild_one_tag}]`);
@@ -1922,9 +1927,9 @@ async function handleGuildInfoButton(interaction) {
 		if (action === 'main') {
 			const payload = await buildMainMenuEmbed(guildTag);
 			if (!payload) {
-				return interaction.reply({ content: 'This guild no longer exists.', flags: [MessageFlags.Ephemeral] });
+				return interaction.reply({ content: 'This guild no longer exists.', flags: MessageFlags.Ephemeral });
 			}
-			return interaction.reply({ ...payload, flags: [MessageFlags.Ephemeral] });
+			return interaction.reply({ ...payload, flags: MessageFlags.Ephemeral });
 		}
 
 		await interaction.deferUpdate();
@@ -1958,7 +1963,7 @@ async function handleGuildInfoButton(interaction) {
 				options: { getString: () => guildTag },
 				client: interaction.client,
 				member: interaction.member,
-				reply: (options) => interaction.followUp({ ...options, flags: [MessageFlags.Ephemeral] }),
+				reply: (options) => interaction.followUp({ ...options, flags: MessageFlags.Ephemeral }),
 			};
 			await handleJoin(mockInteraction);
 			break;
@@ -1972,10 +1977,10 @@ async function handleGuildInfoButton(interaction) {
 	catch (error) {
 		console.error(`Error in handleGuildInfoButton (action: ${action}):`, error);
 		if (!interaction.replied && !interaction.deferred) {
-			await interaction.reply({ content: 'An error occurred while building this menu.', flags: [MessageFlags.Ephemeral] });
+			await interaction.reply({ content: 'An error occurred while building this menu.', flags: MessageFlags.Ephemeral });
 		}
 		else {
-			await interaction.followUp({ content: 'An error occurred while building this menu.', flags: [MessageFlags.Ephemeral] });
+			await interaction.followUp({ content: 'An error occurred while building this menu.', flags: MessageFlags.Ephemeral });
 		}
 	}
 }
@@ -1994,7 +1999,7 @@ async function handleBequeath(interaction) {
 
 	if (!currentGuild) {
 		errorEmbed.setDescription('You must be the owner of a guild to transfer ownership!');
-		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 
 	// Check if new owner is in the same guild
@@ -2007,7 +2012,7 @@ async function handleBequeath(interaction) {
 		errorEmbed.setDescription(`${newOwnerUser} is not a member of your guild!`);
 		return interaction.reply({
 			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 
@@ -2040,7 +2045,7 @@ async function handleBequeath(interaction) {
 			.setDescription(`You have successfully transferred ownership of **${currentGuild.guild_name} [${currentGuild.guild_tag}]** to ${newOwnerUser}.`);
 		return interaction.reply({
 			embeds: [successEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 	catch (error) {
@@ -2048,7 +2053,7 @@ async function handleBequeath(interaction) {
 		errorEmbed.setTitle('❌ Transaction Error').setDescription('An unexpected error occurred while transferring ownership. The operation has been rolled back.');
 		return interaction.reply({
 			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 }
@@ -2069,7 +2074,7 @@ async function handleSettings(interaction, settingType) {
 		errorEmbed.setDescription('You must be the owner or vice-guildmaster of a guild to change its settings!');
 		return interaction.reply({
 			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 	if (settingType === 'raid_messages') {
@@ -2087,7 +2092,7 @@ async function handleSettings(interaction, settingType) {
 				if (new Date() < nextChange) {
 					errorEmbed.setTitle('Attitude Locked')
 						.setDescription(`You can change your guild's attitude again <t:${Math.floor(nextChange.getTime() / 1000)}:R>.`);
-					return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+					return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 				}
 			}
 
@@ -2099,7 +2104,7 @@ async function handleSettings(interaction, settingType) {
 
 			successEmbed.setTitle('✅ Attitude Updated')
 				.setDescription(`Your guild's public attitude is now set to **${style}**. You will not be able to change it again for 7 days.`);
-			return interaction.reply({ embeds: [successEmbed], flags: [MessageFlags.Ephemeral] });
+			return interaction.reply({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
 		}
 		case 'name': {
 			const newName = interaction.options.getString('new_name');
@@ -2108,12 +2113,12 @@ async function handleSettings(interaction, settingType) {
 				errorEmbed.setDescription('Guild name can only contain letters, numbers, and spaces!');
 				return interaction.reply({
 					embeds: [errorEmbed],
-					flags: [MessageFlags.Ephemeral],
+					flags: MessageFlags.Ephemeral,
 				});
 			}
 			if (newName.length < 3 || newName.length > 35) {
 				errorEmbed.setDescription('Guild name must be between 3 and 35 characters!');
-				return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+				return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 			}
 
 			// Validate against reserved terms
@@ -2124,7 +2129,7 @@ async function handleSettings(interaction, settingType) {
 
 			if (hasReservedTerm) {
 				errorEmbed.setDescription(`That guild name contains restricted terms. Please choose another name.\nAvoid terms like: ${RESERVED_TERMS.join(', ')}`);
-				return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+				return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 			}
 
 
@@ -2138,7 +2143,7 @@ async function handleSettings(interaction, settingType) {
 			successEmbed.setDescription(`Guild name updated to **"${newName}"**`);
 			return interaction.reply({
 				embeds: [successEmbed],
-				flags: [MessageFlags.Ephemeral],
+				flags: MessageFlags.Ephemeral,
 			});
 		}
 
@@ -2151,7 +2156,7 @@ async function handleSettings(interaction, settingType) {
 				errorEmbed.setDescription('Guild tag must be exactly 3 uppercase letters!');
 				return interaction.reply({
 					embeds: [errorEmbed],
-					flags: [MessageFlags.Ephemeral],
+					flags: MessageFlags.Ephemeral,
 				});
 			}
 
@@ -2162,7 +2167,7 @@ async function handleSettings(interaction, settingType) {
 				errorEmbed.setDescription('That tag is already taken by another guild!');
 				return interaction.reply({
 					embeds: [errorEmbed],
-					flags: [MessageFlags.Ephemeral],
+					flags: MessageFlags.Ephemeral,
 				});
 			}
 
@@ -2206,7 +2211,7 @@ async function handleSettings(interaction, settingType) {
 				successEmbed.setDescription(`Guild tag successfully updated from **[${oldTag}]** to **[${newTag}]**.`);
 				return interaction.reply({
 					embeds: [successEmbed],
-					flags: [MessageFlags.Ephemeral],
+					flags: MessageFlags.Ephemeral,
 				});
 			}
 			catch (error) {
@@ -2216,7 +2221,7 @@ async function handleSettings(interaction, settingType) {
 				errorEmbed.setTitle('❌ Critical Error: Tag Update Failed').setDescription('A major error occurred while updating the guild tag. The database has been reverted. Please contact support.');
 				return interaction.reply({
 					embeds: [errorEmbed],
-					flags: [MessageFlags.Ephemeral],
+					flags: MessageFlags.Ephemeral,
 				});
 			}
 		}
@@ -2231,7 +2236,7 @@ async function handleSettings(interaction, settingType) {
 			successEmbed.setDescription(`Your guild is now **${status.toUpperCase()}** to new members.`);
 			return interaction.reply({
 				embeds: [successEmbed],
-				flags: [MessageFlags.Ephemeral],
+				flags: MessageFlags.Ephemeral,
 			});
 		}
 
@@ -2250,7 +2255,7 @@ async function handleSettings(interaction, settingType) {
 			successEmbed.setDescription(`Your guild's public channel has been renamed to ${channel}.`);
 			return interaction.reply({
 				embeds: [successEmbed],
-				flags: [MessageFlags.Ephemeral],
+				flags: MessageFlags.Ephemeral,
 			});
 		}
 		case 'motto': {
@@ -2260,7 +2265,7 @@ async function handleSettings(interaction, settingType) {
 			successEmbed.setTitle('✅ Motto Updated').setDescription(`Your new guild motto is now: *"${text}"*`);
 			return interaction.reply({
 				embeds: [successEmbed],
-				flags: [MessageFlags.Ephemeral],
+				flags: MessageFlags.Ephemeral,
 			});
 		}
 		case 'hook': {
@@ -2269,7 +2274,7 @@ async function handleSettings(interaction, settingType) {
 				errorEmbed.setDescription('Hook text cannot exceed 150 characters!');
 				return interaction.reply({
 					embeds: [errorEmbed],
-					flags: [MessageFlags.Ephemeral],
+					flags: MessageFlags.Ephemeral,
 				});
 			}
 			db.prepare('UPDATE guild_list SET hook = ? WHERE guild_tag = ?')
@@ -2277,7 +2282,7 @@ async function handleSettings(interaction, settingType) {
 			successEmbed.setTitle('✅ Hook Updated').setDescription(`Your guild's hook is now set:\n*_"${text}"_*`);
 			return interaction.reply({
 				embeds: [successEmbed],
-				flags: [MessageFlags.Ephemeral],
+				flags: MessageFlags.Ephemeral,
 			});
 		}
 		case 'lore': {
@@ -2286,7 +2291,7 @@ async function handleSettings(interaction, settingType) {
 				errorEmbed.setDescription('Lore text cannot exceed 4000 characters!');
 				return interaction.reply({
 					embeds: [errorEmbed],
-					flags: [MessageFlags.Ephemeral],
+					flags: MessageFlags.Ephemeral,
 				});
 			}
 			db.prepare('UPDATE guild_list SET lore = ? WHERE guild_tag = ?')
@@ -2294,7 +2299,7 @@ async function handleSettings(interaction, settingType) {
 			successEmbed.setTitle('✅ Lore Updated').setDescription('Your guild\'s lore has been successfully updated.');
 			return interaction.reply({
 				embeds: [successEmbed],
-				flags: [MessageFlags.Ephemeral],
+				flags: MessageFlags.Ephemeral,
 			});
 		}
 		case 'role': {
@@ -2305,7 +2310,7 @@ async function handleSettings(interaction, settingType) {
 			successEmbed.setDescription(`Your guild role has been renamed to ${role}.`);
 			return interaction.reply({
 				embeds: [successEmbed],
-				flags: [MessageFlags.Ephemeral],
+				flags: MessageFlags.Ephemeral,
 			});
 		}
 		case 'promote': {
@@ -2314,22 +2319,22 @@ async function handleSettings(interaction, settingType) {
 			const targetMember = db.prepare('SELECT * FROM guildmember_tracking WHERE user_id = ? AND guild_tag = ?').get(targetUser.id, guildData.guild_tag);
 			if (!targetMember) {
 				errorEmbed.setDescription(`${targetUser.username} is not in your guild.`);
-				return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+				return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 			}
 			if (targetMember.owner === 1 || targetMember.vice_gm === 1) {
 				errorEmbed.setDescription(`${targetUser.username} already holds a leadership position.`);
-				return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+				return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 			}
 			// Optional: Check if there is already a vice gm
 			const existingViceGm = db.prepare('SELECT 1 FROM guildmember_tracking WHERE guild_tag = ? AND vice_gm = 1').get(guildData.guild_tag);
 			if (existingViceGm) {
 				errorEmbed.setDescription('Your guild already has a Vice Guildmaster. Demote them first before promoting another.');
-				return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+				return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 			}
 
 			db.prepare('UPDATE guildmember_tracking SET vice_gm = 1 WHERE user_id = ? AND guild_tag = ?').run(targetUser.id, guildData.guild_tag);
 			successEmbed.setTitle('👑 Promotion!').setDescription(`${targetUser.username} has been promoted to **Vice Guildmaster**!`);
-			return interaction.reply({ embeds: [successEmbed], flags: [MessageFlags.Ephemeral] });
+			return interaction.reply({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
 		}
 		case 'demote': {
 			const targetUser = interaction.options.getUser('user');
@@ -2337,16 +2342,16 @@ async function handleSettings(interaction, settingType) {
 			const targetMember = db.prepare('SELECT * FROM guildmember_tracking WHERE user_id = ? AND guild_tag = ?').get(targetUser.id, guildData.guild_tag);
 			if (!targetMember) {
 				errorEmbed.setDescription(`${targetUser.username} is not in your guild.`);
-				return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+				return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 			}
 			if (targetMember.vice_gm !== 1) {
 				errorEmbed.setDescription(`${targetUser.username} is not a Vice Guildmaster.`);
-				return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+				return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 			}
 
 			db.prepare('UPDATE guildmember_tracking SET vice_gm = 0 WHERE user_id = ? AND guild_tag = ?').run(targetUser.id, guildData.guild_tag);
 			successEmbed.setDescription(`✅ ${targetUser.username} has been demoted to a regular member.`);
-			return interaction.reply({ embeds: [successEmbed], flags: [MessageFlags.Ephemeral] });
+			return interaction.reply({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
 		}
 		case 'member_title': {
 			const newTitle = interaction.options.getString('title');
@@ -2355,14 +2360,14 @@ async function handleSettings(interaction, settingType) {
 			successEmbed.setDescription(`Your guild members will now be known as **${newTitle}**!`);
 			return interaction.reply({
 				embeds: [successEmbed],
-				flags: [MessageFlags.Ephemeral],
+				flags: MessageFlags.Ephemeral,
 			});
 		}
 
 		case 'emoji': {
 			if (!interaction.guild.members.me.permissions.has('ManageEmojisAndStickers')) {
 				errorEmbed.setDescription('❌ I need the "Manage Emojis and Stickers" permission to do this!');
-				return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+				return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 			}
 
 			const existingDefault = db.prepare('SELECT * FROM guild_emojis WHERE guild_tag = ? AND is_default = 1').get(guildData.guild_tag);
@@ -2372,7 +2377,7 @@ async function handleSettings(interaction, settingType) {
 		case 'sticker': {
 			if (!interaction.guild.members.me.permissions.has('ManageEmojisAndStickers')) {
 				errorEmbed.setDescription('❌ I need the "Manage Emojis and Stickers" permission to do this!');
-				return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+				return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 			}
 
 			const existingSticker = db.prepare('SELECT * FROM guild_stickers WHERE guild_tag = ?').get(guildData.guild_tag);
@@ -2389,7 +2394,7 @@ async function handleSettings(interaction, settingType) {
 			.setDescription('An unexpected error occurred. Please try again later.');
 		return interaction.reply({
 			embeds: [finalErrorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 }
@@ -2413,7 +2418,7 @@ async function processStickerUpdate(interaction, guildData, existingSticker = nu
 			new ButtonBuilder().setCustomId('cancel_replace').setLabel('Cancel').setStyle(ButtonStyle.Secondary),
 		);
 
-		await interaction.reply({ embeds: [confirmEmbed], components: [row], flags: [MessageFlags.Ephemeral] });
+		await interaction.reply({ embeds: [confirmEmbed], components: [row], flags: MessageFlags.Ephemeral });
 
 		const filter = i => i.user.id === interaction.user.id;
 		const collector = interaction.channel.createMessageComponentCollector({ filter, time: 60000, max: 1 });
@@ -2432,7 +2437,7 @@ async function processStickerUpdate(interaction, guildData, existingSticker = nu
 	}
 
 	// If no sticker exists, proceed directly
-	await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
+	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 	await collectAndCreateSticker(interaction, guildData, null);;
 }
 async function collectAndCreateSticker(interaction, guildData, existingSticker) {
@@ -2586,7 +2591,7 @@ async function processEmojiUpdate(interaction, guildData, existingDefault = null
 			new ButtonBuilder().setCustomId('cancel_replace').setLabel('Cancel').setStyle(ButtonStyle.Secondary),
 		);
 
-		await interaction.reply({ embeds: [confirmEmbed], components: [row], flags: [MessageFlags.Ephemeral] });
+		await interaction.reply({ embeds: [confirmEmbed], components: [row], flags: MessageFlags.Ephemeral });
 
 		const filter = i => i.user.id === interaction.user.id;
 		const collector = interaction.channel.createMessageComponentCollector({ filter, time: 60000, max: 1 });
@@ -2597,7 +2602,7 @@ async function processEmojiUpdate(interaction, guildData, existingDefault = null
 				// then send a new follow-up message. This avoids the "Unknown Message" error.
 				await i.deferUpdate();
 				const followUpEmbed = new EmbedBuilder().setColor(0x3498DB).setDescription('Please reply to this message within 2 minutes with the new emoji name and image file.');
-				const followUpMessage = await interaction.followUp({ embeds: [followUpEmbed], fetchReply: true, flags: [MessageFlags.Ephemeral] });
+				const followUpMessage = await interaction.followUp({ embeds: [followUpEmbed], fetchReply: true, flags: MessageFlags.Ephemeral });
 				await collectAndCreateEmoji(interaction, followUpMessage, guildData, existingDefault);
 			}
 			else {
@@ -2610,7 +2615,7 @@ async function processEmojiUpdate(interaction, guildData, existingDefault = null
 
 	// If no emoji exists, proceed directly with the initial reply.
 	const initialEmbed = new EmbedBuilder().setColor(0x3498DB).setDescription('Please reply to this message within 2 minutes with the emoji name and the image file you want to use.');
-	const initialMessage = await interaction.reply({ embeds: [initialEmbed], fetchReply: true, flags: [MessageFlags.Ephemeral] });
+	const initialMessage = await interaction.reply({ embeds: [initialEmbed], fetchReply: true, flags: MessageFlags.Ephemeral });
 	await collectAndCreateEmoji(interaction, initialMessage, guildData, null);
 }
 
@@ -2630,7 +2635,7 @@ async function collectAndCreateEmoji(interaction, messageToEdit, guildData, exis
 			const processingEmbed = new EmbedBuilder().setColor(0x3498DB).setDescription('Processing your emoji...');
 			await interaction.followUp({
 				embeds: [processingEmbed],
-				flags: [MessageFlags.Ephemeral],
+				flags: MessageFlags.Ephemeral,
 			});
 
 			let newEmoji;
@@ -2657,7 +2662,7 @@ async function collectAndCreateEmoji(interaction, messageToEdit, guildData, exis
 				const successEmbed = new EmbedBuilder().setColor(0x2ECC71).setDescription(`✅ Success! Your new default guild emoji is ${newEmoji}.`);
 				await interaction.followUp({
 					embeds: [successEmbed],
-					flags: [MessageFlags.Ephemeral],
+					flags: MessageFlags.Ephemeral,
 				});
 				await m.delete().catch(console.error);
 			}
@@ -2666,7 +2671,7 @@ async function collectAndCreateEmoji(interaction, messageToEdit, guildData, exis
 				const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setDescription('❌ An error occurred. This could be because the server is full of emojis, the image was too large, or the name was invalid. Please try again.');
 				await interaction.followUp({
 					embeds: [errorEmbed],
-					flags: [MessageFlags.Ephemeral],
+					flags: MessageFlags.Ephemeral,
 				});
 			}
 		}
@@ -2675,7 +2680,7 @@ async function collectAndCreateEmoji(interaction, messageToEdit, guildData, exis
 			const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setDescription('❌ An error occurred while processing your emoji.');
 			await interaction.followUp({
 				embeds: [errorEmbed],
-				flags: [MessageFlags.Ephemeral],
+				flags: MessageFlags.Ephemeral,
 			});
 		}
 	});
@@ -2685,7 +2690,7 @@ async function collectAndCreateEmoji(interaction, messageToEdit, guildData, exis
 			const timeoutEmbed = new EmbedBuilder().setColor(0xFEE75C).setDescription('You did not reply in time. The process has been cancelled.');
 			interaction.followUp({
 				embeds: [timeoutEmbed],
-				flags: [MessageFlags.Ephemeral],
+				flags: MessageFlags.Ephemeral,
 			}).catch((error) => { console.log('Couldn\'t delete message: ' + error); });
 		}
 	});
@@ -2761,7 +2766,7 @@ async function handleList(interaction) {
 			.setDescription('Failed to load the guild list.');
 		await interaction.reply({
 			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 }
@@ -2783,7 +2788,7 @@ async function handleFundraise(interaction) {
 		errorEmbed.setDescription('You must be in a guild to start a fundraiser!');
 		return interaction.reply({
 			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 
@@ -2791,7 +2796,7 @@ async function handleFundraise(interaction) {
 		errorEmbed.setDescription('You must be the guildmaster or vice-guildmaster to start a fundraiser!');
 		return interaction.reply({
 			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 
@@ -2877,7 +2882,7 @@ async function handleJoin(interaction) {
 		errorEmbed.setDescription('You\'re already in a guild! Leave it first before joining another.');
 		return interaction.reply({
 			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 
@@ -2887,7 +2892,7 @@ async function handleJoin(interaction) {
 		errorEmbed.setDescription('No guild found with that tag!');
 		return interaction.reply({
 			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 
@@ -2896,7 +2901,7 @@ async function handleJoin(interaction) {
 		errorEmbed.setDescription('This guild is invite only! Ask the owner for an invitation.');
 		return interaction.reply({
 			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 
@@ -2912,7 +2917,7 @@ async function handleJoin(interaction) {
 		else if (!member) {
 			// Handle case where member couldn't be fetched
 			errorEmbed.setDescription('An error occurred trying to find your profile on this server.');
-			return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+			return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 		}
 
 		// Add to database
@@ -2936,7 +2941,7 @@ async function handleJoin(interaction) {
 
 		return interaction.reply({
 			embeds: [joinEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 	catch (error) {
@@ -2944,7 +2949,7 @@ async function handleJoin(interaction) {
 		errorEmbed.setTitle('❌ Join Error').setDescription('An unexpected error occurred while joining the guild.');
 		return interaction.reply({
 			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 }
@@ -2990,7 +2995,7 @@ async function handleUpgrade(interaction) {
 		errorEmbed.setDescription('You must be the owner or vice-guildmaster of a guild to upgrade it!');
 		return interaction.reply({
 			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 
@@ -3000,7 +3005,7 @@ async function handleUpgrade(interaction) {
 		errorEmbed.setTitle('✅ Max Tier Reached').setDescription('Your guild is already at the maximum tier!').setColor(0x2ECC71);
 		return interaction.reply({
 			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 	// Get upgrade cost for the *next* tier
@@ -3011,7 +3016,7 @@ async function handleUpgrade(interaction) {
 		errorEmbed.setDescription(`Your guild needs **${cost.toLocaleString()}** crowns in the vault to upgrade to **${name}**! Your current balance is **${guildData.balance.toLocaleString()}**.`);
 		return interaction.reply({
 			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 
@@ -3045,7 +3050,7 @@ async function handleUpgrade(interaction) {
 	await interaction.reply({
 		embeds: [confirmEmbed],
 		components: [confirmRow],
-		flags: [MessageFlags.Ephemeral],
+		flags: MessageFlags.Ephemeral,
 	});
 }
 async function handleRaidAutocomplete(interaction) {
@@ -3179,7 +3184,8 @@ async function notifyAlliesAndEnemies(interaction, raidId, attackerData, defende
 				.setDescription(`Your ally, **${defenderData.guild_name}**, is under attack by **${attackerData.guild_name}**! Your aid is requested in their public channel: <#${defenderData.public_channel_id}>`);
 			try {
 				const channel = await interaction.client.channels.fetch(ally.channel_id);
-				await channel.send({ content: `<@&${ally.role_id}>`, embeds: [embed], components: [callToArmsRow] });
+				const content = ally.role_id ? `<@&${ally.role_id}>` : undefined;
+				await channel.send({ content, embeds: [embed], components: [callToArmsRow] });
 			}
 			catch (e) {
 				console.error(`Failed to notify ally ${ally.ally_tag}:`, e);
@@ -3195,7 +3201,8 @@ async function notifyAlliesAndEnemies(interaction, raidId, attackerData, defende
 				.setDescription(`Your enemy, **${attackerData.guild_name}**, has declared war on **${defenderData.guild_name}**! Now is your chance to join the fray in their public channel: <#${defenderData.public_channel_id}>`);
 			try {
 				const channel = await interaction.client.channels.fetch(enemy.channel_id);
-				await channel.send({ content: `<@&${enemy.role_id}>`, embeds: [embed], components: [callToArmsRow] });
+				const content = enemy.role_id ? `<@&${enemy.role_id}>` : undefined;
+				await channel.send({ content, embeds: [embed], components: [callToArmsRow] });
 			}
 			catch (e) {
 				console.error(`Failed to notify enemy ${enemy.enemy_tag}:`, e);
@@ -3276,7 +3283,7 @@ async function handleRaidStats(interaction) {
 			.setDescription('An error occurred while fetching raid statistics.');
 		await interaction.reply({
 			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 }
@@ -3288,7 +3295,7 @@ async function handleRaidStats(interaction) {
  * @param {number} tier
  * @returns {number}
  */
-async function getRaidCooldownHours(attitude, tier) {
+function getRaidCooldownHours(attitude, tier) {
 	let hours = 24;
 	if (attitude === 'Aggressive') {
 		if (tier >= 13) hours -= 16;
@@ -3307,7 +3314,11 @@ async function handleRaid(interaction) {
 	const attackerGuildTag = db.prepare('SELECT guild_tag FROM guildmember_tracking WHERE user_id = ?').get(userId)?.guild_tag;
 	if (attackerGuildTag) {
 		const tags = [attackerGuildTag, guildTag].sort();
-		const relationship = db.prepare('SELECT * FROM guild_relationships WHERE guild_one_tag = ? AND guild_two_tag = ?').get(tags[0], tags[1]);
+		const relationship = db.prepare(`
+			SELECT * FROM guild_relationships 
+			WHERE guild_one_tag = ? AND guild_two_tag = ? 
+			AND (status != 'truce' OR expires_at > datetime('now'))
+		`).get(tags[0], tags[1]);
 
 		if (relationship) {
 			if (relationship.status === 'alliance') {
@@ -3343,7 +3354,7 @@ async function handleRaid(interaction) {
 		errorEmbed.setDescription('You must be in a guild to raid!');
 		return interaction.reply({
 			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 
@@ -3368,7 +3379,7 @@ async function handleRaid(interaction) {
 		errorEmbed.setDescription('No guild found with that tag!');
 		return interaction.reply({
 			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 
@@ -3377,7 +3388,7 @@ async function handleRaid(interaction) {
 		errorEmbed.setDescription('You cannot raid your own guild!');
 		return interaction.reply({
 			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 
@@ -3388,7 +3399,7 @@ async function handleRaid(interaction) {
 		errorEmbed.setDescription('This guild is currently in the middle of another war! Try again in a few minutes.');
 		return interaction.reply({
 			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 
@@ -3401,7 +3412,7 @@ async function handleRaid(interaction) {
 		errorEmbed.setDescription(`This guild is protected by New Guild Protection (7 days), which expires <t:${Math.floor((creationDate.getTime() + (7 * 24 * 60 * 60 * 1000)) / 1000)}:R>`);
 		return interaction.reply({
 			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 
@@ -3412,7 +3423,7 @@ async function handleRaid(interaction) {
 			errorEmbed.setDescription(`This guild is protected by a raid shield until <t:${Math.floor(shieldExpiry.getTime() / 1000)}:R>!`);
 			return interaction.reply({
 				embeds: [errorEmbed],
-				flags: [MessageFlags.Ephemeral],
+				flags: MessageFlags.Ephemeral,
 			});
 		}
 	}
@@ -3433,7 +3444,7 @@ async function handleRaid(interaction) {
 		errorEmbed.setDescription(`Your guild needs **${raidCost.toLocaleString()}** crowns in the guild vault to declare war (Tier ${attackerGuild.tier} * 200)!`);
 		return interaction.reply({
 			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 
@@ -3444,7 +3455,7 @@ async function handleRaid(interaction) {
 
 	if (attackerCooldown?.last_raid_time) {
 		// Determine the correct cooldown duration for this guild
-		const cooldownHours = await getRaidCooldownHours(attackerGuild.attitude, attackerGuild.tier);
+		const cooldownHours = getRaidCooldownHours(attackerGuild.attitude, attackerGuild.tier);
 
 		const lastRaid = new Date(attackerCooldown.last_raid_time);
 		const hoursSinceLastRaid = (now - lastRaid) / (1000 * 60 * 60);
@@ -3454,7 +3465,7 @@ async function handleRaid(interaction) {
 			errorEmbed.setDescription(`Your guild can declare war again <t:${Math.floor(nextRaidTime.getTime() / 1000)}:R>!`);
 			return interaction.reply({
 				embeds: [errorEmbed],
-				flags: [MessageFlags.Ephemeral],
+				flags: MessageFlags.Ephemeral,
 			});
 		}
 	}
@@ -3484,7 +3495,7 @@ async function handleRaid(interaction) {
 	await interaction.reply({
 		embeds: [confirmEmbed],
 		components: [confirmRow],
-		flags: [MessageFlags.Ephemeral],
+		flags: MessageFlags.Ephemeral,
 	});
 }
 async function handleShield(interaction) {
@@ -3510,7 +3521,7 @@ async function handleShield(interaction) {
 		errorEmbed.setDescription('You must be the owner or vice-guildmaster of a guild to purchase a shield!');
 		return interaction.reply({
 			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 
@@ -3532,7 +3543,7 @@ async function handleShield(interaction) {
 			.setDescription(`Since your guild is less than 7 days old, you have a __New Guild Protection__ shield, and don't need to buy one right now.\nThis ends <t:${Math.floor(protectionEnd.getTime() / 1000)}:R>!`);
 		return interaction.reply({
 			embeds: [protectionEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 
@@ -3545,7 +3556,7 @@ async function handleShield(interaction) {
 				.setDescription(`Your guild already has a shield active until <t:${Math.floor(expiry.getTime() / 1000)}:R>!`);
 			return interaction.reply({
 				embeds: [activeEmbed],
-				flags: [MessageFlags.Ephemeral],
+				flags: MessageFlags.Ephemeral,
 			});
 		}
 	}
@@ -3562,7 +3573,7 @@ async function handleShield(interaction) {
 		errorEmbed.setDescription(`Your guild needs **${cost.toLocaleString()}** crowns in the vault to purchase a shield!`);
 		return interaction.reply({
 			embeds: [errorEmbed],
-			flags: [MessageFlags.Ephemeral],
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 
@@ -3590,7 +3601,7 @@ async function handleShield(interaction) {
 	await interaction.reply({
 		embeds: [confirmEmbed],
 		components: [confirmRow],
-		flags: [MessageFlags.Ephemeral],
+		flags: MessageFlags.Ephemeral,
 	});
 }
 
@@ -3650,6 +3661,7 @@ function getTierPowerBonus(tier) {
  * @returns {{chance: number, triggeredBy: string|null}} - The final chance (0-1) and the name of the guild that triggered it.
  */
 function calculateCataclysmicFailureChance(primaryDefender, defendingAllies) {
+	// Unit tests have been conducted via external testing file raiddebugger.js, and are confirmed set up as intended.
 	let highestChance = 0;
 	let triggeredBy = null;
 
@@ -3786,7 +3798,10 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 
 		const isNeutralDefender = finalDefenderData.attitude === 'Neutral';
 
-		// 1. Calculate Attitude Bonuses for all participants
+		// 1. Calculate Attitude Bonuses for all participants that are present in the battle
+		// If attackers/defenders have not clicked the join button, they do not get their attitude bonuses.
+		// Mechanics are set up so that it filters through all current participants on both sides, and doesn't include anyone by default to encourage active participation
+		// It is an intended feature to not give anyone default stats without doing anything.
 		if (!isNeutralDefender) {
 			for (const participant of allParticipants) {
 				const attitude = db.prepare('SELECT attitude FROM guild_list WHERE guild_tag = ?').get(participant.allied_guild_tag)?.attitude;
@@ -3993,6 +4008,14 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 		db.prepare('DELETE FROM active_raid_allies WHERE raid_id = ?').run(raidId);
 	}
 }
+/**
+ * Distributes opportunist winnings to victorious opportunist guilds.
+ * Splits 2x wager_pot evenly among winners and zeroes the pot atomically.
+ * @param {number} raidId
+ * @param {'attacker'|'defender'} participantsSide
+ * @param {Array<{ allied_guild_tag: string }>} participants
+ * @returns {Promise<string>}
+ */
 async function processOpportunistPayouts(raidId, participantsSide, participants) {
 	let opportunistWinningsText = '';
 	const raidPot = db.prepare('SELECT wager_pot FROM raid_history WHERE id = ?').get(raidId)?.wager_pot || 0;
@@ -4014,6 +4037,8 @@ async function processOpportunistPayouts(raidId, participantsSide, participants)
 							throw new Error(`Failed to update balance for guild ${winner.allied_guild_tag}; it may no longer exist.`);
 						}
 					}
+					// Clear the pot after successful distribution
+					db.prepare('UPDATE raid_history SET wager_pot = 0 WHERE id = ?').run(raidId);
 				})();
 				opportunistWinningsText = `\n\n**Opportunist Wagers Won:**\nEach of the **${opportunistWinners.length}** winning opportunists has claimed **${individualWinnings.toLocaleString()}** Crowns!`;
 			}
@@ -4045,7 +4070,7 @@ async function handleDiplomacy(interaction, action) {
 
 	if (!guildData) {
 		errorEmbed.setDescription('You must be a Guildmaster or Vice-GM to manage diplomacy.');
-		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 
 	if (action === 'view') {
@@ -4056,17 +4081,17 @@ async function handleDiplomacy(interaction, action) {
 
 	if (!/^[A-Z]{3}$/.test(targetTag)) {
 		errorEmbed.setDescription('Guild tag must be exactly 3 uppercase letters!');
-		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 
 	if (targetTag === guildData.guild_tag) {
 		errorEmbed.setDescription('You cannot perform diplomatic actions with your own guild.');
-		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 	const targetGuild = db.prepare('SELECT guild_name FROM guild_list WHERE guild_tag = ?').get(targetTag);
 	if (!targetGuild) {
 		errorEmbed.setDescription(`No guild found with the tag [${targetTag}].`);
-		return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 
 	switch (action) {
@@ -4084,7 +4109,8 @@ async function handleDiplomacy(interaction, action) {
 async function handleViewRelationships(interaction, guildData) {
 	const relationships = db.prepare(`
 		SELECT * FROM guild_relationships 
-		WHERE guild_one_tag = ? OR guild_two_tag = ?
+		WHERE (guild_one_tag = ? OR guild_two_tag = ?)
+		AND (status != 'truce' OR expires_at > datetime('now'))
 	`).all(guildData.guild_tag, guildData.guild_tag);
 
 	const embed = new EmbedBuilder()
@@ -4102,7 +4128,7 @@ async function handleViewRelationships(interaction, guildData) {
 		{ name: '🕊️ Truces', value: truces.length > 0 ? truces.map(r => `• [${r.guild_one_tag === guildData.guild_tag ? r.guild_two_tag : r.guild_one_tag}] (Expires <t:${Math.floor(new Date(r.expires_at).getTime() / 1000)}:R>)`).join('\n') : '*None*', inline: true },
 	);
 
-	await interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+	await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 }
 
 async function handleDiplomacyOffer(interaction, guildData, targetGuild, targetTag) {
@@ -4110,18 +4136,23 @@ async function handleDiplomacyOffer(interaction, guildData, targetGuild, targetT
 	const durationDays = interaction.options.getInteger('duration_days');
 
 	if (type === 'truce' && (!durationDays || durationDays <= 0)) {
-		return interaction.reply({ content: 'You must provide a positive duration in days for a truce.', flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ content: 'You must provide a positive duration in days for a truce.', flags: MessageFlags.Ephemeral });
 	}
 
 	const tags = [guildData.guild_tag, targetTag].sort();
-	const existing = db.prepare('SELECT * FROM guild_relationships WHERE guild_one_tag = ? AND guild_two_tag = ?').get(tags[0], tags[1]);
+	const existing = db.prepare(`
+		SELECT * FROM guild_relationships 
+		WHERE guild_one_tag = ? AND guild_two_tag = ? 
+		AND (status != 'truce' OR expires_at > datetime('now'))
+	`).get(tags[0], tags[1]);
+
 	if (existing) {
-		return interaction.reply({ content: `You already have a diplomatic relationship (${existing.status}) with this guild.`, flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ content: `You already have a diplomatic relationship (${existing.status}) with this guild.`, flags: MessageFlags.Ephemeral });
 	}
 
 	const targetGuildData = db.prepare('SELECT channel_id FROM guild_list WHERE guild_tag = ?').get(targetTag);
 	if (!targetGuildData?.channel_id) {
-		return interaction.reply({ content: 'Cannot send offer: Target guild\'s private channel not found.', flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ content: 'Cannot send offer: Target guild\'s private channel not found.', flags: MessageFlags.Ephemeral });
 	}
 
 	try {
@@ -4143,29 +4174,29 @@ async function handleDiplomacyOffer(interaction, guildData, targetGuild, targetT
 		);
 
 		await targetChannel.send({ embeds: [embed], components: [row] });
-		await interaction.reply({ content: `Your ${type} offer has been sent to [${targetTag}].`, flags: [MessageFlags.Ephemeral] });
+		await interaction.reply({ content: `Your ${type} offer has been sent to [${targetTag}].`, flags: MessageFlags.Ephemeral });
 	}
 	catch (error) {
 		console.error('Diplomacy offer error:', error);
-		await interaction.reply({ content: 'Failed to send the offer. The target guild\'s channel may be inaccessible.', flags: [MessageFlags.Ephemeral] });
+		await interaction.reply({ content: 'Failed to send the offer. The target guild\'s channel may be inaccessible.', flags: MessageFlags.Ephemeral });
 	}
 }
 
 async function handleDeclareEnemy(interaction, guildData, targetGuild, targetTag) {
 	const targetAttitude = db.prepare('SELECT attitude FROM guild_list WHERE guild_tag = ?').get(targetTag)?.attitude;
 	if (targetAttitude === 'Neutral') {
-		return interaction.reply({ content: `You cannot declare war on **${targetGuild.guild_name}**. As a Neutral guild, they are exempt from being declared enemies.`, flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ content: `You cannot declare war on **${targetGuild.guild_name}**. As a Neutral guild, they are exempt from being declared enemies.`, flags: MessageFlags.Ephemeral });
 	}
 	const tags = [guildData.guild_tag, targetTag].sort();
 
 	const cooldown = db.prepare('SELECT * FROM diplomacy_cooldowns WHERE guild_one_tag = ? AND guild_two_tag = ? AND cooldown_type = ?').get(tags[0], tags[1], 'enemy_declaration');
 	if (cooldown && new Date(cooldown.expires_at) > new Date()) {
-		return interaction.reply({ content: `You cannot declare this guild as an enemy again so soon. The cooldown ends <t:${Math.floor(new Date(cooldown.expires_at).getTime() / 1000)}:R>.`, flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ content: `You cannot declare this guild as an enemy again so soon. The cooldown ends <t:${Math.floor(new Date(cooldown.expires_at).getTime() / 1000)}:R>.`, flags: MessageFlags.Ephemeral });
 	}
 
 	const existing = db.prepare('SELECT * FROM guild_relationships WHERE guild_one_tag = ? AND guild_two_tag = ?').get(tags[0], tags[1]);
 	if (existing) {
-		return interaction.reply({ content: `You cannot declare an enemy while another relationship (${existing.status}) is active.`, flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ content: `You cannot declare an enemy while another relationship (${existing.status}) is active.`, flags: MessageFlags.Ephemeral });
 	}
 	db.transaction(() => {
 		db.prepare('INSERT INTO guild_relationships (guild_one_tag, guild_two_tag, status, initiator_tag) VALUES (?, ?, ?, ?)')
@@ -4187,7 +4218,7 @@ async function handleDeclareEnemy(interaction, guildData, targetGuild, targetTag
 		.setTimestamp();
 
 	await sendGuildAnnouncement(interaction.client, announceEmbed);
-	await interaction.reply({ content: `You have successfully declared **${targetGuild.guild_name} [${targetTag}]** as your enemy.`, flags: [MessageFlags.Ephemeral] });
+	await interaction.reply({ content: `You have successfully declared **${targetGuild.guild_name} [${targetTag}]** as your enemy.`, flags: MessageFlags.Ephemeral });
 }
 
 async function handleWithdraw(interaction, guildData, targetGuild, targetTag) {
@@ -4195,10 +4226,10 @@ async function handleWithdraw(interaction, guildData, targetGuild, targetTag) {
 	const relationship = db.prepare('SELECT * FROM guild_relationships WHERE guild_one_tag = ? AND guild_two_tag = ?').get(tags[0], tags[1]);
 
 	if (!relationship) {
-		return interaction.reply({ content: 'You have no active relationship with this guild to withdraw from.', flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ content: 'You have no active relationship with this guild to withdraw from.', flags: MessageFlags.Ephemeral });
 	}
 	if (relationship.initiator_tag !== guildData.guild_tag) {
-		return interaction.reply({ content: 'You cannot withdraw from this relationship as you were not the initiator.', flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ content: 'You cannot withdraw from this relationship as you were not the initiator.', flags: MessageFlags.Ephemeral });
 	}
 
 	db.prepare('DELETE FROM guild_relationships WHERE id = ?').run(relationship.id);
@@ -4227,7 +4258,7 @@ async function handleWithdraw(interaction, guildData, targetGuild, targetTag) {
 		.setTimestamp();
 
 	await sendGuildAnnouncement(interaction.client, announceEmbed);
-	await interaction.reply({ content: message, flags: [MessageFlags.Ephemeral] });
+	await interaction.reply({ content: message, flags: MessageFlags.Ephemeral });
 }
 
 async function handleBreak(interaction, guildData, targetGuild, targetTag) {
@@ -4235,7 +4266,7 @@ async function handleBreak(interaction, guildData, targetGuild, targetTag) {
 	const relationship = db.prepare('SELECT * FROM guild_relationships WHERE guild_one_tag = ? AND guild_two_tag = ?').get(tags[0], tags[1]);
 
 	if (!relationship || relationship.status !== 'alliance') {
-		return interaction.reply({ content: 'You do not have an alliance with this guild to break.', flags: [MessageFlags.Ephemeral] });
+		return interaction.reply({ content: 'You do not have an alliance with this guild to break.', flags: MessageFlags.Ephemeral });
 	}
 
 	// Delete the alliance and set the 24h cooldown
@@ -4262,7 +4293,7 @@ async function handleBreak(interaction, guildData, targetGuild, targetTag) {
 
 	await sendGuildAnnouncement(interaction.client, announceEmbed);
 
-	await interaction.reply({ content: `You have broken your alliance with **${targetGuild.guild_name}**. Neither guild may attack the other for 24 hours.`, flags: [MessageFlags.Ephemeral] });
+	await interaction.reply({ content: `You have broken your alliance with **${targetGuild.guild_name}**. Neither guild may attack the other for 24 hours.`, flags: MessageFlags.Ephemeral });
 }
 
 module.exports = {
@@ -4281,7 +4312,7 @@ module.exports = {
 			const userGuild = db.prepare('SELECT gmt.guild_tag, gl.guild_name FROM guildmember_tracking gmt JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag WHERE gmt.user_id = ? AND (gmt.owner = 1 OR gmt.vice_gm = 1)').get(interaction.user.id);
 
 			if (!userGuild || userGuild.guild_tag !== targetTag) {
-				return interaction.reply({ content: 'You are not a leader of the guild this offer was sent to.', flags: [MessageFlags.Ephemeral] });
+				return interaction.reply({ content: 'You are not a leader of the guild this offer was sent to.', flags: MessageFlags.Ephemeral });
 			}
 
 			const initiatorGuild = db.prepare('SELECT guild_name FROM guild_list WHERE guild_tag = ?').get(initiatorTag);
@@ -4370,7 +4401,7 @@ module.exports = {
 
 			if (!guildData) {
 				const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setDescription('This is not for you.');
-				return interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+				return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 			}
 
 			switch (action) {
@@ -4437,7 +4468,7 @@ module.exports = {
 					errorEmbed.setTitle('❌ Not Allowed').setDescription('Only the user who started the fundraiser can cancel it.');
 					return interaction.reply({
 						embeds: [errorEmbed],
-						flags: [MessageFlags.Ephemeral],
+						flags: MessageFlags.Ephemeral,
 					});
 				}
 
@@ -4490,7 +4521,7 @@ module.exports = {
 					errorEmbed.setTitle('❌ Cancellation Error').setDescription('An error occurred while cancelling the fundraiser.');
 					return interaction.reply({
 						embeds: [errorEmbed],
-						flags: [MessageFlags.Ephemeral],
+						flags: MessageFlags.Ephemeral,
 					});
 				}
 				return;
@@ -4522,7 +4553,7 @@ module.exports = {
 				errorEmbed.setTitle('❌ Not a Member').setDescription('Only guild members can contribute to this fundraiser!');
 				return interaction.reply({
 					embeds: [errorEmbed],
-					flags: [MessageFlags.Ephemeral],
+					flags: MessageFlags.Ephemeral,
 				});
 			}
 
@@ -4579,7 +4610,7 @@ module.exports = {
 					errorEmbed.setTitle('❌ Invalid Amount').setDescription('You cannot contribute 0 or negative crowns!');
 					return interaction.reply({
 						embeds: [errorEmbed],
-						flags: [MessageFlags.Ephemeral],
+						flags: MessageFlags.Ephemeral,
 					});
 				}
 
@@ -4587,7 +4618,7 @@ module.exports = {
 					errorEmbed.setTitle('❌ Insufficient Funds').setDescription(`You only have **${userBalance.toLocaleString()}** crowns!`);
 					return interaction.reply({
 						embeds: [errorEmbed],
-						flags: [MessageFlags.Ephemeral],
+						flags: MessageFlags.Ephemeral,
 					});
 				}
 				if (contributionAmount > upperLimit) {
@@ -4711,7 +4742,7 @@ module.exports = {
 				errorEmbed.setTitle('❌ Contribution Error').setDescription('An error occurred while processing your contribution.');
 				await interaction.reply({
 					embeds: [errorEmbed],
-					flags: [MessageFlags.Ephemeral],
+					flags: MessageFlags.Ephemeral,
 				});
 			}
 		},
@@ -4725,7 +4756,7 @@ module.exports = {
 				errorEmbed.setTitle('❌ Invalid Amount').setDescription('Please enter a valid positive number!');
 				return interaction.reply({
 					embeds: [errorEmbed],
-					flags: [MessageFlags.Ephemeral],
+					flags: MessageFlags.Ephemeral,
 				});
 			}
 
@@ -4738,7 +4769,7 @@ module.exports = {
 				errorEmbed.setTitle('❌ Insufficient Funds').setDescription(`You only have **${userBalance.toLocaleString()}** crowns!`);
 				return interaction.reply({
 					embeds: [errorEmbed],
-					flags: [MessageFlags.Ephemeral],
+					flags: MessageFlags.Ephemeral,
 				});
 			}
 
@@ -4822,7 +4853,7 @@ module.exports = {
 			catch (error) {
 				console.error('Shield purchase error:', error);
 				const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Error').setDescription('An error occurred during the shield purchase.');
-				await interaction.followUp({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+				await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 			}
 		},
 		async handleAllianceJoin(interaction) {
@@ -4835,7 +4866,7 @@ module.exports = {
 
 			try {
 				console.log(`[ALLIANCE JOIN] Deferring reply for ${userId}`);
-				await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
+				await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
 				console.log(`[ALLIANCE JOIN] Checking guild data for ${userId}`);
 				const joiningGuildData = db.prepare(`
@@ -4905,10 +4936,10 @@ module.exports = {
 				const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Error').setDescription('An unexpected error occurred while joining the raid.');
 				try {
 					if (interaction.replied || interaction.deferred) {
-						await interaction.followUp({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+						await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 					}
 					else {
-						await interaction.reply({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+						await interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 					}
 				}
 				catch (e) {
@@ -5016,7 +5047,7 @@ module.exports = {
 
 						console.log(`${logPrefix} Parsed Data: action=${action}, side=${side}, collectedRaidId=${collectedRaidId}`);
 
-						await i.deferReply({ flags: [MessageFlags.Ephemeral] });
+						await i.deferReply({ flags: MessageFlags.Ephemeral });
 
 						console.log(`${logPrefix} Checking authorization for user ID: ${buttonUser.id}`);
 						const joiningGuildData = db.prepare(`
@@ -5143,10 +5174,10 @@ module.exports = {
 					catch (error) {
 						console.error(`${logPrefix} CRITICAL ERROR during collection:`, error);
 						if (!i.replied && !i.deferred) {
-							await i.reply({ content: 'An unexpected error occurred. The Innkeepers have been notified.', flags: [MessageFlags.Ephemeral] }).catch(e => console.error(`${logPrefix} Failed to send initial error reply:`, e));
+							await i.reply({ content: 'An unexpected error occurred. The Innkeepers have been notified.', flags: MessageFlags.Ephemeral }).catch(e => console.error(`${logPrefix} Failed to send initial error reply:`, e));
 						}
 						else {
-							await i.followUp({ content: 'An unexpected error occurred. The Innkeepers have been notified.', flags: [MessageFlags.Ephemeral] }).catch(e => console.error(`${logPrefix} Failed to send followup error reply:`, e));
+							await i.followUp({ content: 'An unexpected error occurred. The Innkeepers have been notified.', flags: MessageFlags.Ephemeral }).catch(e => console.error(`${logPrefix} Failed to send followup error reply:`, e));
 						}
 					}
 				});
@@ -5178,7 +5209,7 @@ module.exports = {
 				errorEmbed.setTitle('❌ Not for You').setDescription('This invitation is not for you!');
 				return interaction.reply({
 					embeds: [errorEmbed],
-					flags: [MessageFlags.Ephemeral],
+					flags: MessageFlags.Ephemeral,
 				});
 			}
 
@@ -5241,7 +5272,7 @@ module.exports = {
 						});
 					return interaction.reply({
 						embeds: [joinEmbed],
-						flags: [MessageFlags.Ephemeral],
+						flags: MessageFlags.Ephemeral,
 					});
 				}
 				catch (error) {
@@ -5377,7 +5408,7 @@ module.exports = {
 			catch (error) {
 				console.error('Guild upgrade error:', error);
 				errorEmbed.setTitle('❌ Upgrade Error').setDescription('An unexpected error occurred during the upgrade process. The transaction was rolled back.');
-				await interaction.followUp({ embeds: [errorEmbed], flags: [MessageFlags.Ephemeral] });
+				await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 			}
 		},
 	},
