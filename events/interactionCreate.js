@@ -64,7 +64,7 @@ module.exports = {
 					interaction.isAutocomplete() ? ' [Autocomplete]' : ''
 				}`,
 			);
-			const gameMasterCommand = require('../../utils/gameMasterHelper.js');
+			const gameMasterCommand = require('../utils/handleGameMasterInteraction.js');
 
 			if (interaction.isButton() && interaction.customId.startsWith('gm_')) {
 

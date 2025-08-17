@@ -138,8 +138,8 @@ async function checkAndDestroyGuildOnRaid(guildTag, attackerTag, interaction) {
 
 			// Use a transaction to ensure all parts are deleted
 			db.transaction(() => {
+				db.prepare('DELETE FROM guildmember_tracking WHERE guild_tag = ?').run(guildTag);
 				db.prepare('DELETE FROM guild_list WHERE guild_tag = ?').run(guildTag);
-				// ON DELETE CASCADE handles the rest
 			})();
 
 			// Credit the attacker

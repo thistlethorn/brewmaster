@@ -1,4 +1,4 @@
-// utils/gameMasterHelper.js
+// utils/handleGameMasterInteraction.js
 const { ModalBuilder, TextInputBuilder, ActionRowBuilder, EmbedBuilder, ChannelType, TextInputStyle, MessageFlags, StringSelectMenuBuilder } = require('discord.js');
 const db = require('../database');
 

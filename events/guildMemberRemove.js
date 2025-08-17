@@ -46,6 +46,7 @@ async function handleOwnerDeparture(client, guild, guildTag) {
 	}
 
 	// 3. Delete from Database
+	db.prepare('DELETE FROM guildmember_tracking WHERE guild_tag = ?').run(guildTag);
 	db.prepare('DELETE FROM guild_list WHERE guild_tag = ?').run(guildTag);
 	console.log(`[GuildMemberRemove] Guild [${guildTag}] and all associated data removed from the database.`);
 }
