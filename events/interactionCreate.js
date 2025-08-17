@@ -64,36 +64,32 @@ module.exports = {
 					interaction.isAutocomplete() ? ' [Autocomplete]' : ''
 				}`,
 			);
-			const gameMasterCommand = require('../utils/handleGameMasterInteraction.js');
-
-			if (interaction.isButton() && interaction.customId.startsWith('gm_')) {
-
-				if (gameMasterCommand && typeof gameMasterCommand.handleGameMasterInteraction === 'function') {
-					try {
-						await gameMasterCommand.handleGameMasterInteraction(interaction);
-						return;
-					}
-					catch (error) {
-						console.error('[Error] Game Master button interaction error:', error);
-						if (!interaction.replied && !interaction.deferred) {
-							await interaction.reply({ content: 'There was an error processing this game management action.', flags: MessageFlags.Ephemeral });
-						}
-						return;
-					}
-				}
+			let gameMasterCommand = null;
+			try {
+				gameMasterCommand = require('../utils/handleGameMasterInteraction.js');
 			}
-
-			if (interaction.isModalSubmit() && interaction.customId.startsWith('gm_modal_')) {
-
+			catch (err) {
+				if (err.code !== 'MODULE_NOT_FOUND') {
+					console.error('[GM] Failed to load handleGameMasterInteraction.js:', err);
+				}
+				// Continue gracefully without GM support.
+			}
+			 if (
+				(interaction.isButton() && interaction.customId.startsWith('gm_')) ||
+   				(interaction.isModalSubmit() && interaction.customId.startsWith('gm_modal_'))
+			) {
 				if (gameMasterCommand && typeof gameMasterCommand.handleGameMasterInteraction === 'function') {
 					try {
 						await gameMasterCommand.handleGameMasterInteraction(interaction);
 						return;
 					}
 					catch (error) {
-						console.error('[Error] Game Master modal interaction error:', error);
+						console.error(`[Error] Game Master ${interaction.isButton() ? 'button' : 'modal'} interaction error:`, error);
 						if (!interaction.replied && !interaction.deferred) {
-							await interaction.reply({ content: 'There was an error processing this modal.', flags: MessageFlags.Ephemeral });
+							const errMsg = interaction.isButton()
+								? 'There was an error processing this game management action.'
+								: 'There was an error processing this modal.';
+							await interaction.reply({ content: errMsg, flags: MessageFlags.Ephemeral });
 						}
 						return;
 					}

@@ -24,7 +24,7 @@ async function handleOwnerDeparture(client, guild, guildTag) {
 	// Using a hardcoded channel for global announcements, as seen in guild.js
 	const ANNOUNCEMENT_CHANNEL_ID = '1395191465206091888';
 	try {
-		await sendMessageToChannel(client, ANNOUNCEMENT_CHANNEL_ID, announceEmbed);
+		await sendMessageToChannel(client, ANNOUNCEMENT_CHANNEL_ID, { embeds: [announceEmbed] });
 	}
 	catch (error) {
 		console.error('[GuildMemberRemove] Failed to send disband announcement:', error);
@@ -46,8 +46,10 @@ async function handleOwnerDeparture(client, guild, guildTag) {
 	}
 
 	// 3. Delete from Database
-	db.prepare('DELETE FROM guildmember_tracking WHERE guild_tag = ?').run(guildTag);
-	db.prepare('DELETE FROM guild_list WHERE guild_tag = ?').run(guildTag);
+	db.transaction(() => {
+		db.prepare('DELETE FROM guildmember_tracking WHERE guild_tag = ?').run(guildTag);
+		db.prepare('DELETE FROM guild_list WHERE guild_tag = ?').run(guildTag);
+	})();
 	console.log(`[GuildMemberRemove] Guild [${guildTag}] and all associated data removed from the database.`);
 }
 

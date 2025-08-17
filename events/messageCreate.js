@@ -99,7 +99,7 @@ module.exports = {
 
 				// 2. Find all possible quotes that could be triggered by the words in the message
 				const tokens = (message.content.toLowerCase().match(/[a-z0-9&]+/gi) || []);
-				const uniqueWords = Array.from(new Set(tokens));
+				const uniqueWords = Array.from(new Set(tokens)).slice(0, 50);
 				const placeholders = uniqueWords.map(() => '?').join(',');
 
 				const candidates = uniqueWords.length
@@ -129,7 +129,9 @@ module.exports = {
 						const triggerTx = db.transaction(() => {
 							// 5. ATOMIC CHECK-AND-SET: Re-check and claim the global cooldown inside the transaction.
 							// This is the crucial step that prevents race conditions.
-							const fiveMinutesAgoForTx = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+							const fiveMinutesAgoForTx = fiveMinutesAgoISO;
+							const fifteenMinutesAgoForTx = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+
 							const finalCheck = db.prepare(`
 								UPDATE tony_quotes_global_cooldown
 								SET last_triggered_at = ?
@@ -145,11 +147,16 @@ module.exports = {
 							// --- If we get here, we have successfully claimed the lock. Proceed. ---
 
 							// Update the specific active quote record with its own cooldown
-							db.prepare(`
+							const quoteUpdate = db.prepare(`
 								UPDATE tony_quotes_active
 								SET times_triggered = times_triggered + 1, last_triggered_at = ?
 								WHERE id = ?
-							`).run(nowISO, chosenQuote.id);
+									AND (last_triggered_at IS NULL OR last_triggered_at <= ?)
+							`).run(nowISO, chosenQuote.id, fifteenMinutesAgoForTx);
+							if (quoteUpdate.changes !== 1) {
+								// The quote was removed or went on cooldown in the meantime; abort to roll back and avoid ghost payouts.
+								throw new Error('Chosen quote update failed (not found or on cooldown). Aborting.');
+							}
 							console.log(`[Tony Quote Trigger] Quote ID ${chosenQuote.id} triggered by ${message.author.id} (${message.author.tag}) at ${nowISO}.`);
 
 							// Pay the user
@@ -171,10 +178,10 @@ module.exports = {
 						triggerTx();
 
 						// 6. Send Tony's reply only if the transaction was successful
-						await message.channel.send({ content: `*${chosenQuote.quote_text}*`, allowedMentions: { parse: [] } });
+						await message.channel.send({ content: `*${chosenQuote.quote_text}*`, allowedMentions: { parse: [], users: [], roles: [] } });
 						await message.channel.send({
 							content: `||-# <@${chosenQuote.user_id}> earned 20 Crowns for this quote! • Want to submit your own? Use \`/tonyquote\` and earn 200 bonus crowns over time, for each!||`,
-							allowedMentions: { parse: [] },
+							allowedMentions: { parse: [], users: [], roles: [] },
 						});
 					}
 					catch (dbError) {

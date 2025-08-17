@@ -16,8 +16,16 @@ async function getChannelsForGame(interaction, gameSession, types, excludeManage
 
 	if (!gameCategory) return [];
 
+	// Map requested labels -> numeric ChannelType constants
+	const typeMap = {
+		text: ChannelType.GuildText,
+		forum: ChannelType.GuildForum,
+		voice: ChannelType.GuildVoice,
+	};
+	const allowedTypeIds = new Set(types.map(t => typeMap[t.toLowerCase()]).filter(Boolean));
+
 	const filteredChannels = gameCategory.children.cache
-		.filter(ch => types.includes(ChannelType[ch.type]) && (!excludeManagement || ch.id !== gameSession.management_channel_id))
+		.filter(ch => allowedTypeIds.has(ch.type) && (!excludeManagement || ch.id !== gameSession.management_channel_id))
 		.sort((a, b) => a.position - b.position);
 
 	return Array.from(filteredChannels.values());
@@ -93,7 +101,13 @@ async function handleGameMasterInteraction(interaction) {
 
 
 // --- STEP 1: BUTTON HANDLERS (Presenting Modals or Select Menus) ---
-
+/**
+ * Opens a modal prompting the DM to create a new channel of the given type.
+ * @param {import('discord.js').ButtonInteraction} interaction
+ * @param {{ game_id: number }} gameSession
+ * @param {'text'|'voice'|'forum'} type
+ * @returns {Promise<void>}
+ */
 async function showCreateModal(interaction, gameSession, type) {
 	const modal = new ModalBuilder()
 		.setCustomId(`gm_modal_create_${type}_${gameSession.game_id}`)
@@ -126,7 +140,8 @@ async function showRenameCategoryModal(interaction, gameSession) {
 }
 
 async function showChannelSelectMenu(interaction, gameSession, action) {
-	const channels = await getChannelsForGame(interaction, gameSession, ['Text', 'Forum', 'Voice'], true);
+	const eligibleTypes = action === 'edit' ? ['Text', 'Forum'] : ['Text', 'Forum', 'Voice'];
+	const channels = await getChannelsForGame(interaction, gameSession, eligibleTypes, true);
 	if (channels.length === 0) {
 		return interaction.reply({ content: 'There are no eligible channels to perform this action on.', ephemeral: true, flags: MessageFlags.Ephemeral });
 	}
@@ -333,6 +348,13 @@ async function handleEditDescriptionSubmit(interaction) {
 	const newDescription = textInput.value;
 
 	const channel = await interaction.guild.channels.fetch(channelId);
+	if (![ChannelType.GuildText, ChannelType.GuildForum].includes(channel.type)) {
+		return interaction.reply({
+			content: '❌ This action is only supported for text and forum channels.',
+			ephemeral: true,
+			flags: MessageFlags.Ephemeral,
+		});
+	}
 	await channel.setTopic(newDescription);
 
 	await interaction.reply({ content: `✅ Successfully updated the description for ${channel}.`, ephemeral: true, flags: MessageFlags.Ephemeral });
