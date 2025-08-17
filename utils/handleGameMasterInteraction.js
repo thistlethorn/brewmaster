@@ -11,8 +11,7 @@ const db = require('../database');
  * @returns {Promise<import('discord.js').GuildChannel[]>} An array of channel objects.
  */
 async function getChannelsForGame(interaction, gameSession, types, excludeManagement = false) {
-	const allChannels = await interaction.guild.channels.fetch();
-	const gameCategory = allChannels.get(gameSession.category_id);
+	const gameCategory = await interaction.guild.channels.fetch(gameSession.category_id).catch(() => null);
 
 	if (!gameCategory) return [];
 
@@ -43,11 +42,11 @@ async function handleGameMasterInteraction(interaction) {
 
 	const gameSession = db.prepare('SELECT * FROM game_sessions WHERE game_id = ?').get(gameId);
 	if (!gameSession) {
-		return interaction.reply({ content: 'Error: This game session is no longer valid.', ephemeral: true, flags: MessageFlags.Ephemeral });
+		return interaction.reply({ content: 'Error: This game session is no longer valid.', flags: MessageFlags.Ephemeral });
 	}
 
 	if (interaction.user.id !== gameSession.dm_user_id) {
-		return interaction.reply({ content: 'You are not the DM for this game session.', ephemeral: true, flags: MessageFlags.Ephemeral });
+		return interaction.reply({ content: 'You are not the DM for this game session.', flags: MessageFlags.Ephemeral });
 	}
 
 	// --- BUTTON ROUTER ---
@@ -123,6 +122,13 @@ async function showCreateModal(interaction, gameSession, type) {
 	await interaction.showModal(modal);
 }
 
+
+/**
+ * Opens a modal to rename the game category and associated key role.
+ * @param {import('discord.js').ButtonInteraction} interaction
+ * @param {{ game_id: number, game_name: string }} gameSession
+ * @returns {Promise<void>}
+ */
 async function showRenameCategoryModal(interaction, gameSession) {
 	const modal = new ModalBuilder()
 		.setCustomId(`gm_modal_rename_category_${gameSession.game_id}`)
@@ -143,7 +149,7 @@ async function showChannelSelectMenu(interaction, gameSession, action) {
 	const eligibleTypes = action === 'edit' ? ['Text', 'Forum'] : ['Text', 'Forum', 'Voice'];
 	const channels = await getChannelsForGame(interaction, gameSession, eligibleTypes, true);
 	if (channels.length === 0) {
-		return interaction.reply({ content: 'There are no eligible channels to perform this action on.', ephemeral: true, flags: MessageFlags.Ephemeral });
+		return interaction.reply({ content: 'There are no eligible channels to perform this action on.', flags: MessageFlags.Ephemeral });
 	}
 
 	const options = channels.map(ch => ({
@@ -158,7 +164,7 @@ async function showChannelSelectMenu(interaction, gameSession, action) {
 		.addOptions(options.slice(0, 25));
 
 	const row = new ActionRowBuilder().addComponents(selectMenu);
-	await interaction.reply({ content: `Please select the channel you wish to **${action}**.`, components: [row], ephemeral: true, flags: MessageFlags.Ephemeral });
+	await interaction.reply({ content: `Please select the channel you wish to **${action}**.`, components: [row], flags: MessageFlags.Ephemeral });
 }
 
 
@@ -175,7 +181,7 @@ async function showReorderTypeSelect(interaction, gameSession) {
 		]);
 
 	const row = new ActionRowBuilder().addComponents(selectMenu);
-	await interaction.reply({ content: 'First, which type of channels are you reordering?', components: [row], ephemeral: true, flags: MessageFlags.Ephemeral });
+	await interaction.reply({ content: 'First, which type of channels are you reordering?', components: [row], flags: MessageFlags.Ephemeral });
 }
 
 // Step 2: Ask which channel to move
@@ -256,9 +262,15 @@ async function handleChannelSelection(interaction, gameSession, action) {
 	const channel = await interaction.guild.channels.fetch(channelId);
 
 	if (action === 'delete') {
-		db.prepare('DELETE FROM game_channels WHERE channel_id = ?').run(channelId);
-		await channel.delete(`Deleted by DM ${interaction.user.tag}`);
-		return interaction.update({ content: `✅ Successfully deleted channel **${channel.name}**.`, components: [] });
+		try {
+			await channel.delete(`Deleted by DM ${interaction.user.tag}`);
+			db.prepare('DELETE FROM game_channels WHERE channel_id = ?').run(channelId);
+			return interaction.update({ content: `✅ Successfully deleted channel **${channel.name}**.`, components: [] });
+		}
+		catch (err) {
+			console.error('Channel deletion failed:', err);
+			return interaction.update({ content: '❌ Could not delete the channel (permissions or hierarchy).', components: [] });
+		}
 	}
 
 	const modal = new ModalBuilder()
@@ -298,19 +310,31 @@ async function handleCreateChannelSubmit(interaction, gameSession, type) {
 	const sanitizedName = channelName.toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-');
 
 	if (sanitizedName === 'category-management') {
-		return interaction.reply({ content: '❌ "category-management" is a reserved name.', ephemeral: true, flags: MessageFlags.Ephemeral });
+		return interaction.reply({ content: '❌ "category-management" is a reserved name.', flags: MessageFlags.Ephemeral });
 	}
 
-	const newChannel = await interaction.guild.channels.create({
-		name: type === 'voice' ? channelName : sanitizedName,
-		type: type === 'text' ? ChannelType.GuildText : type === 'voice' ? ChannelType.GuildVoice : ChannelType.GuildForum,
-		parent: gameSession.category_id,
-	});
+	const finalName = type === 'voice' ? channelName : sanitizedName;
+	if (!finalName || finalName.length < 1 || finalName.length > 100) {
+		return interaction.reply({ content: '❌ Channel name must be between 1 and 100 characters after sanitization.', flags: MessageFlags.Ephemeral });
+	}
+
+	let newChannel;
+	try {
+		newChannel = await interaction.guild.channels.create({
+			name: finalName,
+			type: type === 'text' ? ChannelType.GuildText : type === 'voice' ? ChannelType.GuildVoice : ChannelType.GuildForum,
+			parent: gameSession.category_id,
+		});
+	}
+	catch (err) {
+		console.error('Channel creation failed:', err);
+		return interaction.reply({ content: '❌ Failed to create the channel (check permissions and category).', flags: MessageFlags.Ephemeral });
+	}
 
 	db.prepare('INSERT INTO game_channels (channel_id, game_id, channel_type) VALUES (?, ?, ?)')
 		.run(newChannel.id, gameSession.game_id, type.charAt(0).toUpperCase() + type.slice(1));
 
-	await interaction.reply({ content: `✅ Successfully created ${type} channel: ${newChannel}`, ephemeral: true, flags: MessageFlags.Ephemeral });
+	await interaction.reply({ content: `✅ Successfully created ${type} channel: ${newChannel}`, flags: MessageFlags.Ephemeral });
 }
 
 async function handleRenameCategorySubmit(interaction, gameSession) {
@@ -318,11 +342,20 @@ async function handleRenameCategorySubmit(interaction, gameSession) {
 	const category = await interaction.guild.channels.fetch(gameSession.category_id);
 	const role = await interaction.guild.roles.fetch(gameSession.key_role_id);
 
-	await category.setName(newName);
-	await role.setName(`Key: ${newName}`);
-	db.prepare('UPDATE game_sessions SET game_name = ? WHERE game_id = ?').run(newName, gameSession.game_id);
+	if (!category || !role) {
+		return interaction.reply({ content: '❌ Could not find the category or the key role for this game.', flags: MessageFlags.Ephemeral });
+	}
+	try {
+		await category.setName(newName);
+		await role.setName(`Key: ${newName}`);
+		db.prepare('UPDATE game_sessions SET game_name = ? WHERE game_id = ?').run(newName, gameSession.game_id);
+	}
+	catch (err) {
+		console.error('Rename category/role failed:', err);
+		return interaction.reply({ content: '❌ Failed to rename category or role. Check permissions and role hierarchy.', flags: MessageFlags.Ephemeral });
+	}
 
-	await interaction.reply({ content: `✅ Category and role successfully renamed to "${newName}".`, ephemeral: true, flags: MessageFlags.Ephemeral });
+	await interaction.reply({ content: `✅ Category and role successfully renamed to "${newName}".`, flags: MessageFlags.Ephemeral });
 }
 
 async function handleRenameChannelSubmit(interaction) {
@@ -334,12 +367,12 @@ async function handleRenameChannelSubmit(interaction) {
 	const sanitizedName = newName.toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-');
 
 	if (sanitizedName === 'category-management') {
-		return interaction.reply({ content: '❌ You cannot rename a channel to "category-management".', ephemeral: true, flags: MessageFlags.Ephemeral });
+		return interaction.reply({ content: '❌ You cannot rename a channel to "category-management".', flags: MessageFlags.Ephemeral });
 	}
 
 	const finalName = channel.type === ChannelType.GuildVoice ? newName : sanitizedName;
 	await channel.setName(finalName);
-	await interaction.reply({ content: `✅ Channel successfully renamed to **${finalName}**.`, ephemeral: true, flags: MessageFlags.Ephemeral });
+	await interaction.reply({ content: `✅ Channel successfully renamed to **${finalName}**.`, flags: MessageFlags.Ephemeral });
 }
 
 async function handleEditDescriptionSubmit(interaction) {
@@ -351,19 +384,18 @@ async function handleEditDescriptionSubmit(interaction) {
 	if (![ChannelType.GuildText, ChannelType.GuildForum].includes(channel.type)) {
 		return interaction.reply({
 			content: '❌ This action is only supported for text and forum channels.',
-			ephemeral: true,
 			flags: MessageFlags.Ephemeral,
 		});
 	}
 	await channel.setTopic(newDescription);
 
-	await interaction.reply({ content: `✅ Successfully updated the description for ${channel}.`, ephemeral: true, flags: MessageFlags.Ephemeral });
+	await interaction.reply({ content: `✅ Successfully updated the description for ${channel}.`, flags: MessageFlags.Ephemeral });
 }
 
 
 // --- Player Management (No Modal Needed) ---
 async function handleManagePlayers(interaction, gameSession) {
-	await interaction.deferReply({ ephemeral: true, flags: MessageFlags.Ephemeral });
+	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
 	const forumChannel = await interaction.client.channels.fetch(gameSession.forum_post_id).catch(() => null);
 	if (!forumChannel) {
