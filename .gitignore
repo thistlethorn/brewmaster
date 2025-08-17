@@ -32,3 +32,4 @@ rebuild_table.js
 check_fkeys.js
 token.json
 character_system.md
+cleanup.js

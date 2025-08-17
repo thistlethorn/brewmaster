@@ -64,6 +64,41 @@ module.exports = {
 					interaction.isAutocomplete() ? ' [Autocomplete]' : ''
 				}`,
 			);
+			const gameMasterCommand = require('../../utils/gameMasterHelper.js');
+
+			if (interaction.isButton() && interaction.customId.startsWith('gm_')) {
+
+				if (gameMasterCommand && typeof gameMasterCommand.handleGameMasterInteraction === 'function') {
+					try {
+						await gameMasterCommand.handleGameMasterInteraction(interaction);
+						return;
+					}
+					catch (error) {
+						console.error('[Error] Game Master button interaction error:', error);
+						if (!interaction.replied && !interaction.deferred) {
+							await interaction.reply({ content: 'There was an error processing this game management action.', flags: MessageFlags.Ephemeral });
+						}
+						return;
+					}
+				}
+			}
+
+			if (interaction.isModalSubmit() && interaction.customId.startsWith('gm_modal_')) {
+
+				if (gameMasterCommand && typeof gameMasterCommand.handleGameMasterInteraction === 'function') {
+					try {
+						await gameMasterCommand.handleGameMasterInteraction(interaction);
+						return;
+					}
+					catch (error) {
+						console.error('[Error] Game Master modal interaction error:', error);
+						if (!interaction.replied && !interaction.deferred) {
+							await interaction.reply({ content: 'There was an error processing this modal.', flags: MessageFlags.Ephemeral });
+						}
+						return;
+					}
+				}
+			}
 			const gameCommand = interaction.client.commands.get('gamble');
 			const guildCommand = interaction.client.commands.get('guild');
 
