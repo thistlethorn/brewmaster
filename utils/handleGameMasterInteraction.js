@@ -37,10 +37,13 @@ async function getChannelsForGame(interaction, gameSession, types, excludeManage
 async function handleGameMasterInteraction(interaction) {
 	const customId = interaction.customId;
 	const parts = customId.split('_');
-	const [, action, subAction, ...rest] = parts;
+	const [, typeInteraction, action, subAction, ...rest] = parts;
 	const gameId = rest[rest.length - 1];
 
 	const gameSession = db.prepare('SELECT * FROM game_sessions WHERE game_id = ?').get(gameId);
+
+	console.log(`[GameMasterInteraction] Action: ${action}, SubAction: ${subAction}, Game ID: ${gameId}`);
+
 	if (!gameSession) {
 		return interaction.reply({ content: 'Error: This game session is no longer valid.', flags: MessageFlags.Ephemeral });
 	}
@@ -51,30 +54,31 @@ async function handleGameMasterInteraction(interaction) {
 
 	// --- BUTTON ROUTER ---
 	if (interaction.isButton()) {
-		const command = `${action}_${subAction}`;
+		const command = `${typeInteraction}_${action}_${subAction}`;
 		switch (command) {
-		case 'create_text': case 'create_voice': case 'create_forum':
+		case 'button_create_text': case 'button_create_voice': case 'button_create_forum':
 			return showCreateModal(interaction, gameSession, subAction);
-		case 'rename_channel': case 'delete_channel': case 'edit_description':
+		case 'button_rename_channel': case 'button_delete_channel': case 'button_edit_description':
 			return showChannelSelectMenu(interaction, gameSession, action);
-		case 'reorder_start':
+		case 'button_reorder_start':
 			return showReorderTypeSelect(interaction, gameSession);
-		case 'rename_category':
+		case 'button_rename_category':
 			return showRenameCategoryModal(interaction, gameSession);
-		case 'manage_players':
+		case 'button_manage_players':
 			return handleManagePlayers(interaction, gameSession);
 		}
 	}
 	// --- SELECT MENU ROUTER ---
 	else if (interaction.isStringSelectMenu()) {
+
 		if (action === 'select') {
 			return handleChannelSelection(interaction, gameSession, subAction);
 		}
 		if (action === 'reorder') {
-			if (subAction === 'select-channel') {
+			if (subAction === 'selectchannel') {
 				return showChannelToMoveSelect(interaction, gameSession);
 			}
-			else if (subAction === 'select-destination') {
+			else if (subAction === 'selectdestination') {
 				return showDestinationSelect(interaction, gameSession);
 			}
 			else if (subAction === 'execute') {
@@ -84,7 +88,7 @@ async function handleGameMasterInteraction(interaction) {
 	}
 	// --- MODAL SUBMISSION ROUTER ---
 	else if (interaction.isModalSubmit()) {
-		const modalAction = `modal_${action}_${subAction}`;
+		const modalAction = `${typeInteraction}_${action}_${subAction}`;
 		switch (modalAction) {
 		case 'modal_create_text': case 'modal_create_voice': case 'modal_create_forum':
 			return handleCreateChannelSubmit(interaction, gameSession, subAction);
@@ -173,7 +177,7 @@ async function showChannelSelectMenu(interaction, gameSession, action) {
 // Step 1: Ask for channel type
 async function showReorderTypeSelect(interaction, gameSession) {
 	const selectMenu = new StringSelectMenuBuilder()
-		.setCustomId(`gm_reorder_select-channel_${gameSession.game_id}`)
+		.setCustomId(`gm_reorder_selectchannel_${gameSession.game_id}`)
 		.setPlaceholder('Select the type of channels to reorder...')
 		.addOptions([
 			{ label: 'Text & Forum Channels', value: 'text' },
@@ -197,7 +201,7 @@ async function showChannelToMoveSelect(interaction, gameSession) {
 	const options = channels.map(ch => ({ label: ch.name, value: ch.id }));
 
 	const selectMenu = new StringSelectMenuBuilder()
-		.setCustomId(`gm_reorder_select-destination_${gameSession.game_id}`)
+		.setCustomId(`gm_reorder_selectdestination_${gameSession.game_id}`)
 		.setPlaceholder('Select the channel you want to move...')
 		.addOptions(options);
 
