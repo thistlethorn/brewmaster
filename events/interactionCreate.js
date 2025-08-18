@@ -76,7 +76,8 @@ module.exports = {
 			}
 			 if (
 				(interaction.isButton() && interaction.customId.startsWith('gm_')) ||
-   				(interaction.isModalSubmit() && interaction.customId.startsWith('gm_modal_'))
+   				(interaction.isModalSubmit() && interaction.customId.startsWith('gm_modal_')) ||
+				(interaction.isStringSelectMenu() && interaction.customId.startsWith('gm_select_'))
 			) {
 				if (gameMasterCommand && typeof gameMasterCommand.handleGameMasterInteraction === 'function') {
 					try {

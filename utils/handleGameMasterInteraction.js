@@ -11,22 +11,58 @@ const db = require('../database');
  * @returns {Promise<import('discord.js').GuildChannel[]>} An array of channel objects.
  */
 async function getChannelsForGame(interaction, gameSession, types, excludeManagement = false) {
-	const gameCategory = await interaction.guild.channels.fetch(gameSession.category_id).catch(() => null);
+	console.log(
+		`[DEBUG] Fetching channels for game ${gameSession.game_id}\n` +
+		`Types: ${types.join(', ')}\n` +
+		`Exclude Management: ${excludeManagement}`,
+	);
+	// Fetch ALL channels in the guild to ensure we have fresh data, bypassing the cache.
+	const allChannels = await interaction.guild.channels.fetch();
 
-	if (!gameCategory) return [];
-
+	if (!allChannels) return [];
+	console.log(
+		`[DEBUG] All channels in category ${gameSession.category_id}:`,
+		allChannels.filter(ch => ch.parentId === gameSession.category_id).map(ch => ({
+			name: ch.name,
+			type: ChannelType[ch.type],
+			id: ch.id,
+		})),
+	);
 	// Map requested labels -> numeric ChannelType constants
 	const typeMap = {
-		text: ChannelType.GuildText,
-		forum: ChannelType.GuildForum,
-		voice: ChannelType.GuildVoice,
+		Text: ChannelType.GuildText,
+		Forum: ChannelType.GuildForum,
+		Voice: ChannelType.GuildVoice,
 	};
-	const allowedTypeIds = new Set(types.map(t => typeMap[t.toLowerCase()]).filter(Boolean));
+	const allowedTypeIds = new Set(types.map(t => typeMap[t]).filter(value => value !== undefined));
+	console.log('[DEBUG] Type Mapping:', {
+		inputTypes: types,
+		allowedTypeIds: Array.from(allowedTypeIds),
+	});
+	// Filter the entire guild's channel list to find children of our target category
+	const filteredChannels = allChannels
+		.filter(ch =>
+			ch.parentId === gameSession.category_id &&
+			allowedTypeIds.has(ch.type) &&
+			(!excludeManagement || ch.id !== gameSession.management_channel_id),
+		)
+		.sort((a, b) => {
+			// Primary sort by position
+			if (a.position !== b.position) return a.position - b.position;
 
-	const filteredChannels = gameCategory.children.cache
-		.filter(ch => allowedTypeIds.has(ch.type) && (!excludeManagement || ch.id !== gameSession.management_channel_id))
-		.sort((a, b) => a.position - b.position);
+			// Fallback: Sort by creation time if positions are equal
+			return a.createdTimestamp - b.createdTimestamp;
+		});
 
+	console.log(
+		`[DEBUG] Filtered ${filteredChannels.size} channels:`,
+		filteredChannels.map(ch => ({
+			name: ch.name,
+			type: ChannelType[ch.type],
+			position: ch.position,
+			created: ch.createdAt.toISOString(),
+		})),
+	);
 	return Array.from(filteredChannels.values());
 }
 
@@ -37,12 +73,16 @@ async function getChannelsForGame(interaction, gameSession, types, excludeManage
 async function handleGameMasterInteraction(interaction) {
 	const customId = interaction.customId;
 	const parts = customId.split('_');
-	const [, typeInteraction, action, subAction, ...rest] = parts;
-	const gameId = rest[rest.length - 1];
+
+	// Standardized format: gm_component_action_subaction_..._gameId
+	// The last part is always the gameId.
+	const gameId = parts[parts.length - 1];
+	console.log(`[DEBUG] Handling interaction: ${interaction.customId}`);
+	console.log(`[DEBUG] Game ID from interaction: ${gameId}`);
 
 	const gameSession = db.prepare('SELECT * FROM game_sessions WHERE game_id = ?').get(gameId);
 
-	console.log(`[GameMasterInteraction] Action: ${action}, SubAction: ${subAction}, Game ID: ${gameId}`);
+	console.log(`[GameMasterInteraction] Component: ${parts[1]}, Action: ${parts[2]}, SubAction: ${parts[3]}, Game ID: ${gameId}`);
 
 	if (!gameSession) {
 		return interaction.reply({ content: 'Error: This game session is no longer valid.', flags: MessageFlags.Ephemeral });
@@ -52,56 +92,143 @@ async function handleGameMasterInteraction(interaction) {
 		return interaction.reply({ content: 'You are not the DM for this game session.', flags: MessageFlags.Ephemeral });
 	}
 
+	const componentType = parts[1];
+	const action = parts[2];
+	const subAction = parts[3];
+
+	console.log(`[GameMasterInteraction] Processing interaction: ${componentType} - ${action} - ${subAction} for Game ID: ${gameId}`);
+
 	// --- BUTTON ROUTER ---
 	if (interaction.isButton()) {
-		const command = `${typeInteraction}_${action}_${subAction}`;
-		switch (command) {
-		case 'button_create_text': case 'button_create_voice': case 'button_create_forum':
+		// ID: gm_button_ACTION_SUBACTION_GAMEID
+		if (action === 'create') {
 			return showCreateModal(interaction, gameSession, subAction);
-		case 'button_rename_channel': case 'button_delete_channel': case 'button_edit_description':
-			return showChannelSelectMenu(interaction, gameSession, action);
-		case 'button_reorder_start':
+		}
+		if (action === 'delete' && subAction === 'game') {
+			return showDeleteGameModal(interaction, gameSession);
+		}
+		if (action === 'rename' || action === 'delete' || action === 'edit') {
+			if (subAction === 'channel' || subAction === 'description') {
+				return showChannelSelectMenu(interaction, gameSession, action);
+			}
+			if (subAction === 'category') {
+				return showRenameCategoryModal(interaction, gameSession);
+			}
+		}
+		if (action === 'reorder' && subAction === 'start') {
 			return showReorderTypeSelect(interaction, gameSession);
-		case 'button_rename_category':
-			return showRenameCategoryModal(interaction, gameSession);
-		case 'button_manage_players':
+		}
+		if (action === 'manage' && subAction === 'players') {
 			return handleManagePlayers(interaction, gameSession);
 		}
 	}
 	// --- SELECT MENU ROUTER ---
 	else if (interaction.isStringSelectMenu()) {
-
-		if (action === 'select') {
+		// ID: gm_select_ACTION_SUBACTION_..._GAMEID
+		if (action === 'channel') {
 			return handleChannelSelection(interaction, gameSession, subAction);
 		}
 		if (action === 'reorder') {
-			if (subAction === 'selectchannel') {
-				return showChannelToMoveSelect(interaction, gameSession);
-			}
-			else if (subAction === 'selectdestination') {
-				return showDestinationSelect(interaction, gameSession);
-			}
-			else if (subAction === 'execute') {
-				return handleReorderExecute(interaction);
-			}
+			if (subAction === 'type') return showChannelToMoveSelect(interaction, gameSession);
+			if (subAction === 'channel') return showDestinationSelect(interaction, gameSession);
+			if (subAction === 'destination') return handleReorderExecute(interaction, gameSession);
 		}
 	}
 	// --- MODAL SUBMISSION ROUTER ---
 	else if (interaction.isModalSubmit()) {
-		const modalAction = `${typeInteraction}_${action}_${subAction}`;
-		switch (modalAction) {
-		case 'modal_create_text': case 'modal_create_voice': case 'modal_create_forum':
+		// ID: gm_modal_ACTION_SUBACTION_..._GAMEID
+		if (action === 'create') {
 			return handleCreateChannelSubmit(interaction, gameSession, subAction);
-		case 'modal_rename_channel':
-			return handleRenameChannelSubmit(interaction);
-		case 'modal_edit_description':
-			return handleEditDescriptionSubmit(interaction);
-		case 'modal_rename_category':
-			return handleRenameCategorySubmit(interaction, gameSession);
+		}
+		if (action === 'rename' && subAction === 'channel') return handleRenameChannelSubmit(interaction);
+		if (action === 'rename' && subAction === 'category') return handleRenameCategorySubmit(interaction, gameSession);
+		if (action === 'edit' && subAction === 'description') return handleEditDescriptionSubmit(interaction);
+		if (action === 'delete' && subAction === 'game') {
+			return handleDeleteGameSubmit(interaction, gameSession);
 		}
 	}
 }
+async function showDeleteGameModal(interaction, gameSession) {
+	const modal = new ModalBuilder()
+		.setCustomId(`gm_modal_delete_game_${gameSession.game_id}`)
+		.setTitle('CONFIRM GAME DELETION');
 
+	modal.addComponents(new ActionRowBuilder().addComponents(
+		new TextInputBuilder()
+			.setCustomId('confirmation')
+			.setLabel('Type "CONFIRM" to delete this game')
+			.setStyle(TextInputStyle.Short)
+			.setRequired(true),
+	));
+
+	await interaction.showModal(modal);
+}
+
+// Add this function to handle the modal submission
+async function handleDeleteGameSubmit(interaction, gameSession) {
+	const confirmation = interaction.fields.getTextInputValue('confirmation');
+
+	if (confirmation !== 'CONFIRM') {
+		return interaction.reply({
+			content: '❌ Deletion cancelled. You must type "CONFIRM" to delete the game.',
+			flags: MessageFlags.Ephemeral,
+		});
+	}
+
+	// This initial reply is fine. It gives immediate feedback.
+	await interaction.reply({
+		content: '✅ Confirmation received. Deleting game environment now. A final confirmation will be posted in the game\'s original forum thread.',
+		flags: MessageFlags.Ephemeral,
+	});
+
+	try {
+		// Fetch all necessary Discord objects BEFORE starting deletion
+		const category = await interaction.guild.channels.fetch(gameSession.category_id).catch(() => null);
+		const role = await interaction.guild.roles.fetch(gameSession.key_role_id).catch(() => null);
+
+		// Delete all channels within the category first
+		if (category) {
+			const channels = await category.children.fetch();
+			for (const channel of channels.values()) {
+				await channel.delete(`Game Deletion by ${interaction.user.tag}`).catch(err => console.error(`[GM Deletion] Failed to delete channel ${channel.id}:`, err.message));
+				// A brief pause to avoid hitting rate limits on rapid deletions
+				await new Promise(resolve => setTimeout(resolve, 500));
+			}
+			// Now delete the category itself
+			await category.delete(`Game Deletion by ${interaction.user.tag}`);
+		}
+
+		// Delete the key role
+		if (role) {
+			await role.delete(`Game Deletion by ${interaction.user.tag}`);
+		}
+
+		// THE DATABASE TRANSACTION IS HERE. It completes before the message sending below.
+		db.transaction(() => {
+			db.prepare('DELETE FROM game_channels WHERE game_id = ?').run(gameSession.game_id);
+			db.prepare('DELETE FROM game_sessions WHERE game_id = ?').run(gameSession.game_id);
+		})();
+
+		// THE FIX: Send a new message to the persistent forum channel instead of editReply.
+		const forumChannel = await interaction.client.channels.fetch(gameSession.forum_post_id).catch(() => null);
+		if (forumChannel) {
+			await forumChannel.send({
+				content: `✅ The game environment "**${gameSession.game_name}**" (run by <@${gameSession.dm_user_id}>) has been successfully and completely deleted.`,
+			});
+		}
+
+	}
+	catch (error) {
+		console.error('Game deletion error:', error);
+		// THE FIX FOR THE CATCH BLOCK: Also send to the forum channel.
+		const forumChannel = await interaction.client.channels.fetch(gameSession.forum_post_id).catch(() => null);
+		if (forumChannel) {
+			await forumChannel.send({
+				content: `❌ An error occurred while deleting the game "**${gameSession.game_name}**". Some elements may need to be manually removed by server staff. Please check the logs.`,
+			});
+		}
+	}
+}
 
 // --- STEP 1: BUTTON HANDLERS (Presenting Modals or Select Menus) ---
 /**
@@ -150,25 +277,55 @@ async function showRenameCategoryModal(interaction, gameSession) {
 }
 
 async function showChannelSelectMenu(interaction, gameSession, action) {
-	const eligibleTypes = action === 'edit' ? ['Text', 'Forum'] : ['Text', 'Forum', 'Voice'];
-	const channels = await getChannelsForGame(interaction, gameSession, eligibleTypes, true);
-	if (channels.length === 0) {
-		return interaction.reply({ content: 'There are no eligible channels to perform this action on.', flags: MessageFlags.Ephemeral });
+	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+	let eligibleTypes;
+	switch (action) {
+	case 'edit':
+		// Only Text and Forum channels have a "topic" or description.
+		eligibleTypes = ['Text', 'Forum'];
+		break;
+	case 'rename':
+	case 'delete':
+		// You should be able to rename or delete any channel type except management
+		eligibleTypes = ['Text', 'Forum', 'Voice'];
+		break;
+	default:
+		eligibleTypes = [];
+		break;
 	}
 
-	const options = channels.map(ch => ({
+	// The key fix is passing false to include management channel in the list (it will be filtered out later)
+	const channels = await getChannelsForGame(interaction, gameSession, eligibleTypes, false);
+
+	// Now manually filter out the management channel if needed
+	const filteredChannels = channels.filter(ch =>
+		ch.id !== gameSession.management_channel_id,
+	);
+
+	if (filteredChannels.length === 0) {
+		return interaction.reply({
+			content: 'There are no eligible channels to perform this action on.',
+			flags: MessageFlags.Ephemeral,
+		});
+	}
+
+	const options = filteredChannels.map(ch => ({
 		label: ch.name,
 		description: `Type: ${ChannelType[ch.type]}`,
 		value: ch.id,
 	}));
 
 	const selectMenu = new StringSelectMenuBuilder()
-		.setCustomId(`gm_select_${action}_${gameSession.game_id}`)
+		.setCustomId(`gm_select_channel_${action}_${gameSession.game_id}`)
 		.setPlaceholder(`Select a channel to ${action}...`)
 		.addOptions(options.slice(0, 25));
 
 	const row = new ActionRowBuilder().addComponents(selectMenu);
-	await interaction.reply({ content: `Please select the channel you wish to **${action}**.`, components: [row], flags: MessageFlags.Ephemeral });
+	await interaction.editReply({
+		content: `Please select the channel you wish to **${action}**.`,
+		components: [row],
+		flags: MessageFlags.Ephemeral,
+	});
 }
 
 
@@ -177,7 +334,7 @@ async function showChannelSelectMenu(interaction, gameSession, action) {
 // Step 1: Ask for channel type
 async function showReorderTypeSelect(interaction, gameSession) {
 	const selectMenu = new StringSelectMenuBuilder()
-		.setCustomId(`gm_reorder_selectchannel_${gameSession.game_id}`)
+		.setCustomId(`gm_select_reorder_type_${gameSession.game_id}`)
 		.setPlaceholder('Select the type of channels to reorder...')
 		.addOptions([
 			{ label: 'Text & Forum Channels', value: 'text' },
@@ -190,27 +347,39 @@ async function showReorderTypeSelect(interaction, gameSession) {
 
 // Step 2: Ask which channel to move
 async function showChannelToMoveSelect(interaction, gameSession) {
+	await interaction.deferUpdate();
 	const type = interaction.values[0];
 	const channelTypes = type === 'text' ? ['Text', 'Forum'] : ['Voice'];
+	// Remove the excludeManagement flag here since we want to include all channels for reordering
 	const channels = await getChannelsForGame(interaction, gameSession, channelTypes);
 
 	if (channels.length < 2) {
-		return interaction.update({ content: 'You need at least two channels of that type to reorder them.', components: [] });
+		return interaction.update({
+			content: 'You need at least two channels of that type to reorder them.',
+			components: [],
+		});
 	}
 
-	const options = channels.map(ch => ({ label: ch.name, value: ch.id }));
+	const options = channels.map(ch => ({
+		label: ch.name,
+		value: ch.id,
+	}));
 
 	const selectMenu = new StringSelectMenuBuilder()
-		.setCustomId(`gm_reorder_selectdestination_${gameSession.game_id}`)
+		.setCustomId(`gm_select_reorder_channel_${gameSession.game_id}`)
 		.setPlaceholder('Select the channel you want to move...')
 		.addOptions(options);
 
 	const row = new ActionRowBuilder().addComponents(selectMenu);
-	await interaction.update({ content: 'Great. Now, which channel do you want to move?', components: [row] });
+	await interaction.editReply({
+		content: 'Great. Now, which channel do you want to move?',
+		components: [row],
+	});
 }
 
 // Step 3: Ask where to move it
 async function showDestinationSelect(interaction, gameSession) {
+	await interaction.deferUpdate();
 	const channelToMoveId = interaction.values[0];
 	const channelToMove = await interaction.guild.channels.fetch(channelToMoveId);
 	const channelTypes = channelToMove.type === ChannelType.GuildVoice ? ['Voice'] : ['Text', 'Forum'];
@@ -224,37 +393,76 @@ async function showDestinationSelect(interaction, gameSession) {
 	];
 
 	const selectMenu = new StringSelectMenuBuilder()
-		.setCustomId(`gm_reorder_execute_${gameSession.game_id}_${channelToMoveId}`)
+		.setCustomId(`gm_select_reorder_destination_${channelToMoveId}_${gameSession.game_id}`)
 		.setPlaceholder('Select the new position...')
 		.addOptions(options.slice(0, 25));
 
 	const row = new ActionRowBuilder().addComponents(selectMenu);
-	await interaction.update({ content: `Okay, you're moving **${channelToMove.name}**. Where should it go?`, components: [row] });
+	await interaction.editReply({ content: `Okay, you're moving **${channelToMove.name}**. Where should it go?`, components: [row] });
 }
 
-// Step 4: Execute the reorder
-async function handleReorderExecute(interaction) {
-	const parts = interaction.customId.split('_');
-	const channelToMoveId = parts[parts.length - 1];
-	const destinationId = interaction.values[0];
 
+/**
+ * Executes the reordering of a channel in a robust way.
+ * This function calculates the desired final order of all channels and sends it
+ * to Discord in a single, atomic operation to prevent race conditions.
+ * @param {import('discord.js').StringSelectMenuInteraction} interaction
+ * @param {object} gameSession The game session data from the database.
+ */
+async function handleReorderExecute(interaction, gameSession) {
 	await interaction.deferUpdate();
 
-	const channelToMove = await interaction.guild.channels.fetch(channelToMoveId);
+	const parts = interaction.customId.split('_');
+	const channelToMoveId = parts[4];
+	const destinationId = interaction.values[0];
 
 	try {
+		const channelToMove = await interaction.guild.channels.fetch(channelToMoveId);
+		if (!channelToMove) {
+			throw new Error('The channel to be moved could not be found.');
+		}
+
+		// Determine which set of channels we are working with (text/forum or voice)
+		const relevantTypes = [ChannelType.GuildText, ChannelType.GuildForum].includes(channelToMove.type)
+			? ['Text', 'Forum']
+			: ['Voice'];
+
+		// Get a fresh, correctly sorted list of all relevant channels in the category
+		const allRelevantChannels = await getChannelsForGame(interaction, gameSession, relevantTypes, false);
+
+		// Create a mutable copy of the channel list, removing the channel we're about to place
+		const newOrder = allRelevantChannels.filter(ch => ch.id !== channelToMoveId);
+
 		if (destinationId === 'move_to_top') {
-			await channelToMove.setPosition(0);
+			// Place the channel at the very beginning of the array
+			newOrder.unshift(channelToMove);
 		}
 		else {
-			const destinationChannel = await interaction.guild.channels.fetch(destinationId);
-			await channelToMove.setPosition(destinationChannel.position + 1);
+			// Find the index where the destination channel is in our new list
+			const destinationIndex = newOrder.findIndex(ch => ch.id === destinationId);
+			if (destinationIndex === -1) {
+				throw new Error('The destination channel could not be found in the sorted list.');
+			}
+			// Insert the channelToMove right after the destination channel
+			newOrder.splice(destinationIndex + 1, 0, channelToMove);
 		}
+
+		// Convert our desired channel order into the format Discord's API needs:
+		// An array of { channel: [ID], position: [INDEX] } objects.
+		const finalPositions = newOrder.map((channel, index) => ({
+			channel: channel.id,
+			position: index,
+		}));
+
+		// Execute the reorder as a single, atomic bulk update
+		await interaction.guild.channels.setPositions(finalPositions);
+
 		await interaction.editReply({ content: `✅ Successfully moved **${channelToMove.name}** to its new position.`, components: [] });
+
 	}
 	catch (error) {
-		console.error('Reorder execution error:', error);
-		await interaction.editReply({ content: '❌ An error occurred while reordering the channels.', components: [] });
+		console.error('[Reorder Execution Error]', error);
+		await interaction.editReply({ content: `❌ An error occurred while reordering the channels. ${error.message}`, components: [] });
 	}
 }
 
@@ -277,8 +485,11 @@ async function handleChannelSelection(interaction, gameSession, action) {
 		}
 	}
 
+	// For edit, the action in the customId is 'edit', but the modal needs to be 'edit_description'
+	const modalAction = action === 'edit' ? 'edit_description' : `${action}_channel`;
+
 	const modal = new ModalBuilder()
-		.setCustomId(`gm_modal_${action}_channel_${gameSession.game_id}`)
+		.setCustomId(`gm_modal_${modalAction}_${gameSession.game_id}`)
 		.setTitle(`${action.charAt(0).toUpperCase() + action.slice(1)}: ${channel.name}`);
 
 	if (action === 'rename') {
