@@ -458,6 +458,7 @@ const setupTables = db.transaction(() => {
     `).run();
 
 	// "Game Master Session Tracking" via /commands/admin/ @ [system.js]
+
 	db.prepare(`
         CREATE TABLE IF NOT EXISTS game_sessions (
             game_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -465,6 +466,7 @@ const setupTables = db.transaction(() => {
             game_name TEXT DEFAULT 'Unnamed Game',
             category_id TEXT NOT NULL UNIQUE,
             management_channel_id TEXT NOT NULL UNIQUE,
+            wizard_message_id TEXT,
             key_role_id TEXT NOT NULL UNIQUE,
             forum_post_id TEXT NOT NULL,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -480,9 +482,8 @@ const setupTables = db.transaction(() => {
         )
     `).run();
 
-
 	//  Dynamic configuration keypair settings
-	//
+
 	db.prepare(`
 		CREATE TABLE IF NOT EXISTS bot_settings (
 			setting_key TEXT PRIMARY KEY,

@@ -11,15 +11,18 @@ const db = require('../database');
  * @returns {Promise<import('discord.js').GuildChannel[]>} An array of channel objects.
  */
 async function getChannelsForGame(interaction, gameSession, types, excludeManagement = false) {
+	/*
 	console.log(
 		`[DEBUG] Fetching channels for game ${gameSession.game_id}\n` +
 		`Types: ${types.join(', ')}\n` +
 		`Exclude Management: ${excludeManagement}`,
 	);
+	*/
 	// Fetch ALL channels in the guild to ensure we have fresh data, bypassing the cache.
 	const allChannels = await interaction.guild.channels.fetch();
 
 	if (!allChannels) return [];
+	/*
 	console.log(
 		`[DEBUG] All channels in category ${gameSession.category_id}:`,
 		allChannels.filter(ch => ch.parentId === gameSession.category_id).map(ch => ({
@@ -28,6 +31,7 @@ async function getChannelsForGame(interaction, gameSession, types, excludeManage
 			id: ch.id,
 		})),
 	);
+	*/
 	// Map requested labels -> numeric ChannelType constants
 	const typeMap = {
 		Text: ChannelType.GuildText,
@@ -35,10 +39,12 @@ async function getChannelsForGame(interaction, gameSession, types, excludeManage
 		Voice: ChannelType.GuildVoice,
 	};
 	const allowedTypeIds = new Set(types.map(t => typeMap[t]).filter(value => value !== undefined));
+	/*
 	console.log('[DEBUG] Type Mapping:', {
 		inputTypes: types,
 		allowedTypeIds: Array.from(allowedTypeIds),
 	});
+	*/
 	// Filter the entire guild's channel list to find children of our target category
 	const filteredChannels = allChannels
 		.filter(ch =>
@@ -54,6 +60,7 @@ async function getChannelsForGame(interaction, gameSession, types, excludeManage
 			return a.createdTimestamp - b.createdTimestamp;
 		});
 
+	/*
 	console.log(
 		`[DEBUG] Filtered ${filteredChannels.size} channels:`,
 		filteredChannels.map(ch => ({
@@ -63,6 +70,7 @@ async function getChannelsForGame(interaction, gameSession, types, excludeManage
 			created: ch.createdAt.toISOString(),
 		})),
 	);
+	*/
 	return Array.from(filteredChannels.values());
 }
 
@@ -77,12 +85,12 @@ async function handleGameMasterInteraction(interaction) {
 	// Standardized format: gm_component_action_subaction_..._gameId
 	// The last part is always the gameId.
 	const gameId = parts[parts.length - 1];
-	console.log(`[DEBUG] Handling interaction: ${interaction.customId}`);
-	console.log(`[DEBUG] Game ID from interaction: ${gameId}`);
+	// console.log(`[DEBUG] Handling interaction: ${interaction.customId}`);
+	// console.log(`[DEBUG] Game ID from interaction: ${gameId}`);
 
 	const gameSession = db.prepare('SELECT * FROM game_sessions WHERE game_id = ?').get(gameId);
 
-	console.log(`[GameMasterInteraction] Component: ${parts[1]}, Action: ${parts[2]}, SubAction: ${parts[3]}, Game ID: ${gameId}`);
+	// console.log(`[GameMasterInteraction] Component: ${parts[1]}, Action: ${parts[2]}, SubAction: ${parts[3]}, Game ID: ${gameId}`);
 
 	if (!gameSession) {
 		return interaction.reply({ content: 'Error: This game session is no longer valid.', flags: MessageFlags.Ephemeral });
@@ -175,41 +183,40 @@ async function handleDeleteGameSubmit(interaction, gameSession) {
 		});
 	}
 
-	// This initial reply is fine. It gives immediate feedback.
 	await interaction.reply({
 		content: '✅ Confirmation received. Deleting game environment now. A final confirmation will be posted in the game\'s original forum thread.',
 		flags: MessageFlags.Ephemeral,
 	});
 
 	try {
-		// Fetch all necessary Discord objects BEFORE starting deletion
 		const category = await interaction.guild.channels.fetch(gameSession.category_id).catch(() => null);
 		const role = await interaction.guild.roles.fetch(gameSession.key_role_id).catch(() => null);
 
-		// Delete all channels within the category first
 		if (category) {
-			const channels = await category.children.fetch();
-			for (const channel of channels.values()) {
+			// --- THIS IS THE ROBUST FIX ---
+			// 1. Fetch ALL channels in the guild to guarantee fresh data, bypassing the cache.
+			const allChannels = await interaction.guild.channels.fetch();
+			// 2. Filter this complete list to get only the channels in our target category.
+			const channelsToDelete = allChannels.filter(ch => ch.parentId === category.id);
+			// --- END FIX ---
+
+			for (const channel of channelsToDelete.values()) {
 				await channel.delete(`Game Deletion by ${interaction.user.tag}`).catch(err => console.error(`[GM Deletion] Failed to delete channel ${channel.id}:`, err.message));
-				// A brief pause to avoid hitting rate limits on rapid deletions
 				await new Promise(resolve => setTimeout(resolve, 500));
+				// Brief pause to avoid rate limits
 			}
-			// Now delete the category itself
 			await category.delete(`Game Deletion by ${interaction.user.tag}`);
 		}
 
-		// Delete the key role
 		if (role) {
 			await role.delete(`Game Deletion by ${interaction.user.tag}`);
 		}
 
-		// THE DATABASE TRANSACTION IS HERE. It completes before the message sending below.
 		db.transaction(() => {
 			db.prepare('DELETE FROM game_channels WHERE game_id = ?').run(gameSession.game_id);
 			db.prepare('DELETE FROM game_sessions WHERE game_id = ?').run(gameSession.game_id);
 		})();
 
-		// THE FIX: Send a new message to the persistent forum channel instead of editReply.
 		const forumChannel = await interaction.client.channels.fetch(gameSession.forum_post_id).catch(() => null);
 		if (forumChannel) {
 			await forumChannel.send({
@@ -220,13 +227,58 @@ async function handleDeleteGameSubmit(interaction, gameSession) {
 	}
 	catch (error) {
 		console.error('Game deletion error:', error);
-		// THE FIX FOR THE CATCH BLOCK: Also send to the forum channel.
 		const forumChannel = await interaction.client.channels.fetch(gameSession.forum_post_id).catch(() => null);
 		if (forumChannel) {
 			await forumChannel.send({
 				content: `❌ An error occurred while deleting the game "**${gameSession.game_name}**". Some elements may need to be manually removed by server staff. Please check the logs.`,
 			});
 		}
+	}
+}
+
+/**
+ * Updates the player list embed in the management channel.
+ * @param {import('discord.js').Interaction} interaction The interaction object.
+ * @param {object} gameSession The game session data from the database.
+ */
+async function updateWizardPlayerList(interaction, gameSession) {
+	if (!gameSession.wizard_message_id) {
+		console.error(`[Wizard Update] Missing wizard_message_id for game ${gameSession.game_id}`);
+		return;
+	}
+
+	try {
+		const managementChannel = await interaction.client.channels.fetch(gameSession.management_channel_id);
+		const wizardMessage = await managementChannel.messages.fetch(gameSession.wizard_message_id);
+		const keyRole = await interaction.guild.roles.fetch(gameSession.key_role_id);
+
+		if (!wizardMessage || !keyRole) {
+			console.error(`[Wizard Update] Could not find wizard message or key role for game ${gameSession.game_id}`);
+			return;
+		}
+
+		// Get all members with the role, excluding the DM
+		const players = keyRole.members.filter(member => member.id !== gameSession.dm_user_id);
+		const playerCount = players.size;
+
+		let playerListString = 'No players have been added yet.';
+		if (playerCount > 0) {
+			playerListString = players.map(member => `- ${member}`).join('\n');
+		}
+
+		// Create a new embed based on the old one to preserve its structure
+		const originalEmbed = wizardMessage.embeds[0];
+		const updatedEmbed = EmbedBuilder.from(originalEmbed)
+			.setFields(
+				{ name: 'DM/GM:', value: `- <@${gameSession.dm_user_id}>`, inline: true },
+				{ name: `Players (${playerCount})`, value: playerListString, inline: true },
+			);
+
+		await wizardMessage.edit({ embeds: [updatedEmbed] });
+
+	}
+	catch (error) {
+		console.error(`[Wizard Update] Failed to update player list for game ${gameSession.game_id}:`, error);
 	}
 }
 
@@ -617,13 +669,17 @@ async function handleManagePlayers(interaction, gameSession) {
 		return interaction.editReply({ content: 'Error: Could not find the original game forum post to send the prompt.' });
 	}
 
+	await forumChannel.send({ content: `<@${interaction.user.id}>` });
+
 	const promptEmbed = new EmbedBuilder()
 		.setColor(0xFEE75C)
-		.setTitle('👥 Player Management')
-		.setDescription(`<@${interaction.user.id}>, please mention the user you wish to add or remove from your game in this channel within 3 minutes.`);
+		.setTitle('👥 Player Manager Wizard')
+		.setFooter({ text: `${gameSession.game_name}` })
+		.setTimestamp()
+		.setDescription(`Greetings, <@${interaction.user.id}>!\nPlease \`@mentionping\` the user you wish to add or remove!\nYou have 3 minutes to complete this action.`);
 
 	await forumChannel.send({ embeds: [promptEmbed] });
-	await interaction.editReply({ content: '✅ Prompt sent to your game\'s forum post. Please go there to mention the player.' });
+	await interaction.editReply({ content: `✅ Prompt sent to your game's forum post in <#${gameSession.forum_post_id}>. Please go there and \`@mention\` the player to add/remove them.` });
 
 	const filter = m => m.author.id === interaction.user.id && m.mentions.users.size > 0;
 	const collector = forumChannel.createMessageCollector({ filter, max: 1, time: 180000 });
@@ -656,6 +712,8 @@ async function handleManagePlayers(interaction, gameSession) {
 			await targetMember.roles.add(keyRole);
 			await forumChannel.send({ content: `✅ <@${interaction.user.id}>, successfully added ${targetUser.username} to the game.` });
 		}
+		await updateWizardPlayerList(interaction, gameSession);
+
 	});
 
 	collector.on('end', (collected, reason) => {
