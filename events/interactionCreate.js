@@ -64,6 +64,38 @@ module.exports = {
 					interaction.isAutocomplete() ? ' [Autocomplete]' : ''
 				}`,
 			);
+			let gameMasterCommand = null;
+			try {
+				gameMasterCommand = require('../utils/handleGameMasterInteraction.js');
+			}
+			catch (err) {
+				if (err.code !== 'MODULE_NOT_FOUND') {
+					console.error('[GM] Failed to load handleGameMasterInteraction.js:', err);
+				}
+				// Continue gracefully without GM support.
+			}
+			 if (
+				(interaction.isButton() && interaction.customId.startsWith('gm_')) ||
+   				(interaction.isModalSubmit() && interaction.customId.startsWith('gm_modal_')) ||
+				(interaction.isStringSelectMenu() && interaction.customId.startsWith('gm_select_'))
+			) {
+				if (gameMasterCommand && typeof gameMasterCommand.handleGameMasterInteraction === 'function') {
+					try {
+						await gameMasterCommand.handleGameMasterInteraction(interaction);
+						return;
+					}
+					catch (error) {
+						console.error(`[Error] Game Master ${interaction.isButton() ? 'button' : 'modal'} interaction error:`, error);
+						if (!interaction.replied && !interaction.deferred) {
+							const errMsg = interaction.isButton()
+								? 'There was an error processing this game management action.'
+								: 'There was an error processing this modal.';
+							await interaction.reply({ content: errMsg, flags: MessageFlags.Ephemeral });
+						}
+						return;
+					}
+				}
+			}
 			const gameCommand = interaction.client.commands.get('gamble');
 			const guildCommand = interaction.client.commands.get('guild');
 

@@ -457,8 +457,33 @@ const setupTables = db.transaction(() => {
         )
     `).run();
 
+	// "Game Master Session Tracking" via /commands/admin/ @ [system.js]
+
+	db.prepare(`
+        CREATE TABLE IF NOT EXISTS game_sessions (
+            game_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            dm_user_id TEXT NOT NULL,
+            game_name TEXT DEFAULT 'Unnamed Game',
+            category_id TEXT NOT NULL UNIQUE,
+            management_channel_id TEXT NOT NULL UNIQUE,
+            wizard_message_id TEXT,
+            key_role_id TEXT NOT NULL UNIQUE,
+            forum_post_id TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    `).run();
+
+	db.prepare(`
+        CREATE TABLE IF NOT EXISTS game_channels (
+            channel_id TEXT PRIMARY KEY,
+            game_id INTEGER NOT NULL,
+            channel_type TEXT NOT NULL,
+            FOREIGN KEY(game_id) REFERENCES game_sessions(game_id) ON DELETE CASCADE
+        )
+    `).run();
+
 	//  Dynamic configuration keypair settings
-	//
+
 	db.prepare(`
 		CREATE TABLE IF NOT EXISTS bot_settings (
 			setting_key TEXT PRIMARY KEY,
