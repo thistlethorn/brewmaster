@@ -119,7 +119,12 @@ async function executeTrade(interaction, sessionId) {
 			const processOffers = (senderId, receiverId, sentOffers) => {
 				for (const offer of sentOffers) {
 					if (offer.crown_amount) {
-						db.prepare('UPDATE user_economy SET crowns = crowns - ? WHERE user_id = ?').run(offer.crown_amount, senderId);
+
+						const result = db.prepare('UPDATE user_economy SET crowns = crowns - ? WHERE user_id = ? AND crowns >= ?').run(offer.crown_amount, senderId, offer.crown_amount);
+
+						if (result.changes === 0) {
+							throw new Error(`Insufficient funds for user ${senderId} at time of trade.`);
+						}
 						db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(offer.crown_amount, receiverId);
 					}
 					if (offer.inventory_id) {
@@ -150,10 +155,33 @@ async function executeTrade(interaction, sessionId) {
 	}
 	catch (error) {
 		console.error('Trade execution error:', error);
-		await interaction.followUp({ content: 'A critical database error occurred during the final transaction. The trade has been cancelled and no items were exchanged.', flags: MessageFlags.Ephemeral });
+
+		let failingUser = null;
+		if (error.message.includes(session.initiator_user_id)) {
+			failingUser = await interaction.client.users.fetch(session.initiator_user_id);
+		}
+		else if (error.message.includes(session.receiver_user_id)) {
+			failingUser = await interaction.client.users.fetch(session.receiver_user_id);
+		}
+
+		const errorMessage = failingUser
+			? `${failingUser.username} no longer has enough crowns to complete the trade.`
+			: 'A critical database error occurred.';
+
+		await interaction.followUp({
+			content: `**Trade Failed:** ${errorMessage} The trade has been cancelled, and no items or crowns were exchanged.`,
+			flags: MessageFlags.Ephemeral,
+		});
+
 		db.prepare('UPDATE trade_sessions SET status = \'CANCELLED\' WHERE session_id = ?').run(sessionId);
 		activeTrades.delete(session.initiator_user_id);
 		activeTrades.delete(session.receiver_user_id);
+
+		const cancelEmbed = new EmbedBuilder()
+			.setColor(0xE74C3C)
+			.setTitle('Trade Failed & Cancelled')
+			.setDescription('The trade could not be completed due to insufficient funds or an error.');
+		await interaction.message.edit({ embeds: [cancelEmbed], components: [] });
 	}
 }
 module.exports = {
@@ -371,8 +399,8 @@ module.exports = {
 
 		db.prepare(`
                 INSERT INTO trade_session_items (session_id, user_id, crown_amount) VALUES (?, ?, ?)
-                ON CONFLICT(session_id, user_id) WHERE crown_amount IS NOT NULL DO UPDATE SET crown_amount = ?
-            `).run(sessionId, userId, amount, amount);
+                ON CONFLICT(session_id, user_id) DO UPDATE SET crown_amount = excluded.crown_amount
+            `).run(sessionId, userId, amount);
 
 		await interaction.reply({ content: `You have offered 👑 ${amount.toLocaleString()} Crowns.`, flags: MessageFlags.Ephemeral });
 		await updateTradeUI(interaction, sessionId);

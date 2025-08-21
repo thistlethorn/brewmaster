@@ -7,9 +7,6 @@ const sendMessageToChannel = require('../utils/sendMessageToChannel');
 const config = require('../config.json');
 const db = require('../database');
 const BOT_COMMANDS_CHANNEL_ID = config?.discord?.botCommandsId || '1354187940246327316';
-const characterCommand = interaction.client.commands.get('character');
-const inventoryCommand = interaction.client.commands.get('inventory');
-const marketCommand = interaction.client.commands.get('market');
 
 
 function formatOption(option) {
@@ -25,6 +22,10 @@ function formatOption(option) {
 module.exports = {
 	name: Events.InteractionCreate,
 	async execute(interaction) {
+		const characterCommand = interaction.client.commands.get('character');
+		const inventoryCommand = interaction.client.commands.get('inventory');
+		const marketCommand = interaction.client.commands.get('market');
+
 		try {
 			const subcommand = interaction.options?.getSubcommand(false) || null;
 			const subcommandGroup = interaction.options?.getSubcommandGroup(false) || null;
@@ -68,6 +69,23 @@ module.exports = {
 				}`,
 			);
 
+			if (interaction.isAutocomplete()) {
+				const command = interaction.client.commands.get(interaction.commandName);
+				if (!command) {
+					console.error(`No command matching ${interaction.commandName} was found.`);
+					return;
+				}
+				try {
+					if (typeof command.autocomplete === 'function') {
+						await command.autocomplete(interaction);
+					}
+				}
+				catch (error) {
+					console.error(error);
+				}
+				return;
+			}
+
 			if (interaction.isModalSubmit() && interaction.customId.startsWith('trade_')) {
 				if (marketCommand && typeof marketCommand.modals === 'function') {
 					try {
@@ -77,7 +95,7 @@ module.exports = {
 					catch (error) {
 						console.error('[Error] Trade modal error:', error);
 						if (!interaction.replied && !interaction.deferred) {
-							await interaction.reply({ content: 'There was an error processing your inventory action.', flags: MessageFlags.Ephemeral });
+							await interaction.reply({ content: 'There was an error processing your trade action.', flags: MessageFlags.Ephemeral });
 						}
 						return;
 					}
@@ -93,7 +111,7 @@ module.exports = {
 					catch (error) {
 						console.error('[Error] Trade stringmenu error:', error);
 						if (!interaction.replied && !interaction.deferred) {
-							await interaction.reply({ content: 'There was an error processing your inventory action.', flags: MessageFlags.Ephemeral });
+							await interaction.reply({ content: 'There was an error processing your trade action.', flags: MessageFlags.Ephemeral });
 						}
 						return;
 					}
@@ -111,7 +129,7 @@ module.exports = {
 					catch (error) {
 						console.error('[Error] Inventory button error:', error);
 						if (!interaction.replied && !interaction.deferred) {
-							await interaction.reply({ content: 'There was an error processing your inventory action.', flags: MessageFlags.Ephemeral });
+							await interaction.reply({ content: 'There was an error processing your trade action.', flags: MessageFlags.Ephemeral });
 						}
 						return;
 					}
@@ -515,22 +533,7 @@ module.exports = {
 					}
 				}
 			}
-			if (interaction.isAutocomplete()) {
-				const command = interaction.client.commands.get(interaction.commandName);
-				if (!command) {
-					console.error(`No command matching ${interaction.commandName} was found.`);
-					return;
-				}
-				try {
-					if (typeof command.autocomplete === 'function') {
-						await command.autocomplete(interaction);
-					}
-				}
-				catch (error) {
-					console.error(error);
-				}
-				return;
-			}
+
 			const command = interaction.client.commands.get(interaction.commandName);
 			if (!command) {
 				console.error(`[Error] No command matching ${interaction.commandName} was found.`);

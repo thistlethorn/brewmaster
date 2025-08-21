@@ -74,7 +74,10 @@ async function handleVictory(interaction, combatState) {
 			for (const entry of entries) {
 				if (Math.random() < entry.drop_chance) {
 					const quantity = Math.floor(Math.random() * (entry.max_quantity - entry.min_quantity + 1)) + entry.min_quantity;
-					db.prepare('INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, ?)').run(userId, entry.item_id, quantity);
+					db.prepare(
+					  'INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, ?) ' +
+					  'ON CONFLICT(user_id, item_id) DO UPDATE SET quantity = quantity + excluded.quantity',
+					).run(userId, entry.item_id, quantity);
 					const itemName = db.prepare('SELECT name FROM items WHERE item_id = ?').get(entry.item_id).name;
 					lootedItems.push(`• ${itemName} x${quantity}`);
 				}

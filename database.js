@@ -516,6 +516,7 @@ const setupTables = db.transaction(() => {
             -- === Resource Pools ===
             current_health INTEGER DEFAULT 10,
             max_health INTEGER DEFAULT 10,
+            temporary_health INTEGER DEFAULT 0,
             current_mana INTEGER DEFAULT 10,
             max_mana INTEGER DEFAULT 10,
             current_ki INTEGER DEFAULT 0,

@@ -109,6 +109,12 @@ module.exports = {
 			case 'reset':
 				{
 					const origin = db.prepare('SELECT bonus_stat_1, bonus_stat_2 FROM origins WHERE id = ?').get(character.origin_id);
+					if (!origin) {
+						return interaction.reply({
+							content: 'Character origin data is missing or corrupted.',
+							flags: MessageFlags.Ephemeral,
+						});
+					}
 					const baseStats = { might: 5, finesse: 5, wits: 5, grit: 5, charm: 5, fortune: 5 };
 					baseStats[origin.bonus_stat_1]++;
 					baseStats[origin.bonus_stat_2]++;
@@ -117,8 +123,9 @@ module.exports = {
                         UPDATE characters
                         SET
                             level = 1, xp = 0, stat_points_unspent = 0,
-                            current_health = 10, max_health = 10,
+                            current_health = 10, max_health = 10, temporary_health = 0,
                             current_mana = 10, max_mana = 10,
+                            current_ki = 0, max_ki = 0,
                             stat_might = ?, stat_finesse = ?, stat_wits = ?,
                             stat_grit = ?, stat_charm = ?, stat_fortune = ?
                         WHERE user_id = ?

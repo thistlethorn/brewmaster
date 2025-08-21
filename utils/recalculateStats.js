@@ -8,7 +8,9 @@ const db = require('../database');
  */
 async function recalculateStats(userId) {
 	const character = db.prepare('SELECT * FROM characters WHERE user_id = ?').get(userId);
-	if (!character) return;
+	if (!character) {
+		throw new Error(`Character not found for user ${userId}`);
+	}
 
 	// 1. Initialize with base stats
 	const finalStats = {

@@ -163,7 +163,22 @@ async function handleEquip(interaction) {
 		if (!EQUIPMENT_SLOTS.includes(intendedSlot)) {
 			throw new Error(`Invalid slot provided: ${intendedSlot}`);
 		}
-		db.prepare(`UPDATE characters SET equipped_${intendedSlot} = ? WHERE user_id = ?`).run(inventoryId, userId);
+		const updateStatements = {
+			weapon:     db.prepare('UPDATE characters SET equipped_weapon     = ? WHERE user_id = ?'),
+			offhand:    db.prepare('UPDATE characters SET equipped_offhand    = ? WHERE user_id = ?'),
+			helmet:     db.prepare('UPDATE characters SET equipped_helmet     = ? WHERE user_id = ?'),
+			chestplate: db.prepare('UPDATE characters SET equipped_chestplate = ? WHERE user_id = ?'),
+			leggings:   db.prepare('UPDATE characters SET equipped_leggings   = ? WHERE user_id = ?'),
+			boots:      db.prepare('UPDATE characters SET equipped_boots      = ? WHERE user_id = ?'),
+			ring1:      db.prepare('UPDATE characters SET equipped_ring1      = ? WHERE user_id = ?'),
+			ring2:      db.prepare('UPDATE characters SET equipped_ring2      = ? WHERE user_id = ?'),
+			amulet:     db.prepare('UPDATE characters SET equipped_amulet     = ? WHERE user_id = ?'),
+		};
+		if (!updateStatements[intendedSlot]) {
+			throw new Error(`Invalid slot provided: ${intendedSlot}`);
+		}
+
+		updateStatements[intendedSlot].run(inventoryId, userId);
 
 		// Recalculate stats now that the item is equipped.
 		await recalculateStats(userId);
@@ -205,7 +220,21 @@ async function handleUnequip(interaction) {
 
 	try {
 		// Set the slot to NULL to unequip the item.
-		db.prepare(`UPDATE characters SET equipped_${slotToUnequip} = NULL WHERE user_id = ?`).run(userId);
+		const updateStatements = {
+			weapon: db.prepare('UPDATE characters SET equipped_weapon = NULL WHERE user_id = ?'),
+			offhand: db.prepare('UPDATE characters SET equipped_offhand = NULL WHERE user_id = ?'),
+			helmet: db.prepare('UPDATE characters SET equipped_helmet = NULL WHERE user_id = ?'),
+			chestplate: db.prepare('UPDATE characters SET equipped_chestplate = NULL WHERE user_id = ?'),
+			leggings: db.prepare('UPDATE characters SET equipped_leggings = NULL WHERE user_id = ?'),
+			boots: db.prepare('UPDATE characters SET equipped_boots = NULL WHERE user_id = ?'),
+			ring1: db.prepare('UPDATE characters SET equipped_ring1 = NULL WHERE user_id = ?'),
+			ring2: db.prepare('UPDATE characters SET equipped_ring2 = NULL WHERE user_id = ?'),
+			amulet: db.prepare('UPDATE characters SET equipped_amulet = NULL WHERE user_id = ?'),
+		};
+		if (!updateStatements[slotToUnequip]) {
+			return interaction.reply({ content: 'Invalid equipment slot specified.', flags: MessageFlags.Ephemeral });
+		}
+		updateStatements[slotToUnequip].run(userId);
 
 		await recalculateStats(userId);
 
@@ -419,7 +448,7 @@ module.exports = {
 					{ name: 'Chosen Origin', value: `**${origin.name}** (+1 ${origin.bonus_stat_1}, +1 ${origin.bonus_stat_2})`, inline: true },
 					{ name: 'Chosen Archetype', value: `**${archetype.name}**`, inline: true },
 					{ name: 'Alignment', value: session.alignment || '*Not provided.*', inline: false },
-					{ name: 'Backstory', value: session.backstory.substring(0, 1020) || '*Not provided.*', inline: false },
+					{ name: 'Backstory', value: session.backstory ? session.backstory.substring(0, 1020) : '*Not provided.*', inline: false },
 				);
 
 			const confirmRow = new ActionRowBuilder().addComponents(
@@ -452,9 +481,8 @@ module.exports = {
 			return interaction.reply({ content: 'Your creation session has expired. Please start over with `/character create`.', flags: MessageFlags.Ephemeral });
 		}
 
-		await interaction.deferUpdate();
-
 		if (action === 'origin' && session.step === 'origin') {
+			await interaction.deferUpdate();
 			session.originId = id;
 			session.step = 'archetype';
 
@@ -518,11 +546,10 @@ module.exports = {
 						.setMaxLength(2000),
 				),
 			);
-			// deferUpdate was already called, so we can't show a modal directly.
-			// This is a known limitation. We will send the modal from the interaction a different way.
 			await interaction.showModal(rpModal);
 		}
 		else if (action === 'confirm' && session.step === 'confirm') {
+			await interaction.deferUpdate();
 			try {
 				const origin = db.prepare('SELECT bonus_stat_1, bonus_stat_2 FROM origins WHERE id = ?').get(session.originId);
 
