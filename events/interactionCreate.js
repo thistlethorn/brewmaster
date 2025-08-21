@@ -7,7 +7,7 @@ const sendMessageToChannel = require('../utils/sendMessageToChannel');
 const config = require('../config.json');
 const db = require('../database');
 const BOT_COMMANDS_CHANNEL_ID = config?.discord?.botCommandsId || '1354187940246327316';
-
+const characterCommand = interaction.client.commands.get('character');
 
 function formatOption(option) {
 	return `${option.name}:(${
@@ -64,6 +64,41 @@ module.exports = {
 					interaction.isAutocomplete() ? ' [Autocomplete]' : ''
 				}`,
 			);
+
+			if (interaction.isModalSubmit() && interaction.customId.startsWith('char_create_')) {
+				if (characterCommand && typeof characterCommand.modals === 'function') {
+					try {
+						await characterCommand.modals(interaction);
+						console.log(`[Execute] Handled Character Creation Modal for ${interaction.user.displayName}`);
+						return;
+					}
+					catch (error) {
+						console.error('[Error] Character creation modal error:', error);
+						await interaction.reply({ content: 'There was an error processing your character details.', flags: MessageFlags.Ephemeral });
+						return;
+					}
+				}
+			}
+
+			if (interaction.isButton() && interaction.customId.startsWith('char_create_')) {
+				if (characterCommand && typeof characterCommand.buttons === 'function') {
+					try {
+						await characterCommand.buttons(interaction);
+						console.log(`[Execute] Handled Character Creation Button for ${interaction.user.displayName}`);
+						return;
+					}
+					catch (error) {
+						console.error('[Error] Character creation button error:', error);
+						// Check if we can still reply or if we need to follow up
+						if (!interaction.replied && !interaction.deferred) {
+							await interaction.reply({ content: 'There was an error processing your selection.', flags: MessageFlags.Ephemeral });
+						}
+						return;
+					}
+				}
+			}
+
+
 			let gameMasterCommand = null;
 			try {
 				gameMasterCommand = require('../utils/handleGameMasterInteraction.js');

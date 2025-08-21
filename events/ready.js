@@ -6,12 +6,15 @@ const { resumeActiveGiveaways } = require('../utils/handleMotwGiveaway');
 const { resumeDailyReminders } = require('../tasks/dailyReminder');
 const { resumeTempRoleRemovals } = require('../tasks/tempRoleManager');
 const { setupIdleChatter } = require('../tasks/idleChatter');
+const { seedDatabase } = require('../utils/seedDatabase');
 
 module.exports = {
 	name: Events.ClientReady,
 	once: true,
 	execute(client) {
 		console.log(`Ready! Logged in as ${client.user.tag}`);
+		seedDatabase();
+		console.log('[Ready.js] Database charsys seeding process finished.');
 		setupWeeklyReset(client);
 		console.log('[Ready.js] setupWeeklyReset is complete');
 		setupBumpReminder(client);
