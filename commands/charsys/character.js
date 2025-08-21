@@ -5,6 +5,9 @@ const db = require('../../database');
 // In-memory store for character creation sessions.
 // Key: userId, Value: { step, name, originId, archetypeId, ... }
 const creationSessions = new Map();
+const EQUIPMENT_SLOTS = [
+	'weapon', 'offhand', 'helmet', 'chestplate', 'leggings', 'boots', 'ring1', 'ring2', 'amulet',
+];
 
 /**
  * Handles the initial /character create command.
@@ -41,7 +44,187 @@ async function handleCreate(interaction) {
 	nameModal.addComponents(new ActionRowBuilder().addComponents(nameInput));
 	await interaction.showModal(nameModal);
 }
+/**
+ * Generates a text-based progress bar for XP.
+ * @param {number} currentXp The character's current XP.
+ * @param {number} requiredXp The XP needed for the next level.
+ * @returns {string} The formatted XP bar string.
+ */
+function generateXpBar(currentXp, requiredXp) {
+	const totalBars = 10;
+	const progress = Math.floor((currentXp / requiredXp) * totalBars);
+	const filledBars = '🟦'.repeat(progress);
+	const emptyBars = '⬜'.repeat(totalBars - progress);
+	return `\`[${filledBars}${emptyBars}]\` **${currentXp} / ${requiredXp}** XP`;
+}
 
+/**
+ * Handles the /character view command.
+ * @param {import('discord.js').ChatInputCommandInteraction} interaction
+ */
+async function handleView(interaction) {
+	const targetUser = interaction.options.getUser('user') || interaction.user;
+
+	// Fetch all character data in one go, joining with origins and archetypes.
+	const characterData = db.prepare(`
+        SELECT
+            c.*,
+            o.name as origin_name,
+            a.name as archetype_name
+        FROM characters c
+        JOIN origins o ON c.origin_id = o.id
+        JOIN archetypes a ON c.archetype_id = a.id
+        WHERE c.user_id = ?
+    `).get(targetUser.id);
+
+	if (!characterData) {
+		const content = targetUser.id === interaction.user.id
+			? 'You have not created a character yet. Use `/character create` to begin!'
+			: `${targetUser.username} has not created a character yet.`;
+		return interaction.reply({ content, flags: MessageFlags.Ephemeral });
+	}
+
+	// Calculate XP required for the next level.
+	const xpToNextLevel = Math.floor(100 * (characterData.level ** 1.5));
+
+	const sheetEmbed = new EmbedBuilder()
+		.setColor(0x5865F2)
+		.setTitle(`${characterData.character_name} - Level ${characterData.level} ${characterData.archetype_name}`)
+		.setAuthor({ name: targetUser.username, iconURL: targetUser.displayAvatarURL() })
+		.setThumbnail(characterData.character_image || null)
+		.addFields(
+			{ name: '📜 Character Info', value: `**Origin:** ${characterData.origin_name}\n**Title:** ${characterData.character_title || 'None'}\n**Alignment:** ${characterData.character_alignment || 'Unaligned'}`, inline: false },
+			{ name: '📈 Level Progression', value: generateXpBar(characterData.xp, xpToNextLevel), inline: false },
+			{ name: '❤️ Health', value: `\`${characterData.current_health} / ${characterData.max_health}\``, inline: true },
+			{ name: '💙 Mana', value: `\`${characterData.current_mana} / ${characterData.max_mana}\``, inline: true },
+			{ name: '🔥 Ki', value: `\`${characterData.current_ki} / ${characterData.max_ki}\``, inline: true },
+			{
+				name: '📊 Base Stats',
+				value: `**Might:** ${characterData.stat_might} | **Finesse:** ${characterData.stat_finesse} | **Wits:** ${characterData.stat_wits}\n` +
+                       `**Grit:** ${characterData.stat_grit} | **Charm:** ${characterData.stat_charm} | **Fortune:** ${characterData.stat_fortune}`,
+				inline: false,
+			},
+			{
+				name: '⚔️ Combat Stats',
+				value: `**Armor Class:** ${characterData.armor_class}\n` +
+                       `**Crit Chance:** ${Math.round(characterData.crit_chance * 100)}%\n` +
+                       `**Crit Damage:** ${characterData.crit_damage_modifier}x`,
+				inline: false,
+			},
+			{
+				name: '🛡️ Equipment',
+				value: '**Weapon:** [Empty]\n' +
+                       '**Offhand:** [Empty]\n' +
+                       '**Helmet:** [Empty]\n' +
+                       '**Chestplate:** [Empty]\n' +
+                       '**Leggings:** [Empty]\n' +
+                       '**Boots:** [Empty]\n' +
+                       '**Ring 1:** [Empty]\n' +
+                       '**Ring 2:** [Empty]\n' +
+                       '**Amulet:** [Empty]',
+				inline: false,
+			},
+		)
+		.setFooter({ text: 'Use /character equip to manage your gear.' })
+		.setTimestamp();
+
+	await interaction.reply({ embeds: [sheetEmbed] });
+}
+
+/**
+ * Handles the /character equip command.
+ * @param {import('discord.js').ChatInputCommandInteraction} interaction
+ */
+async function handleEquip(interaction) {
+	const userId = interaction.user.id;
+	const inventoryId = interaction.options.getInteger('item');
+
+	const character = db.prepare('SELECT user_id FROM characters WHERE user_id = ?').get(userId);
+	if (!character) {
+		return interaction.reply({ content: 'You must create a character first with `/character create`.', flags: MessageFlags.Ephemeral });
+	}
+
+	// Verify the item exists in the user's inventory
+	const itemToEquip = db.prepare(`
+        SELECT i.name, i.effects_json FROM user_inventory ui
+        JOIN items i ON ui.item_id = i.item_id
+        WHERE ui.inventory_id = ? AND ui.user_id = ?
+    `).get(inventoryId, userId);
+
+	if (!itemToEquip) {
+		return interaction.reply({ content: 'That item was not found in your inventory.', flags: MessageFlags.Ephemeral });
+	}
+
+	let effects;
+	try {
+		effects = JSON.parse(itemToEquip.effects_json);
+	}
+	catch (e) {
+		console.error('Error:' + e);
+		return interaction.reply({ content: `This item (${itemToEquip.name}) is not equippable as it has invalid data.`, flags: MessageFlags.Ephemeral });
+	}
+
+	const targetSlot = effects.slot;
+	if (!targetSlot || !EQUIPMENT_SLOTS.includes(targetSlot)) {
+		return interaction.reply({ content: `This item (${itemToEquip.name}) cannot be equipped.`, flags: MessageFlags.Ephemeral });
+	}
+
+	try {
+		// Equip the item by updating the corresponding slot in the characters table.
+		// This atomic UPDATE statement also implicitly unequips any item that was previously in the slot.
+		db.prepare(`UPDATE characters SET equipped_${targetSlot} = ? WHERE user_id = ?`).run(inventoryId, userId);
+
+		// TODO: Call recalculateStats(userId) here in Phase 2, Chunk 3.
+
+		await interaction.reply({ content: `✅ Successfully equipped **${itemToEquip.name}**.`, flags: MessageFlags.Ephemeral });
+
+	}
+	catch (error) {
+		console.error('Equip item error:', error);
+		await interaction.reply({ content: 'An error occurred while trying to equip this item.', flags: MessageFlags.Ephemeral });
+	}
+}
+
+/**
+ * Handles the /character unequip command.
+ * @param {import('discord.js').ChatInputCommandInteraction} interaction
+ */
+async function handleUnequip(interaction) {
+	const userId = interaction.user.id;
+	const slotToUnequip = interaction.options.getString('slot');
+
+	const character = db.prepare('SELECT * FROM characters WHERE user_id = ?').get(userId);
+	if (!character) {
+		return interaction.reply({ content: 'You must create a character first with `/character create`.', flags: MessageFlags.Ephemeral });
+	}
+
+	const equippedItemId = character[`equipped_${slotToUnequip}`];
+
+	if (!equippedItemId) {
+		return interaction.reply({ content: 'You have nothing equipped in that slot.', flags: MessageFlags.Ephemeral });
+	}
+
+	// Get the name of the item being unequipped for the confirmation message.
+	const itemInfo = db.prepare(`
+        SELECT i.name FROM user_inventory ui
+        JOIN items i ON ui.item_id = i.item_id
+        WHERE ui.inventory_id = ?
+    `).get(equippedItemId);
+
+	try {
+		// Set the slot to NULL to unequip the item.
+		db.prepare(`UPDATE characters SET equipped_${slotToUnequip} = NULL WHERE user_id = ?`).run(userId);
+
+		// TODO: Call recalculateStats(userId) here in Phase 2, Chunk 3.
+
+		const itemName = itemInfo ? `**${itemInfo.name}**` : 'the item';
+		await interaction.reply({ content: `✅ Successfully unequipped ${itemName} from your ${slotToUnequip} slot.`, flags: MessageFlags.Ephemeral });
+	}
+	catch (error) {
+		console.error('Unequip item error:', error);
+		await interaction.reply({ content: 'An error occurred while trying to unequip this item.', flags: MessageFlags.Ephemeral });
+	}
+}
 module.exports = {
 	category: 'charsys',
 	data: new SlashCommandBuilder()
@@ -61,8 +244,83 @@ module.exports = {
 						.setRequired(false)))
 		.addSubcommand(subcommand =>
 			subcommand
+				.setName('equip')
+				.setDescription('Equip an item from your inventory.')
+				.addIntegerOption(option =>
+					option.setName('item')
+						.setDescription('The inventory item to equip.')
+						.setRequired(true)
+						.setAutocomplete(true)))
+		.addSubcommand(subcommand =>
+			subcommand
+				.setName('unequip')
+				.setDescription('Unequip an item from an equipment slot.')
+				.addStringOption(option =>
+					option.setName('slot')
+						.setDescription('The equipment slot to clear.')
+						.setRequired(true)
+						.setAutocomplete(true)))
+		.addSubcommand(subcommand =>
+			subcommand
 				.setName('help')
 				.setDescription('Get help and information about the character system.')),
+
+	async autocomplete(interaction) {
+		const subcommand = interaction.options.getSubcommand();
+		const focusedOption = interaction.options.getFocused(true);
+		const userId = interaction.user.id;
+
+		if (subcommand === 'equip') {
+			if (focusedOption.name === 'item') {
+				const focusedValue = focusedOption.value.toLowerCase();
+				// Find all items in inventory that are equippable (have a "slot" in their JSON)
+				const equippableItems = db.prepare(`
+                    SELECT ui.inventory_id, i.name, i.effects_json
+                    FROM user_inventory ui
+                    JOIN items i ON ui.item_id = i.item_id
+                    WHERE ui.user_id = ? AND json_extract(i.effects_json, '$.slot') IS NOT NULL
+                `).all(userId);
+
+				const filtered = equippableItems
+					.filter(item => item.name.toLowerCase().includes(focusedValue))
+					.map(item => {
+						let slot = 'Misc';
+						try {
+							slot = JSON.parse(item.effects_json).slot;
+						}
+						catch {
+							/* ignore malformed JSON */
+						}
+						return {
+							name: `${item.name} (${slot})`,
+							value: item.inventory_id,
+						};
+					});
+
+				await interaction.respond(filtered.slice(0, 25));
+			}
+		}
+		else if (subcommand === 'unequip') {
+			if (focusedOption.name === 'slot') {
+				const character = db.prepare('SELECT * FROM characters WHERE user_id = ?').get(userId);
+				if (!character) return interaction.respond([]);
+
+				const equippedSlots = [];
+				for (const slot of EQUIPMENT_SLOTS) {
+					const inventoryId = character[`equipped_${slot}`];
+					if (inventoryId) {
+						const item = db.prepare('SELECT name FROM items WHERE item_id = (SELECT item_id FROM user_inventory WHERE inventory_id = ?)')
+							.get(inventoryId);
+						equippedSlots.push({
+							name: `${slot.charAt(0).toUpperCase() + slot.slice(1)}: ${item?.name || 'Unknown Item'}`,
+							value: slot,
+						});
+					}
+				}
+				await interaction.respond(equippedSlots);
+			}
+		}
+	},
 
 	async execute(interaction) {
 		const subcommand = interaction.options.getSubcommand();
@@ -72,7 +330,13 @@ module.exports = {
 			await handleCreate(interaction);
 			break;
 		case 'view':
-			await interaction.reply({ content: 'Character sheet view is under construction!', ephemeral: true });
+			await handleView(interaction);
+			break;
+		case 'equip':
+			await handleEquip(interaction);
+			break;
+		case 'unequip':
+			await handleUnequip(interaction);
 			break;
 		case 'help':
 			await interaction.reply({ content: 'Character system help guide is under construction!', ephemeral: true });

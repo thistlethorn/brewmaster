@@ -8,6 +8,7 @@ const config = require('../config.json');
 const db = require('../database');
 const BOT_COMMANDS_CHANNEL_ID = config?.discord?.botCommandsId || '1354187940246327316';
 const characterCommand = interaction.client.commands.get('character');
+const inventoryCommand = interaction.client.commands.get('inventory');
 
 function formatOption(option) {
 	return `${option.name}:(${
@@ -64,6 +65,23 @@ module.exports = {
 					interaction.isAutocomplete() ? ' [Autocomplete]' : ''
 				}`,
 			);
+
+			if (interaction.isButton() && interaction.customId.startsWith('inventory_')) {
+				if (inventoryCommand && typeof inventoryCommand.buttons === 'function') {
+					try {
+						await inventoryCommand.buttons(interaction);
+						console.log(`[Execute] Handled Inventory Button for ${interaction.user.displayName}`);
+						return;
+					}
+					catch (error) {
+						console.error('[Error] Inventory button error:', error);
+						if (!interaction.replied && !interaction.deferred) {
+							await interaction.reply({ content: 'There was an error processing your inventory action.', flags: MessageFlags.Ephemeral });
+						}
+						return;
+					}
+				}
+			}
 
 			if (interaction.isModalSubmit() && interaction.customId.startsWith('char_create_')) {
 				if (characterCommand && typeof characterCommand.modals === 'function') {
@@ -430,7 +448,22 @@ module.exports = {
 					}
 				}
 			}
-
+			if (interaction.isAutocomplete()) {
+				const command = interaction.client.commands.get(interaction.commandName);
+				if (!command) {
+					console.error(`No command matching ${interaction.commandName} was found.`);
+					return;
+				}
+				try {
+					if (typeof command.autocomplete === 'function') {
+						await command.autocomplete(interaction);
+					}
+				}
+				catch (error) {
+					console.error(error);
+				}
+				return;
+			}
 			const command = interaction.client.commands.get(interaction.commandName);
 			if (!command) {
 				console.error(`[Error] No command matching ${interaction.commandName} was found.`);
