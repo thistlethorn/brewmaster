@@ -181,6 +181,23 @@ module.exports = {
 					}
 				}
 			}
+			if (interaction.isButton() && interaction.customId.startsWith('pve_')) {
+				const pveCommand = interaction.client.commands.get('pve');
+				if (pveCommand && typeof pveCommand.buttons === 'function') {
+					try {
+						await pveCommand.buttons(interaction);
+						return;
+					}
+					catch (error) {
+						console.error('[Error] PvE button interaction error:', error);
+						// Attempt to inform user if possible
+						if (!interaction.replied && !interaction.deferred) {
+							await interaction.reply({ content: 'An error occurred during combat.', flags: MessageFlags.Ephemeral });
+						}
+						return;
+					}
+				}
+			}
 			if (interaction.isButton()) {
 
 				if (interaction.customId.startsWith('tony_quote_')) {

@@ -1,6 +1,123 @@
 // commands/charsys/pve.js
-const { SlashCommandBuilder, EmbedBuilder, MessageFlags, ChannelType } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, MessageFlags, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const db = require('../../database');
+const { addXp } = require('../../utils/addXp');
+
+// In-memory store for active combat sessions.
+// Key: threadId, Value: { combat state object }
+const activeCombats = new Map();
+
+/**
+ * Creates the main combat UI embed.
+ * @param {object} combatState The current state of the combat encounter.
+ * @param {import('discord.js').User} user The user object for the player.
+ * @returns {EmbedBuilder} The generated embed.
+ */
+function buildCombatEmbed(combatState, user) {
+	const embed = new EmbedBuilder()
+		.setColor(0xC0392B)
+		.setTitle(`⚔️ Combat: ${combatState.nodeData.name} ⚔️`)
+		.setAuthor({ name: user.username, iconURL: user.displayAvatarURL() });
+
+	const playerStatus = `❤️ **HP:** \`${combatState.character.current_health} / ${combatState.character.max_health}\`\n` +
+	                     `💙 **Mana:** \`${combatState.character.current_mana} / ${combatState.character.max_mana}\``;
+	embed.addFields({ name: 'Your Status', value: playerStatus, inline: false });
+
+	const monsterStatus = combatState.monsters.map((monster, index) => {
+		const healthBar = monster.current_health > 0 ? '❤️' : '💀';
+		return `**${monster.name} #${index + 1}**: ${healthBar} \`${monster.current_health} / ${monster.max_health}\` HP`;
+	}).join('\n');
+	embed.addFields({ name: 'Enemies', value: monsterStatus, inline: false });
+
+	if (combatState.combatLog.length > 0) {
+		embed.addFields({ name: 'Combat Log', value: combatState.combatLog.slice(-5).join('\n'), inline: false });
+	}
+
+	return embed;
+}
+
+/**
+ * Handles the final victory sequence, distributing rewards and loot.
+ * @param {import('discord.js').ButtonInteraction} interaction
+ * @param {object} combatState The final state of the combat encounter.
+ */
+async function handleVictory(interaction, combatState) {
+	const { userId, nodeData, thread } = combatState;
+	const victoryEmbed = new EmbedBuilder()
+		.setColor(0x2ECC71)
+		.setTitle(`🎉 Victory at ${nodeData.name}! 🎉`)
+		.setDescription('You have emerged victorious from battle!');
+
+	// 1. Grant Rewards (XP & Crowns)
+	const progress = db.prepare('SELECT times_cleared FROM character_pve_progress WHERE user_id = ? AND node_id = ?').get(userId, nodeData.node_id);
+	const isFirstClear = !progress || progress.times_cleared === 0;
+	const rewardJson = isFirstClear ? nodeData.first_completion_reward_json : nodeData.repeatable_reward_json;
+	const rewards = JSON.parse(rewardJson);
+
+	const rewardText = [];
+	if (rewards.xp > 0) {
+		await addXp(userId, rewards.xp, interaction);
+		rewardText.push(`**${rewards.xp}** XP`);
+	}
+	if (rewards.crowns > 0) {
+		db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(rewards.crowns, userId);
+		rewardText.push(`**${rewards.crowns}** Crowns`);
+	}
+	victoryEmbed.addFields({ name: 'Rewards Gained', value: rewardText.join('\n') });
+
+	// 2. Distribute Loot
+	const lootedItems = [];
+	const lootTransaction = db.transaction(() => {
+		for (const monster of combatState.monsters) {
+			if (!monster.loot_table_id) continue;
+			const entries = db.prepare('SELECT * FROM loot_table_entries WHERE loot_table_id = ?').all(monster.loot_table_id);
+			for (const entry of entries) {
+				if (Math.random() < entry.drop_chance) {
+					const quantity = Math.floor(Math.random() * (entry.max_quantity - entry.min_quantity + 1)) + entry.min_quantity;
+					db.prepare('INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, ?)').run(userId, entry.item_id, quantity);
+					const itemName = db.prepare('SELECT name FROM items WHERE item_id = ?').get(entry.item_id).name;
+					lootedItems.push(`• ${itemName} x${quantity}`);
+				}
+			}
+		}
+	});
+
+	lootTransaction();
+	if (lootedItems.length > 0) {
+		victoryEmbed.addFields({ name: 'Loot Acquired', value: lootedItems.join('\n') });
+	}
+
+	// 3. Cleanup
+	db.prepare('UPDATE characters SET character_status = \'IDLE\' WHERE user_id = ?').run(userId);
+	db.prepare('INSERT INTO character_pve_progress (user_id, node_id, times_cleared, last_cleared_at) VALUES (?, ?, 1, ?) ON CONFLICT(user_id, node_id) DO UPDATE SET times_cleared = times_cleared + 1, last_cleared_at = excluded.last_cleared_at')
+		.run(userId, nodeData.node_id, new Date().toISOString());
+	activeCombats.delete(thread.id);
+
+	await thread.send({ embeds: [victoryEmbed] });
+	await thread.setLocked(true);
+	await thread.setArchived(true);
+}
+
+/**
+ * Handles the defeat sequence.
+ * @param {import('discord.js').ButtonInteraction} interaction
+ * @param {object} combatState The final state of the combat encounter.
+ */
+async function handleDefeat(interaction, combatState) {
+	const { userId, nodeData, thread } = combatState;
+	const defeatEmbed = new EmbedBuilder()
+		.setColor(0x992D22)
+		.setTitle(`Defeated at ${nodeData.name}...`)
+		.setDescription('You have fallen in battle. You awaken back at the Tavern, having lost your way.');
+
+	// Cleanup
+	db.prepare('UPDATE characters SET character_status = \'IDLE\' WHERE user_id = ?').run(userId);
+	activeCombats.delete(thread.id);
+
+	await thread.send({ embeds: [defeatEmbed] });
+	await thread.setLocked(true);
+	await thread.setArchived(true);
+}
 
 /**
  * Handles the /pve list subcommand.
@@ -47,7 +164,7 @@ async function handleEngage(interaction) {
 	const userId = interaction.user.id;
 	const nodeId = interaction.options.getInteger('adventure');
 
-	const character = db.prepare('SELECT character_name, level, character_status FROM characters WHERE user_id = ?').get(userId);
+	const character = db.prepare('SELECT * FROM characters WHERE user_id = ?').get(userId);
 	if (!character) {
 		return interaction.reply({ content: 'You must create a character first with `/character create`.', flags: MessageFlags.Ephemeral });
 	}
@@ -77,14 +194,39 @@ async function handleEngage(interaction) {
 
 		await thread.members.add(userId);
 
-		// Placeholder for initial combat embed - this will be expanded in the next chunk.
-		const combatEmbed = new EmbedBuilder()
-			.setColor(0xC0392B)
-			.setTitle(`⚔️ Adventure Started: ${node.name} ⚔️`)
-			.setDescription('The battle is about to begin! Prepare yourself.')
-			.setFooter({ text: 'Combat system coming in the next update!' });
+		const monsterComposition = JSON.parse(node.monster_composition_json);
+		const monsters = [];
+		for (const comp of monsterComposition) {
+			const monsterData = db.prepare('SELECT * FROM monsters WHERE name = ?').get(comp.name);
+			for (let i = 0; i < comp.count; i++) {
+				monsters.push({ ...monsterData, current_health: monsterData.max_health });
+			}
+		}
 
-		await thread.send({ content: `<@${userId}>`, embeds: [combatEmbed] });
+		const combatState = {
+			userId,
+			thread,
+			nodeData: node,
+			character: { ...character },
+			monsters,
+			combatLog: ['The battle begins!'],
+		};
+		activeCombats.set(thread.id, combatState);
+
+		db.prepare('UPDATE characters SET character_status = ? WHERE user_id = ?').run('IN_COMBAT', userId);
+
+		const combatEmbed = buildCombatEmbed(combatState, interaction.user);
+		const actionButtons = new ActionRowBuilder();
+		combatState.monsters.forEach((monster, index) => {
+			actionButtons.addComponents(
+				new ButtonBuilder()
+					.setCustomId(`pve_attack_${thread.id}_${index}`)
+					.setLabel(`Attack ${monster.name} #${index + 1}`)
+					.setStyle(ButtonStyle.Danger),
+			);
+		});
+
+		await thread.send({ content: `<@${userId}>`, embeds: [combatEmbed], components: [actionButtons] });
 		await interaction.editReply({ content: `Your adventure begins! Join the battle here: ${thread}` });
 
 	}
@@ -148,4 +290,56 @@ module.exports = {
 			await interaction.reply({ content: 'Unknown PvE command.', flags: MessageFlags.Ephemeral });
 		}
 	},
+};
+
+module.exports.buttons = async (interaction) => {
+	// eslint-disable-next-line no-unused-vars
+	const [_, action, threadId, targetIndexStr] = interaction.customId.split('_');
+	const targetIndex = parseInt(targetIndexStr);
+
+	const combatState = activeCombats.get(threadId);
+	if (!combatState || combatState.userId !== interaction.user.id) {
+		return interaction.reply({ content: 'This is not your combat instance or it has expired.', flags: MessageFlags.Ephemeral });
+	}
+
+	await interaction.deferUpdate();
+
+	if (action === 'attack') {
+		const character = combatState.character;
+		const monster = combatState.monsters[targetIndex];
+
+		if (monster.current_health <= 0) return;
+
+		// Player's turn
+		const playerDamage = Math.max(1, character.stat_might);
+		monster.current_health = Math.max(0, monster.current_health - playerDamage);
+		combatState.combatLog.push(`> You attack **${monster.name} #${targetIndex + 1}** for **${playerDamage}** damage.`);
+		if (monster.current_health === 0) {
+			combatState.combatLog.push(`> **${monster.name} #${targetIndex + 1}** has been defeated!`);
+		}
+
+		// Check for victory
+		const allMonstersDefeated = combatState.monsters.every(m => m.current_health <= 0);
+		if (allMonstersDefeated) {
+			return handleVictory(interaction, combatState);
+		}
+
+		// Monsters' turn
+		combatState.monsters.forEach((m, i) => {
+			if (m.current_health > 0) {
+				const monsterDamage = Math.max(1, m.base_damage);
+				character.current_health = Math.max(0, character.current_health - monsterDamage);
+				combatState.combatLog.push(`< **${m.name} #${i + 1}** attacks you for **${monsterDamage}** damage.`);
+			}
+		});
+
+		// Check for defeat
+		if (character.current_health === 0) {
+			return handleDefeat(interaction, combatState);
+		}
+
+		// Update UI
+		const updatedEmbed = buildCombatEmbed(combatState, interaction.user);
+		await interaction.editReply({ embeds: [updatedEmbed] });
+	}
 };
