@@ -9,6 +9,8 @@ const db = require('../database');
 const BOT_COMMANDS_CHANNEL_ID = config?.discord?.botCommandsId || '1354187940246327316';
 const characterCommand = interaction.client.commands.get('character');
 const inventoryCommand = interaction.client.commands.get('inventory');
+const marketCommand = interaction.client.commands.get('market');
+
 
 function formatOption(option) {
 	return `${option.name}:(${
@@ -65,6 +67,39 @@ module.exports = {
 					interaction.isAutocomplete() ? ' [Autocomplete]' : ''
 				}`,
 			);
+
+			if (interaction.isModalSubmit() && interaction.customId.startsWith('trade_')) {
+				if (marketCommand && typeof marketCommand.modals === 'function') {
+					try {
+						await marketCommand.modals(interaction);
+						return;
+					}
+					catch (error) {
+						console.error('[Error] Trade modal error:', error);
+						if (!interaction.replied && !interaction.deferred) {
+							await interaction.reply({ content: 'There was an error processing your inventory action.', flags: MessageFlags.Ephemeral });
+						}
+						return;
+					}
+				}
+			}
+
+			if (interaction.isStringSelectMenu() && interaction.customId.startsWith('trade_')) {
+				if (marketCommand && typeof marketCommand.menus === 'function') {
+					try {
+						await marketCommand.menus(interaction);
+						return;
+					}
+					catch (error) {
+						console.error('[Error] Trade stringmenu error:', error);
+						if (!interaction.replied && !interaction.deferred) {
+							await interaction.reply({ content: 'There was an error processing your inventory action.', flags: MessageFlags.Ephemeral });
+						}
+						return;
+					}
+				}
+			}
+
 
 			if (interaction.isButton() && interaction.customId.startsWith('inventory_')) {
 				if (inventoryCommand && typeof inventoryCommand.buttons === 'function') {
@@ -199,7 +234,6 @@ module.exports = {
 				}
 			}
 			if (interaction.isButton() && interaction.customId.startsWith('trade_')) {
-				const marketCommand = interaction.client.commands.get('market');
 				if (marketCommand && typeof marketCommand.buttons === 'function') {
 					try {
 						await marketCommand.buttons(interaction);

@@ -1066,8 +1066,11 @@ const setupTables = db.transaction(() => {
             initiator_user_id TEXT NOT NULL,
             receiver_user_id TEXT NOT NULL,
 
-            -- 'PENDING', 'ACCEPTED', 'DECLINED', 'COMPLETED'
+            -- 'PENDING', 'LOCKED', 'CONFIRMED', 'COMPLETED', 'CANCELLED'
             status TEXT NOT NULL DEFAULT 'PENDING',
+            initiator_locked INTEGER DEFAULT 0,
+            receiver_locked INTEGER DEFAULT 0,
+
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
     `).run();
