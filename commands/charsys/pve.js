@@ -70,7 +70,13 @@ async function handleVictory(interaction, combatState) {
 	const lootTransaction = db.transaction(() => {
 		for (const monster of combatState.monsters) {
 			if (!monster.loot_table_id) continue;
-			const entries = db.prepare('SELECT * FROM loot_table_entries WHERE loot_table_id = ?').all(monster.loot_table_id);
+			const entries = db.prepare(`
+				SELECT lte.*, i.name as item_name 
+				FROM loot_table_entries lte 
+				JOIN items i ON lte.item_id = i.item_id 
+				WHERE lte.loot_table_id = ?
+			`).all(monster.loot_table_id);
+
 			for (const entry of entries) {
 				if (Math.random() < entry.drop_chance) {
 					const quantity = Math.floor(Math.random() * (entry.max_quantity - entry.min_quantity + 1)) + entry.min_quantity;
@@ -78,8 +84,7 @@ async function handleVictory(interaction, combatState) {
 					  'INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, ?) ' +
 					  'ON CONFLICT(user_id, item_id) DO UPDATE SET quantity = quantity + excluded.quantity',
 					).run(userId, entry.item_id, quantity);
-					const itemName = db.prepare('SELECT name FROM items WHERE item_id = ?').get(entry.item_id).name;
-					lootedItems.push(`• ${itemName} x${quantity}`);
+					lootedItems.push(`• ${entry.item_name} x${quantity}`);
 				}
 			}
 		}
@@ -201,11 +206,13 @@ async function handleEngage(interaction) {
 		const monsters = [];
 		for (const comp of monsterComposition) {
 			const monsterData = db.prepare('SELECT * FROM monsters WHERE name = ?').get(comp.name);
+			if (!monsterData) {
+				throw new Error(`Monster "${comp.name}" not found in database`);
+			}
 			for (let i = 0; i < comp.count; i++) {
 				monsters.push({ ...monsterData, current_health: monsterData.max_health });
 			}
 		}
-
 		const combatState = {
 			userId,
 			thread,
@@ -215,8 +222,6 @@ async function handleEngage(interaction) {
 			combatLog: ['The battle begins!'],
 		};
 		activeCombats.set(thread.id, combatState);
-
-		db.prepare('UPDATE characters SET character_status = ? WHERE user_id = ?').run('IN_COMBAT', userId);
 
 		const combatEmbed = buildCombatEmbed(combatState, interaction.user);
 		const actionButtons = new ActionRowBuilder();

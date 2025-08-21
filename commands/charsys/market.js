@@ -350,7 +350,9 @@ module.exports = {
 			const newLockStatus = currentLockStatus ? 0 : 1;
 
 			if (newLockStatus === 0) {
-				db.prepare('UPDATE trade_sessions SET initiator_locked = 0, receiver_locked = 0 WHERE session_id = ?').run(sessionId);
+				// Only unlock the current user's offer
+				const lockColumn = isInitiator ? 'initiator_locked' : 'receiver_locked';
+				db.prepare(`UPDATE trade_sessions SET ${lockColumn} = 0 WHERE session_id = ?`).run(sessionId);
 			}
 			else {
 				const lockColumn = isInitiator ? 'initiator_locked' : 'receiver_locked';

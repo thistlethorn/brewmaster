@@ -537,19 +537,22 @@ const setupTables = db.transaction(() => {
             
             -- === Equipment Slots ===
             -- Integer stores an inventory_id instance
-            equipped_weapon INTEGER,
-            equipped_offhand INTEGER,
-            equipped_helmet INTEGER,
-            equipped_chestplate INTEGER,
-            equipped_leggings INTEGER,
-            equipped_boots INTEGER,
-            equipped_ring1 INTEGER,
-            equipped_ring2 INTEGER,
-            equipped_amulet INTEGER,
+            equipped_weapon     INTEGER REFERENCES user_inventory(inventory_id) ON DELETE SET NULL,
+            equipped_offhand    INTEGER REFERENCES user_inventory(inventory_id) ON DELETE SET NULL,
+            equipped_helmet     INTEGER REFERENCES user_inventory(inventory_id) ON DELETE SET NULL,
+            equipped_chestplate INTEGER REFERENCES user_inventory(inventory_id) ON DELETE SET NULL,
+            equipped_leggings   INTEGER REFERENCES user_inventory(inventory_id) ON DELETE SET NULL,
+            equipped_boots      INTEGER REFERENCES user_inventory(inventory_id) ON DELETE SET NULL,
+            equipped_ring1      INTEGER REFERENCES user_inventory(inventory_id) ON DELETE SET NULL,
+            equipped_ring2      INTEGER REFERENCES user_inventory(inventory_id) ON DELETE SET NULL,
+            equipped_amulet     INTEGER REFERENCES user_inventory(inventory_id) ON DELETE SET NULL,
 
             -- === Nullable Fields ===
-            active_trophy_id INTEGER, -- NULL means no trophy is equipped
-            last_death_timestamp TEXT, -- NULL means has never died
+            -- NULL means no trophy is equipped
+            active_trophy_id INTEGER,
+
+            -- NULL means has never died
+            last_death_timestamp TEXT,
             
             -- === Metadata ===
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -616,7 +619,7 @@ const setupTables = db.transaction(() => {
             crown_value INTEGER DEFAULT 0,
 
             -- A flexible field for all item-specific data
-            effects_json TEXT
+            effects_json TEXT CHECK(effects_json IS NULL OR json_valid(effects_json))
         )
     `).run();
 
@@ -630,7 +633,7 @@ const setupTables = db.transaction(() => {
             quantity INTEGER DEFAULT 1,
 
             -- For unique properties like durability
-            instance_data_json TEXT,
+            instance_data_json TEXT CHECK(instance_data_json IS NULL OR json_valid(instance_data_json)),
             FOREIGN KEY(user_id) REFERENCES characters(user_id) ON DELETE CASCADE,
             FOREIGN KEY(item_id) REFERENCES items(item_id)
         )
@@ -650,10 +653,10 @@ const setupTables = db.transaction(() => {
             cooldown_seconds INTEGER DEFAULT 0,
 
             -- e.g., '{"ki": 20}' or '{"mana": 50}'
-            cost_json TEXT,
+            cost_json TEXT CHECK(cost_json IS NULL OR json_valid(cost_json)),
 
             -- e.g., '{"damage": 10, "heal": 5}' or '{"buff": "strength", "duration": 30}'
-            effects_json TEXT,
+            effects_json TEXT CHECK(effects_json IS NULL OR json_valid(effects_json)),
             FOREIGN KEY(archetype_id) REFERENCES archetypes(id)
         )
     `).run();
@@ -681,7 +684,7 @@ const setupTables = db.transaction(() => {
             required_level INTEGER DEFAULT 1,
 
             -- e.g., '{"iron_ore_id": 5, "oak_wood_id": 2}'
-            reagents_json TEXT NOT NULL,
+            reagents_json TEXT NOT NULL CHECK(json_valid(reagents_json)),
 
             FOREIGN KEY(crafted_item_id) REFERENCES items(item_id)
         )
@@ -701,7 +704,7 @@ const setupTables = db.transaction(() => {
             crown_reward INTEGER,
 
             -- e.g., '[{"item_id": 25, "quantity": 3}]'
-            item_reward_json TEXT
+            item_reward_json TEXT CHECK(item_reward_json IS NULL OR json_valid(item_reward_json))
         )
     `).run();
 
@@ -715,7 +718,7 @@ const setupTables = db.transaction(() => {
             status TEXT DEFAULT 'ACTIVE',
 
             -- e.g., '{"goblins_slain": 3, "target": 5}'
-            progress_json TEXT,
+            progress_json TEXT CHECK(progress_json IS NULL OR json_valid(progress_json)),
             PRIMARY KEY (user_id, quest_id)
         )
     `).run();
@@ -736,7 +739,7 @@ const setupTables = db.transaction(() => {
             effect_name TEXT NOT NULL,
 
             -- e.g., '{"stat_change": {"might": 5}, "ac_penalty": -2}'
-            effects_json TEXT,
+            effects_json TEXT CHECK(effects_json IS NULL OR json_valid(effects_json)),
 
             -- ISO timestamp for when the effect wears off
             expires_at TEXT NOT NULL,
@@ -767,7 +770,7 @@ const setupTables = db.transaction(() => {
             active_protocol TEXT NOT NULL DEFAULT 'IDLE',
 
             -- JSON to store installed parts, e.g., '{"chassis_id": 101, "power_core_id": 203}'
-            components_json TEXT,
+            components_json TEXT CHECK(components_json IS NULL OR json_valid(components_json)),
 
             FOREIGN KEY(owner_user_id) REFERENCES characters(user_id) ON DELETE CASCADE
     )
@@ -789,7 +792,7 @@ const setupTables = db.transaction(() => {
             target_identifier TEXT NOT NULL,
 
             -- The bonus itself, e.g., '{"damage_increase": 0.05, "crit_chance_increase": 0.02}'
-            bonus_effects_json TEXT,
+            bonus_effects_json TEXT CHECK(bonus_effects_json IS NULL OR json_valid(bonus_effects_json)),
 
             FOREIGN KEY(user_id) REFERENCES characters(user_id) ON DELETE CASCADE
         )
@@ -815,7 +818,7 @@ const setupTables = db.transaction(() => {
             -- Special ability IDs from a future 'monster_abilities' table
 
             -- e.g., '{"on_hit": ["poison_1"], "on_death": ["explode"]}'
-            abilities_json TEXT,
+            abilities_json TEXT CHECK(abilities_json IS NULL OR json_valid(abilities_json)),
             -- Links to the loot_tables table
             loot_table_id INTEGER,
             xp_reward INTEGER
@@ -840,10 +843,10 @@ const setupTables = db.transaction(() => {
             -- JSON for different phases, weaknesses, and mechanics
 
             -- e.g., '{"phase_2_threshold": 0.50, "enrage_timer_ms": 300000, "vulnerabilities": ["fire"]}'
-            mechanics_json TEXT,
+            mechanics_json TEXT CHECK(mechanics_json IS NULL OR json_valid(mechanics_json)),
 
             -- Special, named attacks
-            pinnacle_abilities_json TEXT,
+            pinnacle_abilities_json TEXT CHECK(pinnacle_abilities_json IS NULL OR json_valid(pinnacle_abilities_json)),
             loot_table_id INTEGER
         )
     `).run();
@@ -890,17 +893,24 @@ const setupTables = db.transaction(() => {
             description TEXT,
             required_level INTEGER DEFAULT 1,
 
-            -- JSON array of monster_ids in this node, e.g., '[{"id": 1, "count": 3}, {"id": 2, "count": 1}]'
-            monster_composition_json TEXT,
-
             -- Bonus for the first time clearing it
-            first_completion_reward_json TEXT,
+            first_completion_reward_json TEXT CHECK(first_completion_reward_json IS NULL OR json_valid(first_completion_reward_json)),
 
             -- Reward for all subsequent clears
-            repeatable_reward_json TEXT
+            repeatable_reward_json TEXT CHECK(repeatable_reward_json IS NULL OR json_valid(repeatable_reward_json))
         )
     `).run();
 
+	db.prepare(`
+        CREATE TABLE IF NOT EXISTS pve_node_monsters (
+            node_id INTEGER NOT NULL,
+            monster_id INTEGER NOT NULL,
+            count INTEGER NOT NULL DEFAULT 1,
+            PRIMARY KEY (node_id, monster_id),
+            FOREIGN KEY(node_id) REFERENCES pve_nodes(node_id) ON DELETE CASCADE,
+            FOREIGN KEY(monster_id) REFERENCES monsters(monster_id) ON DELETE CASCADE
+        )
+    `).run();
 
 	db.prepare(`
         CREATE TABLE IF NOT EXISTS character_pve_progress (
@@ -989,8 +999,8 @@ const setupTables = db.transaction(() => {
             mana_cost INTEGER DEFAULT 0,
 
             -- e.g., '[{"item_id": 5, "quantity": 1}]' for a material component
-            component_cost_json TEXT,
-            effects_json TEXT NOT NULL
+            component_cost_json TEXT CHECK(component_cost_json IS NULL OR json_valid(component_cost_json)),
+            effects_json TEXT NOT NULL CHECK(json_valid(requirements_json))
         )
     `).run();
 
@@ -1023,7 +1033,7 @@ const setupTables = db.transaction(() => {
             end_time TEXT NOT NULL,
 
             -- JSON for requirements, e.g., '{"type": "DONATION", "category": "CRAFTING"}' or '{"type": "COST", "amount": 500}'
-            requirements_json TEXT,
+            requirements_json TEXT CHECK(requirements_json IS NULL OR json_valid(requirements_json)),
 
             FOREIGN KEY(host_guild_tag) REFERENCES guild_list(guild_tag) ON DELETE CASCADE
         )
@@ -1036,7 +1046,7 @@ const setupTables = db.transaction(() => {
             user_id TEXT NOT NULL,
 
             -- To log what they donated
-            contribution_json TEXT,
+            contribution_json TEXT CHECK(contribution_json IS NULL OR json_valid(contribution_json)),
 
             PRIMARY KEY (event_id, user_id),
             FOREIGN KEY(event_id) REFERENCES rp_events(event_id) ON DELETE CASCADE
@@ -1100,10 +1110,10 @@ const setupTables = db.transaction(() => {
             description TEXT,
 
             -- JSON listing required item_ids and quantities
-            required_materials_json TEXT,
+            required_materials_json TEXT CHECK(required_materials_json IS NULL OR json_valid(required_materials_json)),
 
             -- JSON describing the permanent reward, e.g., '{"effect": "VAULT_DEFENSE", "value": 0.01}'
-            reward_json TEXT
+            reward_json TEXT CHECK(reward_json IS NULL OR json_valid(reward_json))
         )
     `).run();
 
@@ -1117,7 +1127,7 @@ const setupTables = db.transaction(() => {
             project_id INTEGER NOT NULL,
 
             -- JSON tracking current donated materials
-            progress_json TEXT,
+            progress_json TEXT CHECK(progress_json IS NULL OR json_valid(progress_json)),
             started_at TEXT DEFAULT CURRENT_TIMESTAMP,
 
             FOREIGN KEY(guild_tag) REFERENCES guild_list(guild_tag) ON DELETE CASCADE,

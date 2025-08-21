@@ -69,8 +69,8 @@ module.exports = {
 						newLevel--;
 						levelsLost++;
 						newStatPoints = Math.max(0, newStatPoints - 2);
-						const xpForPreviousLevel = Math.floor(100 * ((newLevel - 1) ** 1.5));
-						newXp += xpForPreviousLevel;
+						const xpForCurrentLevel = Math.floor(100 * (newLevel ** 1.5));
+						newXp += xpForCurrentLevel;
 					}
 					if (newLevel === 1) newXp = Math.max(0, newXp);
 

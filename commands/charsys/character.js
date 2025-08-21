@@ -181,7 +181,7 @@ async function handleEquip(interaction) {
 		updateStatements[intendedSlot].run(inventoryId, userId);
 
 		// Recalculate stats now that the item is equipped.
-		await recalculateStats(userId);
+		recalculateStats(userId);
 
 		await interaction.reply({ content: `✅ Successfully equipped **${itemToEquip.name}**. Your stats have been updated.`, flags: MessageFlags.Ephemeral });
 
@@ -236,7 +236,7 @@ async function handleUnequip(interaction) {
 		}
 		updateStatements[slotToUnequip].run(userId);
 
-		await recalculateStats(userId);
+		recalculateStats(userId);
 
 		const itemName = itemInfo ? `**${itemInfo.name}**` : 'the item';
 		await interaction.reply({ content: `✅ Successfully unequipped ${itemName} from your ${slotToUnequip} slot.`, flags: MessageFlags.Ephemeral });

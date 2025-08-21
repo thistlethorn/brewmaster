@@ -38,11 +38,15 @@ async function addXp(userId, amount, interaction) {
 
 	// Use a transaction to update the character's stats atomically
 	try {
-		db.prepare(`
-            UPDATE characters
-            SET level = ?, xp = ?, stat_points_unspent = ?
-            WHERE user_id = ?
-        `).run(level, xp, stat_points_unspent, userId);
+		// Use a transaction to update the character's stats atomically
+		const updateChar = db.transaction(() => {
+			db.prepare(`
+                UPDATE characters
+                SET level = ?, xp = ?, stat_points_unspent = ?
+                WHERE user_id = ?
+            `).run(level, xp, stat_points_unspent, userId);
+		});
+		updateChar();
 
 		// If a level-up occurred, send a notification.
 		if (hasLeveledUp && interaction) {

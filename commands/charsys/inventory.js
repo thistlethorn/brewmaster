@@ -38,7 +38,8 @@ async function handleView(interaction, pageArg) {
 			.setColor(0x95A5A6)
 			.setTitle(`${interaction.user.username}'s Inventory`)
 			.setDescription('*Your pockets are empty.*');
-		return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+		const replyOptions = { embeds: [embed], flags: MessageFlags.Ephemeral };
+		return interaction.isButton() ? interaction.update(replyOptions) : interaction.reply(replyOptions);
 	}
 
 	// Create a Set of all equipped inventory_ids for fast lookup.

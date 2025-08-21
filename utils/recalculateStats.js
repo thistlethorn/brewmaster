@@ -6,7 +6,7 @@ const db = require('../database');
  * @param {string} userId The ID of the user whose character needs recalculating.
  * @returns {Promise<void>}
  */
-async function recalculateStats(userId) {
+function recalculateStats(userId) {
 	const character = db.prepare('SELECT * FROM characters WHERE user_id = ?').get(userId);
 	if (!character) {
 		throw new Error(`Character not found for user ${userId}`);

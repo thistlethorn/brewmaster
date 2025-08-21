@@ -142,15 +142,20 @@ function seedPveData() {
 			const stmt = db.prepare(
 				'INSERT INTO loot_table_entries (loot_table_id, item_id, drop_chance, min_quantity, max_quantity) VALUES (?, ?, ?, ?, ?)',
 			);
-			lootTableEntries.forEach(entry =>
+			lootTableEntries.forEach(entry => {
+				const itemId = itemIds.get(entry.item_name);
+				if (!itemId) {
+					console.error(`[DB Seeding] Item not found: ${entry.item_name}`);
+					throw new Error(`Missing item: ${entry.item_name}`);
+				}
 				stmt.run(
 					entry.loot_table_id,
-					itemIds.get(entry.item_name),
+					itemId,
 					entry.drop_chance,
 					entry.min_quantity,
 					entry.max_quantity,
-				),
-			);
+				);
+			});
 			console.log(`[DB Seeding] Seeded ${lootTableEntries.length} loot table entries.`);
 		}
 
@@ -236,9 +241,11 @@ function seedDatabase() {
 		seedOrigins();
 		seedArchetypes();
 		seedPveData();
+		return true;
 	}
 	catch (error) {
 		console.error('[DB Seeding] Failed to seed database:', error);
+		throw new Error('Database seeding failed!');
 	}
 }
 
