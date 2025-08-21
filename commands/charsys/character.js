@@ -1,7 +1,7 @@
 // commands/charsys/character.js
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, MessageFlags } = require('discord.js');
 const db = require('../../database');
-
+const { recalculateStats } = require('../../utils/recalculateStats');
 // In-memory store for character creation sessions.
 // Key: userId, Value: { step, name, originId, archetypeId, ... }
 const creationSessions = new Map();
@@ -138,45 +138,37 @@ async function handleView(interaction) {
 async function handleEquip(interaction) {
 	const userId = interaction.user.id;
 	const inventoryId = interaction.options.getInteger('item');
+	// The `slot` option is primarily for filtering the autocomplete, but we can use it for validation.
+	const intendedSlot = interaction.options.getString('slot');
 
 	const character = db.prepare('SELECT user_id FROM characters WHERE user_id = ?').get(userId);
 	if (!character) {
 		return interaction.reply({ content: 'You must create a character first with `/character create`.', flags: MessageFlags.Ephemeral });
 	}
 
-	// Verify the item exists in the user's inventory
+	// Verify the item exists in the user's inventory and is equippable in the intended slot.
 	const itemToEquip = db.prepare(`
         SELECT i.name, i.effects_json FROM user_inventory ui
         JOIN items i ON ui.item_id = i.item_id
-        WHERE ui.inventory_id = ? AND ui.user_id = ?
-    `).get(inventoryId, userId);
+        WHERE ui.inventory_id = ? AND ui.user_id = ? AND json_extract(i.effects_json, '$.slot') = ?
+    `).get(inventoryId, userId, intendedSlot);
 
 	if (!itemToEquip) {
-		return interaction.reply({ content: 'That item was not found in your inventory.', flags: MessageFlags.Ephemeral });
-	}
-
-	let effects;
-	try {
-		effects = JSON.parse(itemToEquip.effects_json);
-	}
-	catch (e) {
-		console.error('Error:' + e);
-		return interaction.reply({ content: `This item (${itemToEquip.name}) is not equippable as it has invalid data.`, flags: MessageFlags.Ephemeral });
-	}
-
-	const targetSlot = effects.slot;
-	if (!targetSlot || !EQUIPMENT_SLOTS.includes(targetSlot)) {
-		return interaction.reply({ content: `This item (${itemToEquip.name}) cannot be equipped.`, flags: MessageFlags.Ephemeral });
+		return interaction.reply({ content: 'The selected item is not valid for that slot or was not found in your inventory.', flags: MessageFlags.Ephemeral });
 	}
 
 	try {
-		// Equip the item by updating the corresponding slot in the characters table.
-		// This atomic UPDATE statement also implicitly unequips any item that was previously in the slot.
-		db.prepare(`UPDATE characters SET equipped_${targetSlot} = ? WHERE user_id = ?`).run(inventoryId, userId);
+		// Equip the item. The slot is dynamic based on the user's selection.
+		// We use a whitelist (EQUIPMENT_SLOTS) to prevent any chance of SQL injection-like issues.
+		if (!EQUIPMENT_SLOTS.includes(intendedSlot)) {
+			throw new Error(`Invalid slot provided: ${intendedSlot}`);
+		}
+		db.prepare(`UPDATE characters SET equipped_${intendedSlot} = ? WHERE user_id = ?`).run(inventoryId, userId);
 
-		// TODO: Call recalculateStats(userId) here in Phase 2, Chunk 3.
+		// Recalculate stats now that the item is equipped.
+		await recalculateStats(userId);
 
-		await interaction.reply({ content: `✅ Successfully equipped **${itemToEquip.name}**.`, flags: MessageFlags.Ephemeral });
+		await interaction.reply({ content: `✅ Successfully equipped **${itemToEquip.name}**. Your stats have been updated.`, flags: MessageFlags.Ephemeral });
 
 	}
 	catch (error) {
@@ -215,7 +207,7 @@ async function handleUnequip(interaction) {
 		// Set the slot to NULL to unequip the item.
 		db.prepare(`UPDATE characters SET equipped_${slotToUnequip} = NULL WHERE user_id = ?`).run(userId);
 
-		// TODO: Call recalculateStats(userId) here in Phase 2, Chunk 3.
+		await recalculateStats(userId);
 
 		const itemName = itemInfo ? `**${itemInfo.name}**` : 'the item';
 		await interaction.reply({ content: `✅ Successfully unequipped ${itemName} from your ${slotToUnequip} slot.`, flags: MessageFlags.Ephemeral });
@@ -246,6 +238,21 @@ module.exports = {
 			subcommand
 				.setName('equip')
 				.setDescription('Equip an item from your inventory.')
+				.addStringOption(option =>
+					option.setName('slot')
+						.setDescription('The equipment slot you want to fill.')
+						.setRequired(true)
+						.addChoices(
+							{ name: 'Weapon', value: 'weapon' },
+							{ name: 'Offhand', value: 'offhand' },
+							{ name: 'Helmet', value: 'helmet' },
+							{ name: 'Chestplate', value: 'chestplate' },
+							{ name: 'Leggings', value: 'leggings' },
+							{ name: 'Boots', value: 'boots' },
+							{ name: 'Ring 1', value: 'ring1' },
+							{ name: 'Ring 2', value: 'ring2' },
+							{ name: 'Amulet', value: 'amulet' },
+						))
 				.addIntegerOption(option =>
 					option.setName('item')
 						.setDescription('The inventory item to equip.')
@@ -272,30 +279,28 @@ module.exports = {
 
 		if (subcommand === 'equip') {
 			if (focusedOption.name === 'item') {
+				// Get the value of the *other*, already-filled-in option.
+				const slot = interaction.options.getString('slot');
+				if (!slot) {
+					// If the user hasn't chosen a slot yet, show no items.
+					return interaction.respond([]);
+				}
+
 				const focusedValue = focusedOption.value.toLowerCase();
-				// Find all items in inventory that are equippable (have a "slot" in their JSON)
+				// Find items in inventory that match the chosen slot.
 				const equippableItems = db.prepare(`
-                    SELECT ui.inventory_id, i.name, i.effects_json
+                    SELECT ui.inventory_id, i.name
                     FROM user_inventory ui
                     JOIN items i ON ui.item_id = i.item_id
-                    WHERE ui.user_id = ? AND json_extract(i.effects_json, '$.slot') IS NOT NULL
-                `).all(userId);
+                    WHERE ui.user_id = ? AND json_extract(i.effects_json, '$.slot') = ?
+                `).all(userId, slot);
 
 				const filtered = equippableItems
 					.filter(item => item.name.toLowerCase().includes(focusedValue))
-					.map(item => {
-						let slot = 'Misc';
-						try {
-							slot = JSON.parse(item.effects_json).slot;
-						}
-						catch {
-							/* ignore malformed JSON */
-						}
-						return {
-							name: `${item.name} (${slot})`,
-							value: item.inventory_id,
-						};
-					});
+					.map(item => ({
+						name: item.name,
+						value: item.inventory_id,
+					}));
 
 				await interaction.respond(filtered.slice(0, 25));
 			}
