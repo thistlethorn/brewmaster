@@ -198,6 +198,22 @@ module.exports = {
 					}
 				}
 			}
+			if (interaction.isButton() && interaction.customId.startsWith('trade_')) {
+				const marketCommand = interaction.client.commands.get('market');
+				if (marketCommand && typeof marketCommand.buttons === 'function') {
+					try {
+						await marketCommand.buttons(interaction);
+						return;
+					}
+					catch (error) {
+						console.error('[Error] Trade button interaction error:', error);
+						if (!interaction.replied && !interaction.deferred) {
+							await interaction.reply({ content: 'An error occurred while processing this trade action.', flags: MessageFlags.Ephemeral });
+						}
+						return;
+					}
+				}
+			}
 			if (interaction.isButton()) {
 
 				if (interaction.customId.startsWith('tony_quote_')) {
