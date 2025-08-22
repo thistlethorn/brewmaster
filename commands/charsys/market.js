@@ -349,15 +349,12 @@ module.exports = {
 			const currentLockStatus = isInitiator ? session.initiator_locked : session.receiver_locked;
 			const newLockStatus = currentLockStatus ? 0 : 1;
 
-			if (newLockStatus === 0) {
-				// Only unlock the current user's offer
-				const lockColumn = isInitiator ? 'initiator_locked' : 'receiver_locked';
-				db.prepare(`UPDATE trade_sessions SET ${lockColumn} = 0 WHERE session_id = ?`).run(sessionId);
-			}
-			else {
-				const lockColumn = isInitiator ? 'initiator_locked' : 'receiver_locked';
-				db.prepare(`UPDATE trade_sessions SET ${lockColumn} = 1 WHERE session_id = ?`).run(sessionId);
-			}
+			const updateStatements = {
+				initiator: db.prepare('UPDATE trade_sessions SET initiator_locked = ? WHERE session_id = ?'),
+				receiver: db.prepare('UPDATE trade_sessions SET receiver_locked = ? WHERE session_id = ?'),
+			};
+			const statement = isInitiator ? updateStatements.initiator : updateStatements.receiver;
+			statement.run(newLockStatus, sessionId);
 
 			await interaction.deferUpdate();
 			await updateTradeUI(interaction, sessionId);
@@ -398,14 +395,17 @@ module.exports = {
 		if (amount > balance) {
 			return interaction.reply({ content: `You cannot offer more crowns than you have! (Balance: ${balance})`, flags: MessageFlags.Ephemeral });
 		}
+		const existingOffer = db.prepare('SELECT crown_amount FROM trade_session_items WHERE session_id = ? AND user_id = ? AND crown_amount IS NOT NULL').get(sessionId, userId);
 
 		db.prepare(`
                 INSERT INTO trade_session_items (session_id, user_id, crown_amount) VALUES (?, ?, ?)
                 ON CONFLICT(session_id, user_id) DO UPDATE SET crown_amount = excluded.crown_amount
             `).run(sessionId, userId, amount);
 
-		await interaction.reply({ content: `You have offered 👑 ${amount.toLocaleString()} Crowns.`, flags: MessageFlags.Ephemeral });
-		await updateTradeUI(interaction, sessionId);
+		const message = existingOffer
+			? `You have updated your crown offer from 👑 ${existingOffer.crown_amount.toLocaleString()} to 👑 ${amount.toLocaleString()} Crowns.`
+			: `You have offered 👑 ${amount.toLocaleString()} Crowns.`;
+		await interaction.reply({ content: message, flags: MessageFlags.Ephemeral });		await updateTradeUI(interaction, sessionId);
 	},
 
 	async menus(interaction) {

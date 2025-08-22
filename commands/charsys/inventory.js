@@ -123,7 +123,11 @@ module.exports = {
      * @param {import('discord.js').ButtonInteraction} interaction
      */
 	async buttons(interaction) {
-		const [,, targetUserId, page] = interaction.customId.split('_');
+		const parts = interaction.customId.split('_');
+		if (parts.length !== 4 || parts[0] !== 'inventory' || parts[1] !== 'view') {
+			return interaction.reply({ content: 'Invalid button interaction.', flags: MessageFlags.Ephemeral });
+		}
+		const [,, targetUserId, page] = parts;
 
 		if (interaction.user.id !== targetUserId) {
 			return interaction.reply({ content: 'This is not your inventory menu.', flags: MessageFlags.Ephemeral });

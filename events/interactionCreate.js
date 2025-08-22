@@ -129,7 +129,7 @@ module.exports = {
 					catch (error) {
 						console.error('[Error] Inventory button error:', error);
 						if (!interaction.replied && !interaction.deferred) {
-							await interaction.reply({ content: 'There was an error processing your trade action.', flags: MessageFlags.Ephemeral });
+							await interaction.reply({ content: 'There was an error processing your inventory action.', flags: MessageFlags.Ephemeral });
 						}
 						return;
 					}

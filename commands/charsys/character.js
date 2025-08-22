@@ -86,7 +86,29 @@ async function handleView(interaction) {
 
 	// Calculate XP required for the next level.
 	const xpToNextLevel = Math.floor(100 * (characterData.level ** 1.5));
+	// Fetch equipped items
+	const equipmentSlots = ['weapon', 'offhand', 'helmet', 'chestplate', 'leggings', 'boots', 'ring1', 'ring2', 'amulet'];
+	const equipmentDisplay = [];
 
+	for (const slot of equipmentSlots) {
+		const inventoryId = characterData[`equipped_${slot}`];
+		if (inventoryId) {
+			const item = db.prepare(`
+      SELECT i.name
+      FROM user_inventory ui
+      JOIN items i ON ui.item_id = i.item_id
+      WHERE ui.inventory_id = ?
+    `).get(inventoryId);
+			equipmentDisplay.push(
+				`**${slot.charAt(0).toUpperCase() + slot.slice(1).replace(/(\d+)/, ' $1')}:** ${item?.name || '[Unknown]'}`,
+			);
+		}
+		else {
+			equipmentDisplay.push(
+				`**${slot.charAt(0).toUpperCase() + slot.slice(1).replace(/(\d+)/, ' $1')}:** [Empty]`,
+			);
+		}
+	}
 	const sheetEmbed = new EmbedBuilder()
 		.setColor(0x5865F2)
 		.setTitle(`${characterData.character_name} - Level ${characterData.level} ${characterData.archetype_name}`)
@@ -113,15 +135,7 @@ async function handleView(interaction) {
 			},
 			{
 				name: '🛡️ Equipment',
-				value: '**Weapon:** [Empty]\n' +
-                       '**Offhand:** [Empty]\n' +
-                       '**Helmet:** [Empty]\n' +
-                       '**Chestplate:** [Empty]\n' +
-                       '**Leggings:** [Empty]\n' +
-                       '**Boots:** [Empty]\n' +
-                       '**Ring 1:** [Empty]\n' +
-                       '**Ring 2:** [Empty]\n' +
-                       '**Amulet:** [Empty]',
+				value: equipmentDisplay.join('\n'),
 				inline: false,
 			},
 		)
@@ -181,7 +195,7 @@ async function handleEquip(interaction) {
 		updateStatements[intendedSlot].run(inventoryId, userId);
 
 		// Recalculate stats now that the item is equipped.
-		recalculateStats(userId);
+		await recalculateStats(userId);
 
 		await interaction.reply({ content: `✅ Successfully equipped **${itemToEquip.name}**. Your stats have been updated.`, flags: MessageFlags.Ephemeral });
 
@@ -236,7 +250,7 @@ async function handleUnequip(interaction) {
 		}
 		updateStatements[slotToUnequip].run(userId);
 
-		recalculateStats(userId);
+		await recalculateStats(userId);
 
 		const itemName = itemInfo ? `**${itemInfo.name}**` : 'the item';
 		await interaction.reply({ content: `✅ Successfully unequipped ${itemName} from your ${slotToUnequip} slot.`, flags: MessageFlags.Ephemeral });
@@ -559,8 +573,13 @@ module.exports = {
 						might: 5, finesse: 5, wits: 5, grit: 5, charm: 5, fortune: 5,
 					};
 					// Apply origin bonuses
-					stats[origin.bonus_stat_1]++;
-					stats[origin.bonus_stat_2]++;
+					const validStats = ['might', 'finesse', 'wits', 'grit', 'charm', 'fortune'];
+					if (validStats.includes(origin.bonus_stat_1)) {
+						stats[origin.bonus_stat_1]++;
+					}
+					if (validStats.includes(origin.bonus_stat_2)) {
+						stats[origin.bonus_stat_2]++;
+					}
 
 					db.prepare(`
                         INSERT INTO characters (

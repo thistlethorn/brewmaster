@@ -1000,7 +1000,7 @@ const setupTables = db.transaction(() => {
 
             -- e.g., '[{"item_id": 5, "quantity": 1}]' for a material component
             component_cost_json TEXT CHECK(component_cost_json IS NULL OR json_valid(component_cost_json)),
-            effects_json TEXT NOT NULL CHECK(json_valid(requirements_json))
+            effects_json TEXT NOT NULL CHECK(json_valid(effects_json))
         )
     `).run();
 

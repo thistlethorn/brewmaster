@@ -55,14 +55,18 @@ async function handleVictory(interaction, combatState) {
 	const rewards = JSON.parse(rewardJson);
 
 	const rewardText = [];
-	if (rewards.xp > 0) {
-		await addXp(userId, rewards.xp, interaction);
-		rewardText.push(`**${rewards.xp}** XP`);
-	}
-	if (rewards.crowns > 0) {
-		db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(rewards.crowns, userId);
-		rewardText.push(`**${rewards.crowns}** Crowns`);
-	}
+	const rewardTransaction = db.transaction(async () => {
+		if (rewards.xp > 0) {
+			await addXp(userId, rewards.xp, interaction);
+			rewardText.push(`**${rewards.xp}** XP`);
+		}
+		if (rewards.crowns > 0) {
+			db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(rewards.crowns, userId);
+			rewardText.push(`**${rewards.crowns}** Crowns`);
+		}
+	});
+	await rewardTransaction();
+
 	victoryEmbed.addFields({ name: 'Rewards Gained', value: rewardText.join('\n') });
 
 	// 2. Distribute Loot
@@ -202,17 +206,24 @@ async function handleEngage(interaction) {
 
 		await thread.members.add(userId);
 
-		const monsterComposition = JSON.parse(node.monster_composition_json);
+		const monsterComposition = db.prepare(`
+            SELECT m.*, pnm.count 
+            FROM pve_node_monsters pnm
+            JOIN monsters m ON pnm.monster_id = m.monster_id
+            WHERE pnm.node_id = ?
+        `).all(nodeId);
+
+		if (!monsterComposition || monsterComposition.length === 0) {
+			return interaction.editReply({ content: 'This adventure has no monsters configured. Please contact an admin.' });
+		}
+
 		const monsters = [];
-		for (const comp of monsterComposition) {
-			const monsterData = db.prepare('SELECT * FROM monsters WHERE name = ?').get(comp.name);
-			if (!monsterData) {
-				throw new Error(`Monster "${comp.name}" not found in database`);
-			}
-			for (let i = 0; i < comp.count; i++) {
+		for (const monsterData of monsterComposition) {
+			for (let i = 0; i < monsterData.count; i++) {
 				monsters.push({ ...monsterData, current_health: monsterData.max_health });
 			}
 		}
+
 		const combatState = {
 			userId,
 			thread,

@@ -2,6 +2,8 @@
 const { SlashCommandBuilder, MessageFlags, EmbedBuilder } = require('discord.js');
 const { addXp } = require('../../utils/addXp');
 const db = require('../../database');
+const { recalculateStats } = require('../../utils/recalculateStats');
+const config = require('../../config.json');
 
 module.exports = {
 	category: 'admin',
@@ -33,7 +35,7 @@ module.exports = {
 				.addUserOption(option => option.setName('user').setDescription('The user whose character to reset.').setRequired(true))),
 
 	async execute(interaction) {
-		if (interaction.user.id !== '1126419078140153946') {
+		if (interaction.user.id !== config.developerId) {
 			return interaction.reply({ content: 'This is a developer-only command.', flags: MessageFlags.Ephemeral });
 		}
 
@@ -72,7 +74,7 @@ module.exports = {
 						const xpForCurrentLevel = Math.floor(100 * (newLevel ** 1.5));
 						newXp += xpForCurrentLevel;
 					}
-					if (newLevel === 1) newXp = Math.max(0, newXp);
+					newXp = Math.max(0, newXp);
 
 
 					db.prepare('UPDATE characters SET level = ?, xp = ?, stat_points_unspent = ? WHERE user_id = ?')
@@ -134,6 +136,7 @@ module.exports = {
 						baseStats.grit, baseStats.charm, baseStats.fortune,
 						targetUser.id,
 					);
+					await recalculateStats(targetUser.id);
 					embed.setTitle('Character Reset')
 						.setDescription(`Successfully reset ${targetUser.username}'s character to Level 1.`)
 						.addFields({ name: 'Result', value: 'Character is now at Level 1, 0 XP, with 0 unspent points and base stats according to their Origin.' });

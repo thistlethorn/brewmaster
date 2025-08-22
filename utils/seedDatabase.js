@@ -186,19 +186,44 @@ function seedPveData() {
 		if (nodeCheck === 0) {
 			console.log('[DB Seeding] PvE Nodes table is empty. Seeding...');
 			const stmt = db.prepare(
-				'INSERT INTO pve_nodes (name, description, required_level, monster_composition_json, first_completion_reward_json, repeatable_reward_json) VALUES (?, ?, ?, ?, ?, ?)',
+				'INSERT INTO pve_nodes (name, description, required_level, first_completion_reward_json, repeatable_reward_json) VALUES (?, ?, ?, ?, ?)',
 			);
 			pveNodes.forEach(n =>
 				stmt.run(
 					n.name,
 					n.description,
 					n.required_level,
-					n.monster_composition_json,
 					n.first_completion_reward_json,
 					n.repeatable_reward_json,
 				),
 			);
 			console.log(`[DB Seeding] Seeded ${pveNodes.length} PvE nodes.`);
+		}
+
+		// pve_node_monsters junction table
+		const pnmCheck = db.prepare('SELECT COUNT(*) FROM pve_node_monsters').get()['COUNT(*)'];
+		if (pnmCheck === 0 && nodeCheck === 0) {
+			console.log('[DB Seeding] pve_node_monsters table is empty. Seeding...');
+
+			const monsterIdMap = new Map(db.prepare('SELECT monster_id, name FROM monsters').all().map(m => [m.name, m.monster_id]));
+			const nodeIdMap = new Map(db.prepare('SELECT node_id, name FROM pve_nodes').all().map(n => [n.name, n.node_id]));
+
+			const stmt = db.prepare('INSERT INTO pve_node_monsters (node_id, monster_id, count) VALUES (?, ?, ?)');
+
+			let seededCount = 0;
+			pveNodes.forEach(nodeSeed => {
+				const nodeId = nodeIdMap.get(nodeSeed.name);
+				if (!nodeId) return;
+
+				const monsterComp = JSON.parse(nodeSeed.monster_composition_json);
+				monsterComp.forEach(comp => {
+					const monsterId = monsterIdMap.get(comp.name);
+					if (!monsterId) return;
+					stmt.run(nodeId, monsterId, comp.count);
+					seededCount++;
+				});
+			});
+			console.log(`[DB Seeding] Seeded ${seededCount} monster compositions into pve_node_monsters.`);
 		}
 	})();
 }
