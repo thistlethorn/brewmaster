@@ -508,8 +508,8 @@ const setupTables = db.transaction(() => {
             character_title TEXT NOT NULL DEFAULT '',
 
             -- === Progression & State ===
-            level INTEGER DEFAULT 1,
-            xp INTEGER DEFAULT 0,
+            level INTEGER DEFAULT 1 CHECK (level >= 1),
+            xp INTEGER DEFAULT 0 CHECK (xp >= 0),
             character_status TEXT NOT NULL DEFAULT 'IDLE',
             stat_points_unspent INTEGER DEFAULT 0,
 
@@ -532,8 +532,8 @@ const setupTables = db.transaction(() => {
             
             -- === Combat Stats ===
             armor_class INTEGER DEFAULT 10,
-            crit_chance REAL DEFAULT 0.05,
-            crit_damage_modifier REAL DEFAULT 1.5,  
+            crit_chance REAL DEFAULT 0.05 CHECK (crit_chance >= 0.0 AND crit_chance <= 1.0),
+            crit_damage_modifier REAL DEFAULT 1.5 CHECK (crit_damage_modifier >= 1.0),  
 
             -- === Nullable Fields ===
             -- NULL means no trophy is equipped
@@ -618,11 +618,15 @@ const setupTables = db.transaction(() => {
             inventory_id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id TEXT NOT NULL,
             item_id INTEGER NOT NULL,
-            quantity INTEGER DEFAULT 1,
+            quantity INTEGER DEFAULT 1 CHECK (quantity >= 1),
 
             -- It's NULL if the item is just in the inventory.
             -- Examples: 'main_hand', 'off_hand', 'helmet', 'ring1', 'ring2'
-            equipped_slot TEXT,
+             equipped_slot TEXT
+                CHECK (
+                    equipped_slot IS NULL OR
+                    equipped_slot IN ('weapon','offhand','helmet','chestplate','leggings','boots','ring1','ring2','amulet')
+                ),
 
             -- For unique properties like durability
             instance_data_json TEXT CHECK(instance_data_json IS NULL OR json_valid(instance_data_json)),
@@ -804,12 +808,12 @@ const setupTables = db.transaction(() => {
 
             -- e.g., 'Goblinoid', 'Undead', 'Elemental'
             monster_race TEXT NOT NULL DEFAULT 'Beast',
-            level INTEGER NOT NULL,
+            level INTEGER NOT NULL CHECK (level >= 1),
 
             -- Core Stats
-            max_health INTEGER NOT NULL,
-            armor_class INTEGER NOT NULL,
-            base_damage INTEGER NOT NULL,
+            max_health INTEGER NOT NULL CHECK (max_health >= 1),
+            armor_class INTEGER NOT NULL CHECK (armor_class >= 0),
+            base_damage INTEGER NOT NULL CHECK (base_damage >= 0),
 
             -- Special ability IDs from a future 'monster_abilities' table
 
@@ -817,7 +821,7 @@ const setupTables = db.transaction(() => {
             abilities_json TEXT CHECK(abilities_json IS NULL OR json_valid(abilities_json)),
             -- Links to the loot_tables table
             loot_table_id INTEGER,
-            xp_reward INTEGER,
+            xp_reward INTEGER CHECK (xp_reward IS NULL OR xp_reward >= 0),
 
             FOREIGN KEY(loot_table_id) REFERENCES loot_tables(loot_table_id)
         )
@@ -832,11 +836,11 @@ const setupTables = db.transaction(() => {
             -- e.g., "The Crown-Hoarding Dragon"
             title TEXT,
             description TEXT NOT NULL DEFAULT '',
-            level INTEGER NOT NULL,
+            level INTEGER NOT NULL CHECK (level >= 1),
 
             -- Bosses have more complex stats
-            health_pool INTEGER NOT NULL,
-            armor_class INTEGER NOT NULL,
+            health_pool INTEGER NOT NULL CHECK (health_pool >= 1),
+            armor_class INTEGER NOT NULL CHECK (armor_class >= 0),
 
             -- JSON for different phases, weaknesses, and mechanics
 
@@ -1370,6 +1374,13 @@ const setupTables = db.transaction(() => {
 
 setupTables();
 
+
+/**
+ * Safely add a column to a whitelisted table.
+ * NOTE: SQLite cannot add constraints via ALTER; use rebuild migrations for FKs/CHECKs.
+ * @param {'guild_list'|'raid_history'|'TABLE_NAME_HERE'} tableName the name of the table to alter
+ * @param {string} columnDef e.g., "wager_pot INTEGER DEFAULT 0"
+ */
 // eslint-disable-next-line no-unused-vars
 function alterTableAddColumn(tableName, columnDef) {
 	// Validate table name against a whitelist

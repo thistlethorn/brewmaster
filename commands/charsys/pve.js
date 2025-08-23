@@ -372,13 +372,18 @@ module.exports = {
 module.exports.buttons = async (interaction) => {
 	// eslint-disable-next-line no-unused-vars
 	const [_, action, threadId, targetIndexStr] = interaction.customId.split('_');
-	const targetIndex = parseInt(targetIndexStr);
+	const targetIndex = Number.parseInt(targetIndexStr, 10);
+	if (!Number.isInteger(targetIndex)) {
+		return interaction.reply({ content: 'Invalid target.', flags: MessageFlags.Ephemeral });
+	}
 
 	const combatState = activeCombats.get(threadId);
 	if (!combatState || combatState.userId !== interaction.user.id) {
 		return interaction.reply({ content: 'This is not your combat instance or it has expired.', flags: MessageFlags.Ephemeral });
 	}
-
+	if (targetIndex < 0 || targetIndex >= combatState.monsters.length) {
+		return interaction.reply({ content: 'That target is no longer valid.', flags: MessageFlags.Ephemeral });
+	}
 	await interaction.deferUpdate();
 
 	if (action === 'attack') {
