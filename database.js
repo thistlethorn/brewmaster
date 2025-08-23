@@ -621,7 +621,7 @@ const setupTables = db.transaction(() => {
             quantity INTEGER DEFAULT 1 CHECK (quantity >= 1),
 
             -- It's NULL if the item is just in the inventory.
-            -- Examples: 'main_hand', 'off_hand', 'helmet', 'ring1', 'ring2'
+            -- Examples: 'weapon', 'offhand', 'helmet', 'ring1', 'ring2'
              equipped_slot TEXT
                 CHECK (
                     equipped_slot IS NULL OR
@@ -1172,7 +1172,7 @@ const setupTables = db.transaction(() => {
             expires_at TEXT NOT NULL,
 
             -- 'ACTIVE', 'SOLD', 'EXPIRED'
-            status TEXT NOT NULL DEFAULT 'ACTIVE',
+            status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE','SOLD','EXPIRED')),
 
             CHECK (starting_bid IS NULL OR starting_bid > 0),
             CHECK (buyout_price IS NULL OR buyout_price > 0),

@@ -73,13 +73,18 @@ async function handleVictory(interaction, combatState) {
 	// Then handle crowns in a transaction
 	if (rewards.crowns > 0) {
 		db.transaction(() => {
-			db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?')
-			  .run(rewards.crowns, userId);
+			db.prepare(`
+                INSERT INTO user_economy (user_id, crowns)
+                VALUES (?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET crowns = user_economy.crowns + excluded.crowns
+            `).run(userId, rewards.crowns);
 		})();
 		rewardText.push(`**${rewards.crowns}** Crowns`);
 	}
 
-	victoryEmbed.addFields({ name: 'Rewards Gained', value: rewardText.join('\n') });
+	if (rewardText.length > 0) {
+		victoryEmbed.addFields({ name: 'Rewards Gained', value: rewardText.join('\n') });
+	}
 
 	// 2. Distribute Loot
 	const lootedItems = [];
@@ -118,15 +123,27 @@ async function handleVictory(interaction, combatState) {
 		}
 	});
 
-	lootTransaction();
+	try {
+		lootTransaction();
+	}
+	catch (error) {
+		console.error('Failed to distribute loot:', error);
+		victoryEmbed.addFields({
+			name: '⚠️ Warning',
+			value: 'There was an issue distributing loot. Please contact an admin.',
+		});
+	}
+
 	if (lootedItems.length > 0) {
 		victoryEmbed.addFields({ name: 'Loot Acquired', value: lootedItems.join('\n') });
 	}
 
 	// 3. Cleanup
-	db.prepare('UPDATE characters SET character_status = \'IDLE\' WHERE user_id = ?').run(userId);
-	db.prepare('INSERT INTO character_pve_progress (user_id, node_id, times_cleared, last_cleared_at) VALUES (?, ?, 1, ?) ON CONFLICT(user_id, node_id) DO UPDATE SET times_cleared = times_cleared + 1, last_cleared_at = excluded.last_cleared_at')
-		.run(userId, nodeData.node_id, new Date().toISOString());
+	db.transaction(() => {
+		db.prepare('UPDATE characters SET character_status = \'IDLE\' WHERE user_id = ?').run(userId);
+		db.prepare('INSERT INTO character_pve_progress (user_id, node_id, times_cleared, last_cleared_at) VALUES (?, ?, 1, ?) ON CONFLICT(user_id, node_id) DO UPDATE SET times_cleared = times_cleared + 1, last_cleared_at = excluded.last_cleared_at')
+			.run(userId, nodeData.node_id, new Date().toISOString());
+	})();
 	activeCombats.delete(thread.id);
 
 	try {
@@ -369,6 +386,11 @@ module.exports = {
 	},
 };
 
+/**
+* PvE buttons handler.
+* Expected customId format: pve_attack_threadId_index
+* @param {import('discord.js').ButtonInteraction} interaction
+*/
 module.exports.buttons = async (interaction) => {
 	// eslint-disable-next-line no-unused-vars
 	const [_, action, threadId, targetIndexStr] = interaction.customId.split('_');
@@ -404,11 +426,17 @@ module.exports.buttons = async (interaction) => {
 		const allMonstersDefeated = combatState.monsters.every(m => m.current_health <= 0);
 		if (allMonstersDefeated) {
 			// Immediately mark the victory in the database to prevent loss
-			db.transaction(() => {
-				db.prepare('UPDATE characters SET character_status = \'VICTORY_PENDING\' WHERE user_id = ? AND character_status = \'IN_COMBAT\'')
-					.run(combatState.userId);
+			const updated = db.transaction(() => {
+				const res = db.prepare(
+					'UPDATE characters SET character_status = \'VICTORY_PENDING\' WHERE user_id = ? AND character_status = \'IN_COMBAT\'',
+				).run(combatState.userId);
+				return res.changes || 0;
 			})();
-			return handleVictory(interaction, combatState);
+			if (updated === 1) {
+				return handleVictory(interaction, combatState);
+			}
+			// Someone else already resolved victory; just no-op the UI update.
+			return;
 		}
 
 		// Monsters' turn
@@ -416,7 +444,7 @@ module.exports.buttons = async (interaction) => {
 			if (m.current_health > 0) {
 				const monsterDamage = Math.max(1, m.base_damage);
 				character.current_health = Math.max(0, character.current_health - monsterDamage);
-				combatState.combatLog.push(`< **${m.name} #${i + 1}** attacks you for **${monsterDamage}** damage.`);
+				combatState.combatLog.push(`> **${m.name} #${i + 1}** attacks you for **${monsterDamage}** damage.`);
 			}
 		});
 

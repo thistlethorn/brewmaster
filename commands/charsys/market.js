@@ -68,8 +68,14 @@ function buildTradeButtons(sessionId, session, userId) {
 async function updateTradeUI(interaction, sessionId) {
 	const session = db.prepare('SELECT * FROM trade_sessions WHERE session_id = ?').get(sessionId);
 	if (!session || session.status !== 'PENDING') return;
-	if (!activeTrades.has(session.initiator_user_id) || !activeTrades.has(session.receiver_user_id)) {
-	// Trade has been cleaned up by timeout, update DB to reflect this
+	// Check if trade has been cleaned up by timeout
+	const now = Date.now();
+	const initiatorTimeout = tradeTimestamps.get(session.initiator_user_id);
+	const receiverTimeout = tradeTimestamps.get(session.receiver_user_id);
+
+	if (!initiatorTimeout || !receiverTimeout ||
+	    now - initiatorTimeout > TRADE_TIMEOUT ||
+	    now - receiverTimeout > TRADE_TIMEOUT) {
 		db.prepare('UPDATE trade_sessions SET status = \'CANCELLED\' WHERE session_id = ?').run(sessionId);
 		return;
 	}
@@ -146,15 +152,10 @@ async function updateTradeUI(interaction, sessionId) {
  * @param {number} sessionId
  */
 async function executeTrade(interaction, sessionId) {
-	const session = db.prepare('SELECT * FROM trade_sessions WHERE session_id = ?').get(sessionId);
-	if (!session.initiator_locked || !session.receiver_locked || session.status !== 'PENDING') {
-		return interaction.followUp({ content: 'Trade cannot be confirmed. One or both parties have not locked their offer.', flags: MessageFlags.Ephemeral });
-	}
-
 	try {
 		const tradeExecutionTx = db.transaction(() => {
 			const currentSession = db.prepare('SELECT * FROM trade_sessions WHERE session_id = ?').get(sessionId);
-			if (!currentSession || currentSession.status !== 'PENDING') {
+			if (!currentSession || currentSession.status !== 'PENDING' || !currentSession.initiator_locked || !currentSession.receiver_locked) {
 				throw new Error('Trade is no longer pending');
 			}
 
@@ -169,11 +170,24 @@ async function executeTrade(interaction, sessionId) {
 					if (result.changes === 0) {
 						throw new Error(`Insufficient funds for user ${senderId} at time of trade.`);
 					}
+					// First ensure the receiver has a record
 					db.prepare(`
 						INSERT INTO user_economy (user_id, crowns)
-						VALUES (?, ?)
-						ON CONFLICT(user_id) DO UPDATE SET crowns = crowns + excluded.crowns
-					`).run(receiverId, totalCrowns);
+						VALUES (?, 0)
+						ON CONFLICT(user_id) DO NOTHING
+					`).run(receiverId);
+
+					// Then update with bounds checking
+					const updateResult = db.prepare(`
+						UPDATE user_economy 
+						SET crowns = crowns + ?
+						WHERE user_id = ? 
+						AND crowns + ? <= 9223372036854775807
+					`).run(totalCrowns, receiverId, totalCrowns);
+
+					if (updateResult.changes === 0) {
+						throw new Error(`Crown transfer would exceed maximum balance for user ${receiverId}`);
+					}
 				}
 				for (const offer of sentOffers) {
 					if (offer.inventory_id) {
@@ -213,6 +227,13 @@ async function executeTrade(interaction, sessionId) {
 	}
 	catch (error) {
 		console.error('Trade execution error:', error);
+
+		if (error.message === 'Trade is no longer pending') {
+			return interaction.followUp({
+				content: 'Trade cannot be confirmed. One or both parties have not locked their offer.',
+				flags: MessageFlags.Ephemeral,
+			});
+		}
 
 		let failingUser = null;
 		if (error.message.includes(session.initiator_user_id)) {
@@ -497,12 +518,6 @@ module.exports = {
 				return interaction.update({ content: 'You have already offered this item.', components: [] });
 			}
 
-			// Verify user owns the item
-			const itemOwnership = db.prepare('SELECT user_id FROM user_inventory WHERE inventory_id = ?').get(inventoryId);
-			if (!itemOwnership || itemOwnership.user_id !== userId) {
-				return interaction.update({ content: 'You do not own this item.', components: [] });
-			}
-
 			// Check if user's offer is locked
 			const session = db.prepare('SELECT * FROM trade_sessions WHERE session_id = ?').get(sessionId);
 			const isInitiator = userId === session.initiator_user_id;
@@ -511,8 +526,23 @@ module.exports = {
 				return interaction.update({ content: 'You cannot modify your offer while it is locked.', components: [] });
 			}
 
-			db.prepare('INSERT INTO trade_session_items (session_id, user_id, inventory_id) VALUES (?, ?, ?)').run(sessionId, userId, inventoryId);
-			await interaction.update({ content: 'Item added to your offer.', components: [] });
+			try {
+				const addItemTx = db.transaction(() => {
+					// Verify ownership inside transaction
+					const itemOwnership = db.prepare('SELECT user_id FROM user_inventory WHERE inventory_id = ?').get(inventoryId);
+					if (!itemOwnership || itemOwnership.user_id !== userId) {
+						throw new Error('Item not owned');
+					}
+					db.prepare('INSERT INTO trade_session_items (session_id, user_id, inventory_id) VALUES (?, ?, ?)').run(sessionId, userId, inventoryId);
+				});
+				addItemTx();
+			}
+			catch (error) {
+				if (error.message === 'Item not owned') {
+					return interaction.update({ content: 'You do not own this item.', components: [] });
+				}
+				throw error;
+			}			await interaction.update({ content: 'Item added to your offer.', components: [] });
 			await updateTradeUI(interaction, sessionId);
 		}
 		else if (subAction === 'removeitem') {

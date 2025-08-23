@@ -22,10 +22,16 @@ async function addXp(userId, amount, interaction) {
 	level = Math.max(1, Math.floor(level));
 	xp = Math.max(0, Math.floor(xp));
 
-	let stat_points_unspent = character.stat_points_unspent;
-	let hasLeveledUp = false;
-
-	xp += amount;
+	let stat_points_unspent = Number.isFinite(character.stat_points_unspent)
+		? Math.max(0, Math.floor(character.stat_points_unspent))
+		: 0;
+	// Validate and normalize XP delta
+	const delta = Number.isFinite(amount) ? Math.floor(amount) : NaN;
+	if (!Number.isFinite(delta) || delta < 0) {
+		console.warn(`[addXp] Invalid XP amount (${amount}) for user ${userId}; must be a non-negative integer.`);
+		return;
+	}
+	xp = Math.max(0, xp + delta);
 
 	let xpToNextLevel = Math.max(1, Math.floor(100 * (level ** 1.5)));
 
