@@ -1,5 +1,5 @@
 // utils/addXp.js
-const { EmbedBuilder } = require('discord.js');
+const { EmbedBuilder, MessageFlags } = require('discord.js');
 const db = require('../database');
 
 /**
@@ -61,7 +61,7 @@ async function addXp(userId, amount, interaction) {
 				.setFooter({ text: 'Use /character spendpoints (coming soon) to improve your stats!' });
 
 			// Use followUp to avoid "interaction already replied" errors if the command has other responses.
-			await interaction.followUp({ embeds: [levelUpEmbed], ephemeral: true });
+			await interaction.followUp({ embeds: [levelUpEmbed], flags: MessageFlags.Ephemeral });
 		}
 	}
 	catch (error) {

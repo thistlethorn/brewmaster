@@ -537,15 +537,15 @@ const setupTables = db.transaction(() => {
             
             -- === Equipment Slots ===
             -- Integer stores an inventory_id instance
-            equipped_weapon     INTEGER REFERENCES user_inventory(inventory_id) ON DELETE SET NULL,
-            equipped_offhand    INTEGER REFERENCES user_inventory(inventory_id) ON DELETE SET NULL,
-            equipped_helmet     INTEGER REFERENCES user_inventory(inventory_id) ON DELETE SET NULL,
-            equipped_chestplate INTEGER REFERENCES user_inventory(inventory_id) ON DELETE SET NULL,
-            equipped_leggings   INTEGER REFERENCES user_inventory(inventory_id) ON DELETE SET NULL,
-            equipped_boots      INTEGER REFERENCES user_inventory(inventory_id) ON DELETE SET NULL,
-            equipped_ring1      INTEGER REFERENCES user_inventory(inventory_id) ON DELETE SET NULL,
-            equipped_ring2      INTEGER REFERENCES user_inventory(inventory_id) ON DELETE SET NULL,
-            equipped_amulet     INTEGER REFERENCES user_inventory(inventory_id) ON DELETE SET NULL,
+            equipped_weapon     INTEGER,
+            equipped_offhand    INTEGER,
+            equipped_helmet     INTEGER,
+            equipped_chestplate INTEGER,
+            equipped_leggings   INTEGER,
+            equipped_boots      INTEGER,
+            equipped_ring1      INTEGER,
+            equipped_ring2      INTEGER,
+            equipped_amulet     INTEGER,
 
             -- === Nullable Fields ===
             -- NULL means no trophy is equipped
@@ -719,7 +719,9 @@ const setupTables = db.transaction(() => {
 
             -- e.g., '{"goblins_slain": 3, "target": 5}'
             progress_json TEXT CHECK(progress_json IS NULL OR json_valid(progress_json)),
-            PRIMARY KEY (user_id, quest_id)
+            PRIMARY KEY (user_id, quest_id),
+            FOREIGN KEY(user_id) REFERENCES characters(user_id) ON DELETE CASCADE,
+            FOREIGN KEY(quest_id) REFERENCES quests(quest_id) ON DELETE CASCADE
         )
     `).run();
 
@@ -821,7 +823,9 @@ const setupTables = db.transaction(() => {
             abilities_json TEXT CHECK(abilities_json IS NULL OR json_valid(abilities_json)),
             -- Links to the loot_tables table
             loot_table_id INTEGER,
-            xp_reward INTEGER
+            xp_reward INTEGER,
+
+            FOREIGN KEY(loot_table_id) REFERENCES loot_tables(loot_table_id)
         )
     `).run();
 
@@ -847,7 +851,9 @@ const setupTables = db.transaction(() => {
 
             -- Special, named attacks
             pinnacle_abilities_json TEXT CHECK(pinnacle_abilities_json IS NULL OR json_valid(pinnacle_abilities_json)),
-            loot_table_id INTEGER
+            loot_table_id INTEGER,
+
+            FOREIGN KEY(loot_table_id) REFERENCES loot_tables(loot_table_id)
         )
     `).run();
 
@@ -873,7 +879,7 @@ const setupTables = db.transaction(() => {
             item_id INTEGER NOT NULL,
 
             -- A value from 0.0 to 1.0 (e.g., 0.25 for 25%)
-            drop_chance REAL NOT NULL,
+            drop_chance REAL NOT NULL CHECK (drop_chance >= 0.0 AND drop_chance <= 1.0),
             min_quantity INTEGER DEFAULT 1,
             max_quantity INTEGER DEFAULT 1,
 
@@ -919,7 +925,9 @@ const setupTables = db.transaction(() => {
             node_id INTEGER NOT NULL,
             times_cleared INTEGER DEFAULT 0,
             last_cleared_at TEXT,
-            PRIMARY KEY (user_id, node_id)
+            PRIMARY KEY (user_id, node_id),
+            FOREIGN KEY(user_id) REFERENCES characters(user_id) ON DELETE CASCADE,
+            FOREIGN KEY(node_id) REFERENCES pve_nodes(node_id) ON DELETE CASCADE
         )
     `).run();
 
@@ -947,7 +955,8 @@ const setupTables = db.transaction(() => {
             joined_at TEXT DEFAULT CURRENT_TIMESTAMP,
 
             PRIMARY KEY (party_id, user_id),
-            FOREIGN KEY(party_id) REFERENCES parties(party_id) ON DELETE CASCADE
+            FOREIGN KEY(party_id) REFERENCES parties(party_id) ON DELETE CASCADE,
+            FOREIGN KEY(user_id) REFERENCES characters(user_id) ON DELETE CASCADE
         )
     `).run();
 
@@ -981,7 +990,9 @@ const setupTables = db.transaction(() => {
             -- NULL means this item cannot be sold to the vendor
             sell_price INTEGER,
 
-            PRIMARY KEY (vendor_id, item_id)
+            PRIMARY KEY (vendor_id, item_id),
+            FOREIGN KEY(vendor_id) REFERENCES npc_vendors(vendor_id) ON DELETE CASCADE,
+            FOREIGN KEY(item_id) REFERENCES items(item_id)
         )
     `).run();
 
@@ -1049,7 +1060,8 @@ const setupTables = db.transaction(() => {
             contribution_json TEXT CHECK(contribution_json IS NULL OR json_valid(contribution_json)),
 
             PRIMARY KEY (event_id, user_id),
-            FOREIGN KEY(event_id) REFERENCES rp_events(event_id) ON DELETE CASCADE
+            FOREIGN KEY(event_id) REFERENCES rp_events(event_id) ON DELETE CASCADE,
+            FOREIGN KEY(user_id) REFERENCES characters(user_id) ON DELETE CASCADE
         )
     `).run();
 
@@ -1076,19 +1088,27 @@ const setupTables = db.transaction(() => {
             session_id INTEGER PRIMARY KEY AUTOINCREMENT,
             initiator_user_id TEXT NOT NULL,
             receiver_user_id TEXT NOT NULL,
+            ui_message_id TEXT NOT NULL,
 
             -- 'PENDING', 'LOCKED', 'CONFIRMED', 'COMPLETED', 'CANCELLED'
             status TEXT NOT NULL DEFAULT 'PENDING',
             initiator_locked INTEGER DEFAULT 0,
             receiver_locked INTEGER DEFAULT 0,
 
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            initiator_crown_offer INTEGER NOT NULL DEFAULT 0,
+            receiver_crown_offer INTEGER NOT NULL DEFAULT 0,
+
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+            FOREIGN KEY(initiator_user_id) REFERENCES characters(user_id) ON DELETE CASCADE,
+            FOREIGN KEY(receiver_user_id) REFERENCES characters(user_id) ON DELETE CASCADE
         )
     `).run();
 
 	db.prepare(`
         CREATE TABLE IF NOT EXISTS trade_session_items (
 
+            -- The specific trade session ID
             session_id INTEGER NOT NULL,
 
             -- Which user is offering this item/crowns
@@ -1096,9 +1116,12 @@ const setupTables = db.transaction(() => {
 
             -- The specific instance from their inventory (NULL if offering crowns)
             inventory_id INTEGER,
-            crown_amount INTEGER,
 
-            FOREIGN KEY(session_id) REFERENCES trade_sessions(session_id) ON DELETE CASCADE
+
+            PRIMARY KEY (session_id, user_id, inventory_id),
+            FOREIGN KEY(session_id) REFERENCES trade_sessions(session_id) ON DELETE CASCADE,
+            FOREIGN KEY(user_id) REFERENCES characters(user_id) ON DELETE CASCADE,
+            FOREIGN KEY(inventory_id) REFERENCES user_inventory(inventory_id) ON DELETE CASCADE
         )
     `).run();
 
@@ -1151,7 +1174,12 @@ const setupTables = db.transaction(() => {
             expires_at TEXT NOT NULL,
 
             -- 'ACTIVE', 'SOLD', 'EXPIRED'
-            status TEXT NOT NULL DEFAULT 'ACTIVE'
+            status TEXT NOT NULL DEFAULT 'ACTIVE',
+
+            FOREIGN KEY(seller_user_id) REFERENCES characters(user_id) ON DELETE CASCADE,
+            FOREIGN KEY(current_bidder_user_id) REFERENCES characters(user_id),
+            FOREIGN KEY(inventory_id) REFERENCES user_inventory(inventory_id) ON DELETE CASCADE,
+            FOREIGN KEY(item_id) REFERENCES items(item_id)
         )
     `).run();
 
@@ -1204,6 +1232,30 @@ const setupTables = db.transaction(() => {
 
 	// END OF CHARACTER SUPERSYSTEM TABLES
 
+	// begin character system FK migration script:
+
+	try {
+		db.exec(`
+            ALTER TABLE characters ADD FOREIGN KEY (equipped_weapon) REFERENCES user_inventory(inventory_id) ON DELETE SET NULL;
+            ALTER TABLE characters ADD FOREIGN KEY (equipped_offhand) REFERENCES user_inventory(inventory_id) ON DELETE SET NULL;
+            ALTER TABLE characters ADD FOREIGN KEY (equipped_helmet) REFERENCES user_inventory(inventory_id) ON DELETE SET NULL;
+            ALTER TABLE characters ADD FOREIGN KEY (equipped_chestplate) REFERENCES user_inventory(inventory_id) ON DELETE SET NULL;
+            ALTER TABLE characters ADD FOREIGN KEY (equipped_leggings) REFERENCES user_inventory(inventory_id) ON DELETE SET NULL;
+            ALTER TABLE characters ADD FOREIGN KEY (equipped_boots) REFERENCES user_inventory(inventory_id) ON DELETE SET NULL;
+            ALTER TABLE characters ADD FOREIGN KEY (equipped_ring1) REFERENCES user_inventory(inventory_id) ON DELETE SET NULL;
+            ALTER TABLE characters ADD FOREIGN KEY (equipped_ring2) REFERENCES user_inventory(inventory_id) ON DELETE SET NULL;
+            ALTER TABLE characters ADD FOREIGN KEY (equipped_amulet) REFERENCES user_inventory(inventory_id) ON DELETE SET NULL;
+        `);
+	}
+	catch (error) {
+		// This will likely throw a "duplicate column name" error on subsequent runs, which is harmless.
+		// We only log if it's a different, more serious error.
+		if (!error.message.includes('duplicate column name')) {
+			console.error('[DB Migration] Failed to add equipment slot FOREIGN KEYs:', error);
+		}
+	}
+
+
 	//  Dynamic configuration keypair settings
 
 	db.prepare(`
@@ -1239,7 +1291,8 @@ const setupTables = db.transaction(() => {
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_relationships_one ON guild_relationships(guild_one_tag)').run();
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_relationships_two ON guild_relationships(guild_two_tag)').run();
 
-
+	db.prepare('CREATE INDEX IF NOT EXISTS idx_loot_entries_table ON loot_table_entries(loot_table_id)').run();
+	db.prepare('CREATE INDEX IF NOT EXISTS idx_auction_status_expiry ON auction_house_listings(status, expires_at)').run();
 	// All of the unique indexes
 	// NOTE: Uniqueness for quotes is GLOBAL, not per-user. The same quote/trigger cannot exist twice
 	// on the server, regardless of who submitted it.

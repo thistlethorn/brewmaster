@@ -4,6 +4,23 @@ const db = require('../../database');
 
 // In-memory set to track users currently in a trade session to prevent concurrent trades.
 const activeTrades = new Set();
+const TRADE_TIMEOUT = 30 * 60 * 1000;
+const tradeTimestamps = new Map();
+
+function addToActiveTrades(userId) {
+	activeTrades.add(userId);
+	tradeTimestamps.set(userId, Date.now());
+}
+
+setInterval(() => {
+	const now = Date.now();
+	for (const [userId, timestamp] of tradeTimestamps.entries()) {
+		if (now - timestamp > TRADE_TIMEOUT) {
+			activeTrades.delete(userId);
+			tradeTimestamps.delete(userId);
+		}
+	}
+}, 5 * 60 * 1000);
 
 /**
  * Creates the base User Interface embed for a trade session.
@@ -95,7 +112,26 @@ async function updateTradeUI(interaction, sessionId) {
 		components = buildTradeButtons(sessionId, session, interaction.user.id);
 	}
 
-	await interaction.message.edit({ embeds: [embed], components });
+	  // Resolve the trade UI message to edit.
+	let message = interaction.message || null;
+	if (!message) {
+		const row = db.prepare('SELECT ui_message_id FROM trade_sessions WHERE session_id = ?').get(sessionId);
+		if (row?.ui_message_id) {
+			try {
+				message = await interaction.channel.messages.fetch(row.ui_message_id);
+			}
+			catch (e) {
+				// message not found (deleted) -> bail out gracefully
+				console.error('Trade UI Message not found: ', e);
+				return;
+			}
+		}
+		else {
+			// No persisted message id; cannot safely edit.
+			return;
+		}
+	}
+	await message.edit({ embeds: [embed], components });
 }
 
 
@@ -143,6 +179,8 @@ async function executeTrade(interaction, sessionId) {
 
 		activeTrades.delete(session.initiator_user_id);
 		activeTrades.delete(session.receiver_user_id);
+		tradeTimestamps.delete(session.initiator_user_id);
+		tradeTimestamps.delete(session.receiver_user_id);
 
 		const successEmbed = new EmbedBuilder()
 			.setColor(0x2ECC71)
@@ -215,8 +253,8 @@ module.exports = {
 			}
 
 			try {
-				activeTrades.add(initiator.id);
-				activeTrades.add(receiver.id);
+				addToActiveTrades(initiator.id);
+				addToActiveTrades(receiver.id);
 
 				await interaction.reply({ content: `Sending a trade request to ${receiver.username}...`, flags: MessageFlags.Ephemeral });
 
@@ -253,10 +291,12 @@ module.exports = {
 						await thread.members.add(receiver.id);
 
 						const tradeEmbed = buildTradeEmbed(initiator, receiver);
-						// FIX: Pass the session and a user ID to build buttons correctly from the start.
 						const tradeButtons = buildTradeButtons(sessionId, session, initiator.id);
+						const tradeMessage = await thread.send({ embeds: [tradeEmbed], components: tradeButtons });
 
-						await thread.send({ embeds: [tradeEmbed], components: tradeButtons });
+						// Persist the UI message id for future edits (e.g., from modals)
+						db.prepare('UPDATE trade_sessions SET ui_message_id = ? WHERE session_id = ?').run(tradeMessage.id, sessionId);
+
 						await requestMessage.edit({ content: `Trade accepted! Please proceed to the private thread: ${thread}`, embeds: [], components: [] });
 
 					}
@@ -267,12 +307,12 @@ module.exports = {
 					}
 				});
 
-				collector.on('end', (collected, reason) => {
+				collector.on('end', async (collected, reason) => {
 					if (reason === 'time') {
 						activeTrades.delete(initiator.id);
 						activeTrades.delete(receiver.id);
 						if (requestMessage) {
-							requestMessage.edit({ content: 'The trade request has expired.', embeds: [], components: [] }).catch((e) => {console.error(e);});
+							await requestMessage.edit({ content: 'The trade request has expired.', embeds: [], components: [] }).catch((e) => {console.error(e);});
 						}
 					}
 				});
@@ -282,6 +322,9 @@ module.exports = {
 				console.error('Trade initiation error:', error);
 				activeTrades.delete(initiator.id);
 				activeTrades.delete(receiver.id);
+				tradeTimestamps.delete(initiator.id);
+			    tradeTimestamps.delete(receiver.id);
+
 				await interaction.followUp({ content: 'An error occurred while trying to start the trade.', flags: MessageFlags.Ephemeral });
 			}
 		}
@@ -405,7 +448,8 @@ module.exports = {
 		const message = existingOffer
 			? `You have updated your crown offer from 👑 ${existingOffer.crown_amount.toLocaleString()} to 👑 ${amount.toLocaleString()} Crowns.`
 			: `You have offered 👑 ${amount.toLocaleString()} Crowns.`;
-		await interaction.reply({ content: message, flags: MessageFlags.Ephemeral });		await updateTradeUI(interaction, sessionId);
+		await interaction.reply({ content: message, flags: MessageFlags.Ephemeral });
+		await updateTradeUI(interaction, sessionId);
 	},
 
 	async menus(interaction) {

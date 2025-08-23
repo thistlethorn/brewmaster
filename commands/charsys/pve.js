@@ -55,17 +55,24 @@ async function handleVictory(interaction, combatState) {
 	const rewards = JSON.parse(rewardJson);
 
 	const rewardText = [];
-	const rewardTransaction = db.transaction(async () => {
+	const rewardTransaction = db.transaction(() => {
 		if (rewards.xp > 0) {
-			await addXp(userId, rewards.xp, interaction);
+			// XP text still collected inside the transaction
 			rewardText.push(`**${rewards.xp}** XP`);
 		}
 		if (rewards.crowns > 0) {
-			db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(rewards.crowns, userId);
+			db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?')
+			  .run(rewards.crowns, userId);
 			rewardText.push(`**${rewards.crowns}** Crowns`);
 		}
 	});
-	await rewardTransaction();
+
+	// Handle XP separately since addXp is async
+	if (rewards.xp > 0) {
+		await addXp(userId, rewards.xp, interaction);
+	}
+
+	rewardTransaction();
 
 	victoryEmbed.addFields({ name: 'Rewards Gained', value: rewardText.join('\n') });
 
@@ -105,9 +112,14 @@ async function handleVictory(interaction, combatState) {
 		.run(userId, nodeData.node_id, new Date().toISOString());
 	activeCombats.delete(thread.id);
 
-	await thread.send({ embeds: [victoryEmbed] });
-	await thread.setLocked(true);
-	await thread.setArchived(true);
+	try {
+		await thread.send({ embeds: [victoryEmbed] });
+		await thread.setLocked(true);
+		await thread.setArchived(true);
+	}
+	catch (error) {
+		console.error('Failed to cleanup thread after victory:', error);
+	}
 }
 
 /**
@@ -126,9 +138,14 @@ async function handleDefeat(interaction, combatState) {
 	db.prepare('UPDATE characters SET character_status = \'IDLE\' WHERE user_id = ?').run(userId);
 	activeCombats.delete(thread.id);
 
-	await thread.send({ embeds: [defeatEmbed] });
-	await thread.setLocked(true);
-	await thread.setArchived(true);
+	try {
+		await thread.send({ embeds: [defeatEmbed] });
+		await thread.setLocked(true);
+		await thread.setArchived(true);
+	}
+	catch (error) {
+		console.error('Failed to cleanup thread after defeat:', error);
+	}
 }
 
 /**
@@ -235,24 +252,37 @@ async function handleEngage(interaction) {
 		activeCombats.set(thread.id, combatState);
 
 		const combatEmbed = buildCombatEmbed(combatState, interaction.user);
-		const actionButtons = new ActionRowBuilder();
+		const actionRows = [];
+		let currentRow = new ActionRowBuilder();
+		let buttonCount = 0;
+
 		combatState.monsters.forEach((monster, index) => {
-			actionButtons.addComponents(
+			if (buttonCount === 5) {
+				actionRows.push(currentRow);
+				currentRow = new ActionRowBuilder();
+				buttonCount = 0;
+			}
+			currentRow.addComponents(
 				new ButtonBuilder()
 					.setCustomId(`pve_attack_${thread.id}_${index}`)
 					.setLabel(`Attack ${monster.name} #${index + 1}`)
 					.setStyle(ButtonStyle.Danger),
 			);
+			buttonCount++;
 		});
 
-		await thread.send({ content: `<@${userId}>`, embeds: [combatEmbed], components: [actionButtons] });
+		if (buttonCount > 0) {
+			actionRows.push(currentRow);
+		}
+
+		await thread.send({ content: `<@${userId}>`, embeds: [combatEmbed], components: actionRows });
 		await interaction.editReply({ content: `Your adventure begins! Join the battle here: ${thread}` });
 
 	}
 	catch (error) {
 		console.error('Failed to create PvE thread:', error);
 		// Revert status if thread creation fails
-		db.prepare('UPDATE characters SET character_status = ? WHERE user_id = ?').run('IDLE', userId);
+		db.prepare('UPDATE characters SET character_status = ? WHERE user_id = ? AND character_status = ?').run('IDLE', userId, 'IN_COMBAT');
 		await interaction.editReply({ content: 'Failed to create your private battle instance. Please try again.' });
 	}
 }

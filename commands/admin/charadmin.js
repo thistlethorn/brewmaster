@@ -58,6 +58,7 @@ module.exports = {
 			case 'addxp':
 				await interaction.reply({ content: `Granting ${amount} XP to ${targetUser.username}...`, flags: MessageFlags.Ephemeral });
 				await addXp(targetUser.id, amount, interaction);
+				await recalculateStats(targetUser.id);
 				break;
 
 			case 'removexp':
@@ -79,7 +80,7 @@ module.exports = {
 
 					db.prepare('UPDATE characters SET level = ?, xp = ?, stat_points_unspent = ? WHERE user_id = ?')
 						.run(newLevel, newXp, newStatPoints, targetUser.id);
-
+					await recalculateStats(targetUser.id);
 					embed.setTitle('XP Removed')
 						.setDescription(`Successfully removed **${amount}** XP from ${targetUser.username}.`)
 						.addFields(
@@ -96,7 +97,7 @@ module.exports = {
 					const newStatPoints = (level - 1) * 2;
 					db.prepare('UPDATE characters SET level = ?, xp = 0, stat_points_unspent = ? WHERE user_id = ?')
 						.run(level, newStatPoints, targetUser.id);
-
+					await recalculateStats(targetUser.id);
 					embed.setTitle('Level Set')
 						.setDescription(`Successfully set ${targetUser.username}'s character to Level **${level}**.`)
 						.addFields(
@@ -118,8 +119,12 @@ module.exports = {
 						});
 					}
 					const baseStats = { might: 5, finesse: 5, wits: 5, grit: 5, charm: 5, fortune: 5 };
-					baseStats[origin.bonus_stat_1]++;
-					baseStats[origin.bonus_stat_2]++;
+					if (origin.bonus_stat_1 && Object.prototype.hasOwnProperty.call(baseStats, origin.bonus_stat_1)) {
+						baseStats[origin.bonus_stat_1]++;
+					}
+					if (origin.bonus_stat_2 && Object.prototype.hasOwnProperty.call(baseStats, origin.bonus_stat_2)) {
+						baseStats[origin.bonus_stat_2]++;
+					}
 
 					db.prepare(`
                         UPDATE characters
@@ -147,7 +152,18 @@ module.exports = {
 		}
 		catch (error) {
 			console.error(`Error in /charadmin ${subcommand}:`, error);
-			await interaction.followUp({ content: 'An error occurred while executing this admin command.', flags: MessageFlags.Ephemeral });
+			// Use reply if not deferred/replied, otherwise use followUp
+			const errorMessage = {
+				content: 'An error occurred while executing this admin command.',
+				flags: MessageFlags.Ephemeral,
+			};
+			if (interaction.replied || interaction.deferred) {
+				await interaction.followUp(errorMessage);
+			}
+			else {
+				await interaction.reply(errorMessage);
+			}
+
 		}
 	},
 };

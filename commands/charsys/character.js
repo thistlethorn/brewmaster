@@ -52,7 +52,7 @@ async function handleCreate(interaction) {
  */
 function generateXpBar(currentXp, requiredXp) {
 	const totalBars = 10;
-	const progress = Math.floor((currentXp / requiredXp) * totalBars);
+	const progress = requiredXp > 0 ? Math.floor((currentXp / requiredXp) * totalBars) : 0;
 	const filledBars = '🟦'.repeat(progress);
 	const emptyBars = '⬜'.repeat(totalBars - progress);
 	return `\`[${filledBars}${emptyBars}]\` **${currentXp} / ${requiredXp}** XP`;
@@ -387,10 +387,10 @@ module.exports = {
 			await handleUnequip(interaction);
 			break;
 		case 'help':
-			await interaction.reply({ content: 'Character system help guide is under construction!', ephemeral: true });
+			await interaction.reply({ content: 'Character system help guide is under construction!', flags: MessageFlags.Ephemeral });
 			break;
 		default:
-			await interaction.reply({ content: 'Unknown subcommand.', ephemeral: true });
+			await interaction.reply({ content: 'Unknown subcommand.', flags: MessageFlags.Ephemeral });
 		}
 	},
 
@@ -410,7 +410,7 @@ module.exports = {
 			return interaction.reply({ content: 'Your creation session has expired. Please start over with `/character create`.', flags: MessageFlags.Ephemeral });
 		}
 
-		await interaction.deferUpdate();
+		await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
 		if (action === 'name' && session.step === 'name') {
 			const characterName = interaction.fields.getTextInputValue('character_name');
@@ -484,7 +484,10 @@ module.exports = {
      * @param {import('discord.js').ButtonInteraction} interaction
      */
 	async buttons(interaction) {
-		const [,, action, id, userId] = interaction.customId.split('_');
+		const parts = interaction.customId.split('_');
+		const action = parts[2];
+		const userId = parts[parts.length - 1];
+		const id = (action === 'origin' || action === 'archetype') ? parts[3] : undefined;
 
 		if (interaction.user.id !== userId) {
 			return interaction.reply({ content: 'This interaction is not for you.', flags: MessageFlags.Ephemeral });
