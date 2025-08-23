@@ -1344,35 +1344,45 @@ const setupTables = db.transaction(() => {
 		WHERE quote_type = 'idle'
 	`).run();
 
+	const crownCleanupResult = db.prepare(`
+		DELETE FROM trade_session_items
+		WHERE inventory_id IS NULL
+		AND rowid NOT IN (
+			SELECT MIN(rowid)
+			FROM trade_session_items
+			WHERE inventory_id IS NULL
+			GROUP BY session_id, user_id
+		)
+	`).run();
+
+	if (crownCleanupResult.changes > 0) {
+		console.log(`[DB Cleanup] Removed ${crownCleanupResult.changes} duplicate crown entries from trade_session_items.`);
+	}
+
+	// Add the new unique index for crown offers in trades
+	db.prepare(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_trade_session_crowns
+		ON trade_session_items(session_id, user_id)
+		WHERE inventory_id IS NULL
+	`).run();
+
 });
 
 setupTables();
 
-try {
-	db.prepare(`
-			ALTER TABLE guild_list
-			ADD COLUMN attitude TEXT DEFAULT 'Neutral'
-		`).run();
-	console.log('[DB Migration] Successfully added "attitude" column to guild_list table.');
-}
-catch (error) {
-	if (!error.message.includes('duplicate column name')) {
-		console.error('[DB Migration] Failed to add "attitude" column:', error);
+// eslint-disable-next-line no-unused-vars
+function alterTableAddColumn(tableName, columnDef) {
+	try {
+		db.prepare(`ALTER TABLE ${tableName} ADD COLUMN ${columnDef}`).run();
+		console.log(`[DB Migration] Successfully added column "${columnDef}" to ${tableName} table.`);
+	}
+	catch (error) {
+		if (!error.message.includes('duplicate column name')) {
+			console.error(`[DB Migration] Failed to add column "${columnDef}" to ${tableName}:`, error);
+		}
 	}
 }
 
-try {
-	db.prepare(`
-        ALTER TABLE raid_history
-        ADD COLUMN wager_pot INTEGER DEFAULT 0
-    `).run();
-	console.log('[DB Migration] Successfully added "wager_pot" column to raid_history table.');
-}
-catch (error) {
-	if (!error.message.includes('duplicate column name')) {
-		console.error('[DB Migration] Failed to add "wager_pot" column:', error);
-	}
-}
 
 module.exports = db;
 module.exports.JACKPOT_BASE_AMOUNT = JACKPOT_BASE_AMOUNT;

@@ -153,7 +153,7 @@ async function executeTrade(interaction, sessionId) {
 
 	try {
 		const tradeExecutionTx = db.transaction(() => {
-			const currentSession = db.prepare('SELECT * FROM trade_sessions WHERE session_id = ? FOR UPDATE').get(sessionId);
+			const currentSession = db.prepare('SELECT * FROM trade_sessions WHERE session_id = ?').get(sessionId);
 			if (!currentSession || currentSession.status !== 'PENDING') {
 				throw new Error('Trade is no longer pending');
 			}
@@ -169,11 +169,22 @@ async function executeTrade(interaction, sessionId) {
 					if (result.changes === 0) {
 						throw new Error(`Insufficient funds for user ${senderId} at time of trade.`);
 					}
-					db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(totalCrowns, receiverId);
+					db.prepare(`
+						INSERT INTO user_economy (user_id, crowns)
+						VALUES (?, ?)
+						ON CONFLICT(user_id) DO UPDATE SET crowns = crowns + excluded.crowns
+					`).run(receiverId, totalCrowns);
 				}
 				for (const offer of sentOffers) {
 					if (offer.inventory_id) {
-						db.prepare('UPDATE user_inventory SET user_id = ? WHERE inventory_id = ?').run(receiverId, offer.inventory_id);
+						const moved = db.prepare(`
+							UPDATE user_inventory
+							SET user_id = ?
+							WHERE inventory_id = ? AND user_id = ?
+						`).run(receiverId, offer.inventory_id, senderId);
+						if (moved.changes !== 1) {
+							throw new Error(`Item no longer owned by user ${senderId} at time of trade.`);
+						}
 					}
 				}
 			};

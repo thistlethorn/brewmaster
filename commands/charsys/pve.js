@@ -52,7 +52,15 @@ async function handleVictory(interaction, combatState) {
 	const progress = db.prepare('SELECT times_cleared FROM character_pve_progress WHERE user_id = ? AND node_id = ?').get(userId, nodeData.node_id);
 	const isFirstClear = !progress || progress.times_cleared === 0;
 	const rewardJson = isFirstClear ? nodeData.first_completion_reward_json : nodeData.repeatable_reward_json;
-	const rewards = JSON.parse(rewardJson);
+	 let rewards = {};
+	try {
+		rewards = rewardJson ? JSON.parse(rewardJson) : {};
+	}
+	catch {
+		rewards = {};
+	}
+	rewards.xp = Number(rewards.xp) || 0;
+	rewards.crowns = Number(rewards.crowns) || 0;
 
 	const rewardText = [];
 	const rewardTransaction = db.transaction(() => {
@@ -91,10 +99,13 @@ async function handleVictory(interaction, combatState) {
 			for (const entry of entries) {
 				if (Math.random() < entry.drop_chance) {
 					const quantity = Math.floor(Math.random() * (entry.max_quantity - entry.min_quantity + 1)) + entry.min_quantity;
-					db.prepare(
-					  'INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, ?) ' +
-					  'ON CONFLICT(user_id, item_id) DO UPDATE SET quantity = quantity + excluded.quantity',
-					).run(userId, entry.item_id, quantity);
+					const existing = db.prepare('SELECT inventory_id, quantity FROM user_inventory WHERE user_id = ? AND item_id = ?').get(userId, entry.item_id);
+					if (existing) {
+						db.prepare('UPDATE user_inventory SET quantity = quantity + ? WHERE inventory_id = ?').run(quantity, existing.inventory_id);
+					}
+					else {
+						db.prepare('INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, ?)').run(userId, entry.item_id, quantity);
+					}
 					lootedItems.push(`• ${entry.item_name} x${quantity}`);
 				}
 			}
@@ -392,7 +403,12 @@ module.exports.buttons = async (interaction) => {
 		}
 
 		// Update UI
-		const updatedEmbed = buildCombatEmbed(combatState, interaction.user);
-		await interaction.editReply({ embeds: [updatedEmbed] });
+		 const updatedEmbed = buildCombatEmbed(combatState, interaction.user);
+		if (interaction.message) {
+			await interaction.message.edit({ embeds: [updatedEmbed] });
+		}
+		else {
+			await interaction.editReply({ embeds: [updatedEmbed] });
+		}
 	}
 };

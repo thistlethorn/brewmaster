@@ -18,12 +18,16 @@ async function addXp(userId, amount, interaction) {
 	}
 
 	let { level, xp } = character;
+	// Defensive clamps: avoid level 0/negative and negative/float XP
+	level = Math.max(1, Math.floor(level));
+	xp = Math.max(0, Math.floor(xp));
+
 	let stat_points_unspent = character.stat_points_unspent;
 	let hasLeveledUp = false;
 
 	xp += amount;
 
-	let xpToNextLevel = Math.floor(100 * (level ** 1.5));
+	let xpToNextLevel = Math.max(1, Math.floor(100 * (level ** 1.5)));
 
 	// Loop to handle multiple level-ups from a single XP gain
 	while (xp >= xpToNextLevel) {
@@ -33,7 +37,7 @@ async function addXp(userId, amount, interaction) {
 		// Award 2 stat points per level
 		stat_points_unspent += 2;
 		hasLeveledUp = true;
-		xpToNextLevel = Math.floor(100 * (level ** 1.5));
+		xpToNextLevel = Math.max(1, Math.floor(100 * (level ** 1.5)));
 	}
 
 	// Use a transaction to update the character's stats atomically

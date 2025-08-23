@@ -13,15 +13,13 @@ module.exports = {
 	once: true,
 	execute(client) {
 		console.log(`Ready! Logged in as ${client.user.tag}`);
-		try {
-			seedDatabase();
-			console.log('[Ready.js] Database charsys seeding process finished.');
-		}
-		catch (error) {
-			console.error('[Ready.js] Failed to seed database:', error);
-			client.destroy();
-			process.exit(1);
-		}
+		seedDatabase()
+			.then(() => console.log('[Ready.js] Database charsys seeding process finished.'))
+			.catch((error) => {
+				console.error('[Ready.js] Failed to seed database:', error);
+				client.destroy();
+				process.exit(1);
+			});
 		setupWeeklyReset(client);
 		console.log('[Ready.js] setupWeeklyReset is complete');
 		setupBumpReminder(client);
