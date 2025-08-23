@@ -15,7 +15,7 @@ async function handleView(interaction, pageArg) {
 	const page = Number.isFinite(Number(rawPage)) ? Math.max(1, Math.floor(rawPage)) : 1;
 
 	// First, ensure the user has a character.
-	const character = db.prepare('SELECT * FROM characters WHERE user_id = ?').get(userId);
+	const character = db.prepare('SELECT user_id FROM characters WHERE user_id = ?').get(userId);
 	if (!character) {
 		const replyOptions = { content: 'You need to create a character first with `/character create`.', flags: MessageFlags.Ephemeral };
 		return interaction.isButton() ? interaction.update(replyOptions) : interaction.reply(replyOptions);
@@ -42,13 +42,12 @@ async function handleView(interaction, pageArg) {
 		return interaction.isButton() ? interaction.update(replyOptions) : interaction.reply(replyOptions);
 	}
 
-	// Create a Set of all equipped inventory_ids for fast lookup.
-	const equippedIds = new Set();
-	Object.keys(character).forEach(key => {
-		if (key.startsWith('equipped_') && character[key] !== null) {
-			equippedIds.add(character[key]);
-		}
-	});
+	const equippedItems = db.prepare(`
+        SELECT inventory_id FROM user_inventory
+        WHERE user_id = ? AND equipped_slot IS NOT NULL
+    `).all(userId);
+	const equippedIds = new Set(equippedItems.map(item => item.inventory_id));
+
 
 	// Pagination logic
 	const totalPages = Math.max(1, Math.ceil(inventoryItems.length / ITEMS_PER_PAGE));

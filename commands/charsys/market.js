@@ -68,6 +68,11 @@ function buildTradeButtons(sessionId, session, userId) {
 async function updateTradeUI(interaction, sessionId) {
 	const session = db.prepare('SELECT * FROM trade_sessions WHERE session_id = ?').get(sessionId);
 	if (!session || session.status !== 'PENDING') return;
+	if (!activeTrades.has(session.initiator_user_id) || !activeTrades.has(session.receiver_user_id)) {
+	// Trade has been cleaned up by timeout, update DB to reflect this
+		db.prepare('UPDATE trade_sessions SET status = \'CANCELLED\' WHERE session_id = ?').run(sessionId);
+		return;
+	}
 
 	const offers = db.prepare(`
         SELECT tsi.user_id, tsi.crown_amount, i.name as item_name
@@ -148,21 +153,25 @@ async function executeTrade(interaction, sessionId) {
 
 	try {
 		const tradeExecutionTx = db.transaction(() => {
+			const currentSession = db.prepare('SELECT * FROM trade_sessions WHERE session_id = ? FOR UPDATE').get(sessionId);
+			if (!currentSession || currentSession.status !== 'PENDING') {
+				throw new Error('Trade is no longer pending');
+			}
+
 			const offers = db.prepare('SELECT * FROM trade_session_items WHERE session_id = ?').all(sessionId);
 			const initiatorOffers = offers.filter(o => o.user_id === session.initiator_user_id);
 			const receiverOffers = offers.filter(o => o.user_id === session.receiver_user_id);
 
 			const processOffers = (senderId, receiverId, sentOffers) => {
-				for (const offer of sentOffers) {
-					if (offer.crown_amount) {
-
-						const result = db.prepare('UPDATE user_economy SET crowns = crowns - ? WHERE user_id = ? AND crowns >= ?').run(offer.crown_amount, senderId, offer.crown_amount);
-
-						if (result.changes === 0) {
-							throw new Error(`Insufficient funds for user ${senderId} at time of trade.`);
-						}
-						db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(offer.crown_amount, receiverId);
+				const totalCrowns = sentOffers.reduce((sum, offer) => sum + (offer.crown_amount || 0), 0);
+				if (totalCrowns > 0) {
+					const result = db.prepare('UPDATE user_economy SET crowns = crowns - ? WHERE user_id = ? AND crowns >= ?').run(totalCrowns, senderId, totalCrowns);
+					if (result.changes === 0) {
+						throw new Error(`Insufficient funds for user ${senderId} at time of trade.`);
 					}
+					db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(totalCrowns, receiverId);
+				}
+				for (const offer of sentOffers) {
 					if (offer.inventory_id) {
 						db.prepare('UPDATE user_inventory SET user_id = ? WHERE inventory_id = ?').run(receiverId, offer.inventory_id);
 					}
@@ -214,6 +223,8 @@ async function executeTrade(interaction, sessionId) {
 		db.prepare('UPDATE trade_sessions SET status = \'CANCELLED\' WHERE session_id = ?').run(sessionId);
 		activeTrades.delete(session.initiator_user_id);
 		activeTrades.delete(session.receiver_user_id);
+		tradeTimestamps.delete(session.initiator_user_id);
+		tradeTimestamps.delete(session.receiver_user_id);
 
 		const cancelEmbed = new EmbedBuilder()
 			.setColor(0xE74C3C)
@@ -271,12 +282,14 @@ module.exports = {
 
 				const requestMessage = await interaction.channel.send({ content: `<@${receiver.id}>`, embeds: [requestEmbed], components: [requestRow] });
 
+				let tradeAccepted = false;
 				const filter = i => i.user.id === receiver.id;
 				const collector = requestMessage.createMessageComponentCollector({ filter, max: 1, time: 60000 });
 
 				collector.on('collect', async i => {
 					if (i.customId.startsWith('trade_accept')) {
 						await i.deferUpdate();
+						tradeAccepted = true;
 						const result = db.prepare('INSERT INTO trade_sessions (initiator_user_id, receiver_user_id, status, initiator_locked, receiver_locked) VALUES (?, ?, \'PENDING\', 0, 0)').run(initiator.id, receiver.id);
 						const sessionId = result.lastInsertRowid;
 						const session = db.prepare('SELECT * FROM trade_sessions WHERE session_id = ?').get(sessionId);
@@ -308,7 +321,7 @@ module.exports = {
 				});
 
 				collector.on('end', async (collected, reason) => {
-					if (reason === 'time') {
+					if (reason === 'time' && !tradeAccepted) {
 						activeTrades.delete(initiator.id);
 						activeTrades.delete(receiver.id);
 						if (requestMessage) {
@@ -412,6 +425,8 @@ module.exports = {
 			db.prepare('UPDATE trade_sessions SET status = \'CANCELLED\' WHERE session_id = ?').run(sessionId);
 			activeTrades.delete(session.initiator_user_id);
 			activeTrades.delete(session.receiver_user_id);
+			tradeTimestamps.delete(session.initiator_user_id);
+			tradeTimestamps.delete(session.receiver_user_id);
 
 			const cancelEmbed = new EmbedBuilder()
 				.setColor(0xE74C3C)
@@ -440,6 +455,14 @@ module.exports = {
 		}
 		const existingOffer = db.prepare('SELECT crown_amount FROM trade_session_items WHERE session_id = ? AND user_id = ? AND crown_amount IS NOT NULL').get(sessionId, userId);
 
+		const session = db.prepare('SELECT * FROM trade_sessions WHERE session_id = ?').get(sessionId);
+		const isInitiator = userId === session.initiator_user_id;
+		const isLocked = isInitiator ? session.initiator_locked : session.receiver_locked;
+
+		if (isLocked) {
+			return interaction.reply({ content: 'You cannot modify your offer while it is locked.', flags: MessageFlags.Ephemeral });
+		}
+
 		db.prepare(`
                 INSERT INTO trade_session_items (session_id, user_id, crown_amount) VALUES (?, ?, ?)
                 ON CONFLICT(session_id, user_id) DO UPDATE SET crown_amount = excluded.crown_amount
@@ -463,15 +486,48 @@ module.exports = {
 				return interaction.update({ content: 'You have already offered this item.', components: [] });
 			}
 
+			// Verify user owns the item
+			const itemOwnership = db.prepare('SELECT user_id FROM user_inventory WHERE inventory_id = ?').get(inventoryId);
+			if (!itemOwnership || itemOwnership.user_id !== userId) {
+				return interaction.update({ content: 'You do not own this item.', components: [] });
+			}
+
+			// Check if user's offer is locked
+			const session = db.prepare('SELECT * FROM trade_sessions WHERE session_id = ?').get(sessionId);
+			const isInitiator = userId === session.initiator_user_id;
+			const isLocked = isInitiator ? session.initiator_locked : session.receiver_locked;
+			if (isLocked) {
+				return interaction.update({ content: 'You cannot modify your offer while it is locked.', components: [] });
+			}
+
 			db.prepare('INSERT INTO trade_session_items (session_id, user_id, inventory_id) VALUES (?, ?, ?)').run(sessionId, userId, inventoryId);
 			await interaction.update({ content: 'Item added to your offer.', components: [] });
 			await updateTradeUI(interaction, sessionId);
 		}
 		else if (subAction === 'removeitem') {
 			const inventoryId = parseInt(interaction.values[0]);
-			db.prepare('DELETE FROM trade_session_items WHERE session_id = ? AND user_id = ? AND inventory_id = ?').run(sessionId, userId, inventoryId);
+
+			// Check if user's offer is locked
+			const session = db
+				.prepare('SELECT * FROM trade_sessions WHERE session_id = ?')
+				.get(sessionId);
+			const isInitiator = userId === session.initiator_user_id;
+			const isLocked = isInitiator
+				? session.initiator_locked
+				: session.receiver_locked;
+			if (isLocked) {
+				return interaction.update({
+					content: 'You cannot modify your offer while it is locked.',
+					components: [],
+				});
+			}
+
+			db.prepare(
+				'DELETE FROM trade_session_items WHERE session_id = ? AND user_id = ? AND inventory_id = ?',
+			).run(sessionId, userId, inventoryId);
 			await interaction.update({ content: 'Item removed from your offer.', components: [] });
 			await updateTradeUI(interaction, sessionId);
 		}
+
 	},
 };

@@ -220,7 +220,7 @@ function seedPveData() {
 		// pve_node_monsters junction table
 		try {
 			const pnmCheck = db.prepare('SELECT COUNT(*) FROM pve_node_monsters').get()['COUNT(*)'];
-			if (pnmCheck === 0 && nodeCheck === 0) {
+			if (pnmCheck === 0) {
 				console.log('[DB Seeding] pve_node_monsters table is empty. Seeding...');
 
 				const monsterIdMap = new Map(

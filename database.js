@@ -533,19 +533,7 @@ const setupTables = db.transaction(() => {
             -- === Combat Stats ===
             armor_class INTEGER DEFAULT 10,
             crit_chance REAL DEFAULT 0.05,
-            crit_damage_modifier REAL DEFAULT 1.5,
-            
-            -- === Equipment Slots ===
-            -- Integer stores an inventory_id instance
-            equipped_weapon     INTEGER,
-            equipped_offhand    INTEGER,
-            equipped_helmet     INTEGER,
-            equipped_chestplate INTEGER,
-            equipped_leggings   INTEGER,
-            equipped_boots      INTEGER,
-            equipped_ring1      INTEGER,
-            equipped_ring2      INTEGER,
-            equipped_amulet     INTEGER,
+            crit_damage_modifier REAL DEFAULT 1.5,  
 
             -- === Nullable Fields ===
             -- NULL means no trophy is equipped
@@ -632,10 +620,16 @@ const setupTables = db.transaction(() => {
             item_id INTEGER NOT NULL,
             quantity INTEGER DEFAULT 1,
 
+            -- It's NULL if the item is just in the inventory.
+            -- Examples: 'main_hand', 'off_hand', 'helmet', 'ring1', 'ring2'
+            equipped_slot TEXT,
+
             -- For unique properties like durability
             instance_data_json TEXT CHECK(instance_data_json IS NULL OR json_valid(instance_data_json)),
             FOREIGN KEY(user_id) REFERENCES characters(user_id) ON DELETE CASCADE,
-            FOREIGN KEY(item_id) REFERENCES items(item_id)
+            FOREIGN KEY(item_id) REFERENCES items(item_id),
+
+            UNIQUE(user_id, equipped_slot)
         )
     `).run();
 
@@ -1176,6 +1170,11 @@ const setupTables = db.transaction(() => {
             -- 'ACTIVE', 'SOLD', 'EXPIRED'
             status TEXT NOT NULL DEFAULT 'ACTIVE',
 
+            CHECK (starting_bid IS NULL OR starting_bid > 0),
+            CHECK (buyout_price IS NULL OR buyout_price > 0),
+            CHECK (current_bid IS NULL OR current_bid >= starting_bid),
+            CHECK (buyout_price IS NULL OR starting_bid IS NULL OR buyout_price >= starting_bid),
+
             FOREIGN KEY(seller_user_id) REFERENCES characters(user_id) ON DELETE CASCADE,
             FOREIGN KEY(current_bidder_user_id) REFERENCES characters(user_id),
             FOREIGN KEY(inventory_id) REFERENCES user_inventory(inventory_id) ON DELETE CASCADE,
@@ -1231,29 +1230,6 @@ const setupTables = db.transaction(() => {
     */
 
 	// END OF CHARACTER SUPERSYSTEM TABLES
-
-	// begin character system FK migration script:
-
-	try {
-		db.exec(`
-            ALTER TABLE characters ADD FOREIGN KEY (equipped_weapon) REFERENCES user_inventory(inventory_id) ON DELETE SET NULL;
-            ALTER TABLE characters ADD FOREIGN KEY (equipped_offhand) REFERENCES user_inventory(inventory_id) ON DELETE SET NULL;
-            ALTER TABLE characters ADD FOREIGN KEY (equipped_helmet) REFERENCES user_inventory(inventory_id) ON DELETE SET NULL;
-            ALTER TABLE characters ADD FOREIGN KEY (equipped_chestplate) REFERENCES user_inventory(inventory_id) ON DELETE SET NULL;
-            ALTER TABLE characters ADD FOREIGN KEY (equipped_leggings) REFERENCES user_inventory(inventory_id) ON DELETE SET NULL;
-            ALTER TABLE characters ADD FOREIGN KEY (equipped_boots) REFERENCES user_inventory(inventory_id) ON DELETE SET NULL;
-            ALTER TABLE characters ADD FOREIGN KEY (equipped_ring1) REFERENCES user_inventory(inventory_id) ON DELETE SET NULL;
-            ALTER TABLE characters ADD FOREIGN KEY (equipped_ring2) REFERENCES user_inventory(inventory_id) ON DELETE SET NULL;
-            ALTER TABLE characters ADD FOREIGN KEY (equipped_amulet) REFERENCES user_inventory(inventory_id) ON DELETE SET NULL;
-        `);
-	}
-	catch (error) {
-		// This will likely throw a "duplicate column name" error on subsequent runs, which is harmless.
-		// We only log if it's a different, more serious error.
-		if (!error.message.includes('duplicate column name')) {
-			console.error('[DB Migration] Failed to add equipment slot FOREIGN KEYs:', error);
-		}
-	}
 
 
 	//  Dynamic configuration keypair settings

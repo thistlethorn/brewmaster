@@ -370,6 +370,10 @@ module.exports.buttons = async (interaction) => {
 		// Check for victory
 		const allMonstersDefeated = combatState.monsters.every(m => m.current_health <= 0);
 		if (allMonstersDefeated) {
+			// Immediately mark the victory in the database to prevent loss
+			db.prepare(
+				'UPDATE characters SET character_status = \'VICTORY_PENDING\' WHERE user_id = ?',
+			).run(combatState.userId);
 			return handleVictory(interaction, combatState);
 		}
 

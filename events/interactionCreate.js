@@ -145,7 +145,9 @@ module.exports = {
 					}
 					catch (error) {
 						console.error('[Error] Character creation modal error:', error);
-						await interaction.reply({ content: 'There was an error processing your character details.', flags: MessageFlags.Ephemeral });
+						if (!interaction.replied && !interaction.deferred) {
+							await interaction.reply({ content: 'There was an error processing your character details.', flags: MessageFlags.Ephemeral });
+						}
 						return;
 					}
 				}

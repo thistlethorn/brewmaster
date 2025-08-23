@@ -24,47 +24,37 @@ async function recalculateStats(userId) {
 		};
 
 		// 2. Aggregate bonuses from equipped items
-		const equippedInventoryIds = Array.from(
-			new Set(
-				Object.keys(character)
-					.filter((key) => key.startsWith('equipped_'))
-					.map((key) => Number(character[key]))
-					.filter((id) => Number.isFinite(id) && id > 0),
-			),
-		);
+		const equippedItems = db.prepare(`
+            SELECT i.effects_json FROM user_inventory ui
+            JOIN items i ON ui.item_id = i.item_id
+            WHERE ui.user_id = ? AND ui.equipped_slot IS NOT NULL
+        `).all(userId);
 
-		if (equippedInventoryIds.length > 0) {
-			const placeholders = equippedInventoryIds.map(() => '?').join(',');
-			const items = db.prepare(`
-				SELECT i.effects_json FROM user_inventory ui
-				JOIN items i ON ui.item_id = i.item_id
-				WHERE ui.inventory_id IN (${placeholders}) AND ui.user_id = ?
-			`).all(...equippedInventoryIds, userId);
 
-			for (const item of items) {
-				try {
-					const effects = JSON.parse(item.effects_json);
-					if (!effects) continue;
+		for (const item of equippedItems) {
+			try {
+				const effects = JSON.parse(item.effects_json);
+				if (!effects) continue;
 
-					// Add flat stat bonuses (e.g., might, grit)
-					// Note: This function only calculates *derived* stats. Base stats are modified elsewhere (level-ups).
-					// We can, however, use item effects to modify other derived stats.
-					if (effects.stats) {
-						finalStats.max_health += Number(effects.stats.max_health) || 0;
-						finalStats.max_mana += Number(effects.stats.max_mana) || 0;
-						finalStats.max_ki += Number(effects.stats.max_ki) || 0;
-						finalStats.crit_chance += Number(effects.stats.crit_chance) || 0;
-						finalStats.crit_damage_modifier += Number(effects.stats.crit_damage_modifier) || 0;
-					}
-					// Add direct bonuses to things like AC
-					finalStats.armor_class += Number(effects.ac_bonus) || 0;
-
+				// Add flat stat bonuses (e.g., might, grit)
+				// Note: This function only calculates *derived* stats. Base stats are modified elsewhere (level-ups).
+				// We can, however, use item effects to modify other derived stats.
+				if (effects.stats) {
+					finalStats.max_health += Number(effects.stats.max_health) || 0;
+					finalStats.max_mana += Number(effects.stats.max_mana) || 0;
+					finalStats.max_ki += Number(effects.stats.max_ki) || 0;
+					finalStats.crit_chance += Number(effects.stats.crit_chance) || 0;
+					finalStats.crit_damage_modifier += Number(effects.stats.crit_damage_modifier) || 0;
 				}
-				catch (e) {
-					console.error(`[recalculateStats] Failed to parse effects_json for an item of user ${userId}:`, item.effects_json, e);
-				}
+				// Add direct bonuses to things like AC
+				finalStats.armor_class += Number(effects.ac_bonus) || 0;
+
+			}
+			catch (e) {
+				console.error(`[recalculateStats] Failed to parse effects_json for an item of user ${userId}:`, item.effects_json, e);
 			}
 		}
+
 
 		// 3. (Placeholder) Aggregate bonuses/penalties from status effects
 		// const statusEffects = db.prepare('SELECT effects_json FROM character_status_effects WHERE target_user_id = ? AND expires_at > ?').all(userId, new Date().toISOString());

@@ -5,9 +5,16 @@ const { recalculateStats } = require('../../utils/recalculateStats');
 // In-memory store for character creation sessions.
 // Key: userId, Value: { step, name, originId, archetypeId, ... }
 const creationSessions = new Map();
-const EQUIPMENT_SLOTS = [
-	'weapon', 'offhand', 'helmet', 'chestplate', 'leggings', 'boots', 'ring1', 'ring2', 'amulet',
-];
+const SESSION_TIMEOUT = 30 * 60 * 1000;
+
+setInterval(() => {
+	const now = Date.now();
+	for (const [userId, session] of creationSessions.entries()) {
+		if (now - session.timestamp > SESSION_TIMEOUT) {
+			creationSessions.delete(userId);
+		}
+	}
+}, 5 * 60 * 1000);
 
 /**
  * Handles the initial /character create command.
@@ -26,7 +33,7 @@ async function handleCreate(interaction) {
 	}
 
 	// Start a new creation session.
-	creationSessions.set(userId, { step: 'name' });
+	creationSessions.set(userId, { step: 'name', timestamp: Date.now() });
 
 	// Show the first modal to get the character's name.
 	const nameModal = new ModalBuilder()
@@ -87,28 +94,25 @@ async function handleView(interaction) {
 	// Calculate XP required for the next level.
 	const xpToNextLevel = Math.floor(100 * (characterData.level ** 1.5));
 	// Fetch equipped items
-	const equipmentSlots = ['weapon', 'offhand', 'helmet', 'chestplate', 'leggings', 'boots', 'ring1', 'ring2', 'amulet'];
-	const equipmentDisplay = [];
 
-	for (const slot of equipmentSlots) {
-		const inventoryId = characterData[`equipped_${slot}`];
-		if (inventoryId) {
-			const item = db.prepare(`
-      SELECT i.name
-      FROM user_inventory ui
-      JOIN items i ON ui.item_id = i.item_id
-      WHERE ui.inventory_id = ?
-    `).get(inventoryId);
-			equipmentDisplay.push(
-				`**${slot.charAt(0).toUpperCase() + slot.slice(1).replace(/(\d+)/, ' $1')}:** ${item?.name || '[Unknown]'}`,
-			);
-		}
-		else {
-			equipmentDisplay.push(
-				`**${slot.charAt(0).toUpperCase() + slot.slice(1).replace(/(\d+)/, ' $1')}:** [Empty]`,
-			);
-		}
-	}
+	const equipmentSlots = ['weapon', 'offhand', 'helmet', 'chestplate', 'leggings', 'boots', 'ring1', 'ring2', 'amulet'];
+	const equippedItems = db.prepare(`
+        SELECT i.name, ui.equipped_slot
+        FROM user_inventory ui
+        JOIN items i ON ui.item_id = i.item_id
+        WHERE ui.user_id = ? AND ui.equipped_slot IS NOT NULL
+    `).all(targetUser.id);
+
+	// Create a map for easy lookup: { helmet: 'Iron Helm', weapon: 'Rusty Sword' }
+	const equippedMap = new Map(equippedItems.map(item => [item.equipped_slot, item.name]));
+
+	const equipmentDisplay = equipmentSlots.map(slot => {
+		const itemName = equippedMap.get(slot) || '[Empty]';
+		const slotName = slot.charAt(0).toUpperCase() + slot.slice(1).replace(/(\d+)/, ' $1');
+		return `**${slotName}:** ${itemName}`;
+	});
+
+
 	const sheetEmbed = new EmbedBuilder()
 		.setColor(0x5865F2)
 		.setTitle(`${characterData.character_name} - Level ${characterData.level} ${characterData.archetype_name}`)
@@ -172,29 +176,25 @@ async function handleEquip(interaction) {
 	}
 
 	try {
-		// Equip the item. The slot is dynamic based on the user's selection.
-		// We use a whitelist (EQUIPMENT_SLOTS) to prevent any chance of SQL injection-like issues.
-		if (!EQUIPMENT_SLOTS.includes(intendedSlot)) {
-			throw new Error(`Invalid slot provided: ${intendedSlot}`);
-		}
-		const updateStatements = {
-			weapon:     db.prepare('UPDATE characters SET equipped_weapon     = ? WHERE user_id = ?'),
-			offhand:    db.prepare('UPDATE characters SET equipped_offhand    = ? WHERE user_id = ?'),
-			helmet:     db.prepare('UPDATE characters SET equipped_helmet     = ? WHERE user_id = ?'),
-			chestplate: db.prepare('UPDATE characters SET equipped_chestplate = ? WHERE user_id = ?'),
-			leggings:   db.prepare('UPDATE characters SET equipped_leggings   = ? WHERE user_id = ?'),
-			boots:      db.prepare('UPDATE characters SET equipped_boots      = ? WHERE user_id = ?'),
-			ring1:      db.prepare('UPDATE characters SET equipped_ring1      = ? WHERE user_id = ?'),
-			ring2:      db.prepare('UPDATE characters SET equipped_ring2      = ? WHERE user_id = ?'),
-			amulet:     db.prepare('UPDATE characters SET equipped_amulet     = ? WHERE user_id = ?'),
-		};
-		if (!updateStatements[intendedSlot]) {
-			throw new Error(`Invalid slot provided: ${intendedSlot}`);
-		}
 
-		updateStatements[intendedSlot].run(inventoryId, userId);
+		const equipTx = db.transaction(() => {
+			// 1. Unequip any item currently in the target slot to avoid unique constraint errors.
+			db.prepare(`
+                UPDATE user_inventory
+                SET equipped_slot = NULL
+                WHERE user_id = ? AND equipped_slot = ?
+            `).run(userId, intendedSlot);
 
-		// Recalculate stats now that the item is equipped.
+			// 2. Equip the new item.
+			db.prepare(`
+                UPDATE user_inventory
+                SET equipped_slot = ?
+                WHERE inventory_id = ? AND user_id = ?
+            `).run(intendedSlot, inventoryId, userId);
+		});
+
+		equipTx();
+
 		await recalculateStats(userId);
 
 		await interaction.reply({ content: `✅ Successfully equipped **${itemToEquip.name}**. Your stats have been updated.`, flags: MessageFlags.Ephemeral });
@@ -219,36 +219,23 @@ async function handleUnequip(interaction) {
 		return interaction.reply({ content: 'You must create a character first with `/character create`.', flags: MessageFlags.Ephemeral });
 	}
 
-	const equippedItemId = character[`equipped_${slotToUnequip}`];
-
-	if (!equippedItemId) {
-		return interaction.reply({ content: 'You have nothing equipped in that slot.', flags: MessageFlags.Ephemeral });
-	}
-
-	// Get the name of the item being unequipped for the confirmation message.
+	// Find the item name *before* unequipping it for the reply message.
 	const itemInfo = db.prepare(`
         SELECT i.name FROM user_inventory ui
         JOIN items i ON ui.item_id = i.item_id
-        WHERE ui.inventory_id = ?
-    `).get(equippedItemId);
+        WHERE ui.user_id = ? AND ui.equipped_slot = ?
+    `).get(userId, slotToUnequip);
+
+	if (!itemInfo) {
+		return interaction.reply({ content: 'You have nothing equipped in that slot.', flags: MessageFlags.Ephemeral });
+	}
 
 	try {
-		// Set the slot to NULL to unequip the item.
-		const updateStatements = {
-			weapon: db.prepare('UPDATE characters SET equipped_weapon = NULL WHERE user_id = ?'),
-			offhand: db.prepare('UPDATE characters SET equipped_offhand = NULL WHERE user_id = ?'),
-			helmet: db.prepare('UPDATE characters SET equipped_helmet = NULL WHERE user_id = ?'),
-			chestplate: db.prepare('UPDATE characters SET equipped_chestplate = NULL WHERE user_id = ?'),
-			leggings: db.prepare('UPDATE characters SET equipped_leggings = NULL WHERE user_id = ?'),
-			boots: db.prepare('UPDATE characters SET equipped_boots = NULL WHERE user_id = ?'),
-			ring1: db.prepare('UPDATE characters SET equipped_ring1 = NULL WHERE user_id = ?'),
-			ring2: db.prepare('UPDATE characters SET equipped_ring2 = NULL WHERE user_id = ?'),
-			amulet: db.prepare('UPDATE characters SET equipped_amulet = NULL WHERE user_id = ?'),
-		};
-		if (!updateStatements[slotToUnequip]) {
-			return interaction.reply({ content: 'Invalid equipment slot specified.', flags: MessageFlags.Ephemeral });
-		}
-		updateStatements[slotToUnequip].run(userId);
+		db.prepare(`
+            UPDATE user_inventory
+            SET equipped_slot = NULL
+            WHERE user_id = ? AND equipped_slot = ?
+        `).run(userId, slotToUnequip);
 
 		await recalculateStats(userId);
 
@@ -350,21 +337,22 @@ module.exports = {
 		}
 		else if (subcommand === 'unequip') {
 			if (focusedOption.name === 'slot') {
-				const character = db.prepare('SELECT * FROM characters WHERE user_id = ?').get(userId);
-				if (!character) return interaction.respond([]);
 
-				const equippedSlots = [];
-				for (const slot of EQUIPMENT_SLOTS) {
-					const inventoryId = character[`equipped_${slot}`];
-					if (inventoryId) {
-						const item = db.prepare('SELECT name FROM items WHERE item_id = (SELECT item_id FROM user_inventory WHERE inventory_id = ?)')
-							.get(inventoryId);
-						equippedSlots.push({
-							name: `${slot.charAt(0).toUpperCase() + slot.slice(1)}: ${item?.name || 'Unknown Item'}`,
-							value: slot,
-						});
-					}
-				}
+				const equippedItems = db.prepare(`
+					SELECT ui.equipped_slot, i.name
+					FROM user_inventory ui
+					JOIN items i ON ui.item_id = i.item_id
+					WHERE ui.user_id = ? AND ui.equipped_slot IS NOT NULL
+				`).all(userId);
+
+				const equippedSlots = equippedItems.map(item => {
+					const slotName = item.equipped_slot.charAt(0).toUpperCase() + item.equipped_slot.slice(1);
+					return {
+						name: `${slotName}: ${item.name}`,
+						value: item.equipped_slot,
+					};
+				});
+
 				await interaction.respond(equippedSlots);
 			}
 		}
@@ -410,6 +398,8 @@ module.exports = {
 			return interaction.reply({ content: 'Your creation session has expired. Please start over with `/character create`.', flags: MessageFlags.Ephemeral });
 		}
 
+		session.timestamp = Date.now();
+
 		await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
 		if (action === 'name' && session.step === 'name') {
@@ -424,21 +414,7 @@ module.exports = {
 				.setTitle(`Step 2: Choose an Origin for ${characterName}`)
 				.setDescription('Your Origin defines your background, granting you starting stat bonuses and a unique perk.');
 
-			const rows = [];
-			let currentRow = new ActionRowBuilder();
-			origins.forEach(origin => {
-				if (currentRow.components.length === 5) {
-					rows.push(currentRow);
-					currentRow = new ActionRowBuilder();
-				}
-				currentRow.addComponents(
-					new ButtonBuilder()
-						.setCustomId(`char_create_origin_${origin.id}_${userId}`)
-						.setLabel(origin.name)
-						.setStyle(ButtonStyle.Secondary),
-				);
-			});
-			rows.push(currentRow);
+			const rows = createButtonRows(origins, 'char_create_origin', userId);
 
 			await interaction.editReply({ embeds: [embed], components: rows });
 		}
@@ -498,6 +474,8 @@ module.exports = {
 			return interaction.reply({ content: 'Your creation session has expired. Please start over with `/character create`.', flags: MessageFlags.Ephemeral });
 		}
 
+		session.timestamp = Date.now();
+
 		if (action === 'origin' && session.step === 'origin') {
 			await interaction.deferUpdate();
 			session.originId = id;
@@ -511,21 +489,7 @@ module.exports = {
 				.setTitle('Step 3: Choose an Archetype')
 				.setDescription(`You have chosen **${origin.name}**. Now, select your Archetype. This defines your class, abilities, and primary stats.`);
 
-			const rows = [];
-			let currentRow = new ActionRowBuilder();
-			archetypes.forEach(arch => {
-				if (currentRow.components.length === 5) {
-					rows.push(currentRow);
-					currentRow = new ActionRowBuilder();
-				}
-				currentRow.addComponents(
-					new ButtonBuilder()
-						.setCustomId(`char_create_archetype_${arch.id}_${userId}`)
-						.setLabel(arch.name)
-						.setStyle(ButtonStyle.Secondary),
-				);
-			});
-			rows.push(currentRow);
+			const rows = createButtonRows(archetypes, 'char_create_archetype', userId);
 
 			await interaction.editReply({ embeds: [embed], components: rows });
 		}
@@ -609,10 +573,10 @@ module.exports = {
 						stat_charm: stats.charm,
 						stat_fortune: stats.fortune,
 					});
+					creationSessions.delete(userId);
 				});
 
 				createCharacterTx();
-				creationSessions.delete(userId);
 
 				const successEmbed = new EmbedBuilder()
 					.setColor(0x2ECC71)
@@ -634,3 +598,26 @@ module.exports = {
 		}
 	},
 };
+
+function createButtonRows(items, customIdPrefix, userId, maxRows = 5) {
+	const rows = [];
+	let currentRow = new ActionRowBuilder();
+
+	for (const item of items.slice(0, maxRows * 5)) {
+		if (currentRow.components.length === 5) {
+			rows.push(currentRow);
+			if (rows.length >= maxRows) break;
+			currentRow = new ActionRowBuilder();
+		}
+		currentRow.addComponents(
+			new ButtonBuilder()
+				.setCustomId(`${customIdPrefix}_${item.id}_${userId}`)
+				.setLabel(item.name)
+				.setStyle(ButtonStyle.Secondary),
+		);
+	}
+	if (currentRow.components.length > 0) {
+		rows.push(currentRow);
+	}
+	return rows;
+}
