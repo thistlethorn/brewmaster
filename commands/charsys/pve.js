@@ -63,24 +63,21 @@ async function handleVictory(interaction, combatState) {
 	rewards.crowns = Number(rewards.crowns) || 0;
 
 	const rewardText = [];
-	const rewardTransaction = db.transaction(() => {
-		if (rewards.xp > 0) {
-			// XP text still collected inside the transaction
-			rewardText.push(`**${rewards.xp}** XP`);
-		}
-		if (rewards.crowns > 0) {
-			db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?')
-			  .run(rewards.crowns, userId);
-			rewardText.push(`**${rewards.crowns}** Crowns`);
-		}
-	});
 
-	// Handle XP separately since addXp is async
+	// Handle XP first since it's async
 	if (rewards.xp > 0) {
 		await addXp(userId, rewards.xp, interaction);
+		rewardText.push(`**${rewards.xp}** XP`);
 	}
 
-	rewardTransaction();
+	// Then handle crowns in a transaction
+	if (rewards.crowns > 0) {
+		db.transaction(() => {
+			db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?')
+			  .run(rewards.crowns, userId);
+		})();
+		rewardText.push(`**${rewards.crowns}** Crowns`);
+	}
 
 	victoryEmbed.addFields({ name: 'Rewards Gained', value: rewardText.join('\n') });
 
@@ -99,12 +96,21 @@ async function handleVictory(interaction, combatState) {
 			for (const entry of entries) {
 				if (Math.random() < entry.drop_chance) {
 					const quantity = Math.floor(Math.random() * (entry.max_quantity - entry.min_quantity + 1)) + entry.min_quantity;
-					const existing = db.prepare('SELECT inventory_id, quantity FROM user_inventory WHERE user_id = ? AND item_id = ?').get(userId, entry.item_id);
-					if (existing) {
-						db.prepare('UPDATE user_inventory SET quantity = quantity + ? WHERE inventory_id = ?').run(quantity, existing.inventory_id);
+					const isStackable = db.prepare('SELECT is_stackable FROM items WHERE item_id = ?').get(entry.item_id)?.is_stackable === 1;
+					if (isStackable) {
+						const existing = db.prepare('SELECT inventory_id, quantity FROM user_inventory WHERE user_id = ? AND item_id = ? AND equipped_slot IS NULL')
+							.get(userId, entry.item_id);
+						if (existing) {
+							db.prepare('UPDATE user_inventory SET quantity = quantity + ? WHERE inventory_id = ?').run(quantity, existing.inventory_id);
+						}
+						else {
+							db.prepare('INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, ?)').run(userId, entry.item_id, quantity);
+						}
 					}
 					else {
-						db.prepare('INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, ?)').run(userId, entry.item_id, quantity);
+						for (let n = 0; n < quantity; n++) {
+							db.prepare('INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, 1)').run(userId, entry.item_id);
+						}
 					}
 					lootedItems.push(`• ${entry.item_name} x${quantity}`);
 				}
@@ -223,14 +229,14 @@ async function handleEngage(interaction) {
 	try {
 		await interaction.reply({ content: 'Creating your battle instance...', flags: MessageFlags.Ephemeral });
 
-		// Set character status to 'IN_COMBAT'
-		db.prepare('UPDATE characters SET character_status = ? WHERE user_id = ?').run('IN_COMBAT', userId);
-
 		const thread = await interaction.channel.threads.create({
 			name: `[Adventure] ${character.character_name} vs. ${node.name}`,
 			type: ChannelType.PrivateThread,
 			reason: `PvE combat instance for ${interaction.user.tag}`,
 		});
+
+		// Set character status to 'IN_COMBAT'
+		db.prepare('UPDATE characters SET character_status = ? WHERE user_id = ?').run('IN_COMBAT', userId);
 
 		await thread.members.add(userId);
 
@@ -242,6 +248,9 @@ async function handleEngage(interaction) {
         `).all(nodeId);
 
 		if (!monsterComposition || monsterComposition.length === 0) {
+			await thread.setLocked(true);
+			await thread.setArchived(true);
+			db.prepare('UPDATE characters SET character_status = ? WHERE user_id = ? AND character_status = ?').run('IDLE', userId, 'IN_COMBAT');
 			return interaction.editReply({ content: 'This adventure has no monsters configured. Please contact an admin.' });
 		}
 
@@ -264,14 +273,21 @@ async function handleEngage(interaction) {
 
 		const combatEmbed = buildCombatEmbed(combatState, interaction.user);
 		const actionRows = [];
-		let currentRow = new ActionRowBuilder();
-		let buttonCount = 0;
+		const MAX_ROWS = 5;
+		const MAX_PER_ROW = 5;
 
-		combatState.monsters.forEach((monster, index) => {
-			if (buttonCount === 5) {
+		let currentRow = new ActionRowBuilder();
+		let rowCount = 0;
+		let btnInRow = 0;
+
+		for (let index = 0; index < combatState.monsters.length && rowCount < MAX_ROWS; index++) {
+			const monster = combatState.monsters[index];
+			if (btnInRow === MAX_PER_ROW) {
 				actionRows.push(currentRow);
 				currentRow = new ActionRowBuilder();
-				buttonCount = 0;
+				btnInRow = 0;
+				rowCount++;
+				if (rowCount === MAX_ROWS) break;
 			}
 			currentRow.addComponents(
 				new ButtonBuilder()
@@ -279,14 +295,15 @@ async function handleEngage(interaction) {
 					.setLabel(`Attack ${monster.name} #${index + 1}`)
 					.setStyle(ButtonStyle.Danger),
 			);
-			buttonCount++;
-		});
-
-		if (buttonCount > 0) {
-			actionRows.push(currentRow);
+			btnInRow++;
 		}
 
-		await thread.send({ content: `<@${userId}>`, embeds: [combatEmbed], components: actionRows });
+		if (btnInRow > 0 && rowCount < MAX_ROWS) actionRows.push(currentRow);
+
+		const truncated = combatState.monsters.length > MAX_ROWS * MAX_PER_ROW;
+		const note = truncated ? `Note: showing first ${MAX_ROWS * MAX_PER_ROW} targets.\n` : '';
+
+		await thread.send({ content: `${note}<@${userId}>`, embeds: [combatEmbed], components: actionRows });
 		await interaction.editReply({ content: `Your adventure begins! Join the battle here: ${thread}` });
 
 	}
@@ -382,9 +399,10 @@ module.exports.buttons = async (interaction) => {
 		const allMonstersDefeated = combatState.monsters.every(m => m.current_health <= 0);
 		if (allMonstersDefeated) {
 			// Immediately mark the victory in the database to prevent loss
-			db.prepare(
-				'UPDATE characters SET character_status = \'VICTORY_PENDING\' WHERE user_id = ?',
-			).run(combatState.userId);
+			db.transaction(() => {
+				db.prepare('UPDATE characters SET character_status = \'VICTORY_PENDING\' WHERE user_id = ? AND character_status = \'IN_COMBAT\'')
+					.run(combatState.userId);
+			})();
 			return handleVictory(interaction, combatState);
 		}
 

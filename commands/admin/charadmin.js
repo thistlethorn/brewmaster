@@ -126,21 +126,24 @@ module.exports = {
 						baseStats[origin.bonus_stat_2]++;
 					}
 
-					db.prepare(`
-                        UPDATE characters
-                        SET
-                            level = 1, xp = 0, stat_points_unspent = 0,
-                            current_health = 10, max_health = 10, temporary_health = 0,
-                            current_mana = 10, max_mana = 10,
-                            current_ki = 0, max_ki = 0,
-                            stat_might = ?, stat_finesse = ?, stat_wits = ?,
-                            stat_grit = ?, stat_charm = ?, stat_fortune = ?
-                        WHERE user_id = ?
-                    `).run(
-						baseStats.might, baseStats.finesse, baseStats.wits,
-						baseStats.grit, baseStats.charm, baseStats.fortune,
-						targetUser.id,
-					);
+					const resetTransaction = db.transaction(() => {
+						db.prepare(`
+							UPDATE characters
+							SET
+								level = 1, xp = 0, stat_points_unspent = 0,
+								current_health = 10, max_health = 10, temporary_health = 0,
+								current_mana = 10, max_mana = 10,
+								current_ki = 0, max_ki = 0,
+								stat_might = ?, stat_finesse = ?, stat_wits = ?,
+								stat_grit = ?, stat_charm = ?, stat_fortune = ?
+							WHERE user_id = ?
+						`).run(
+							baseStats.might, baseStats.finesse, baseStats.wits,
+							baseStats.grit, baseStats.charm, baseStats.fortune,
+							targetUser.id,
+						);
+					});
+					resetTransaction();
 					await recalculateStats(targetUser.id);
 					embed.setTitle('Character Reset')
 						.setDescription(`Successfully reset ${targetUser.username}'s character to Level 1.`)

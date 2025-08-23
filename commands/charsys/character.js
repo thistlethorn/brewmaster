@@ -92,7 +92,12 @@ async function handleView(interaction) {
 	}
 
 	// Calculate XP required for the next level.
-	const xpToNextLevel = Math.floor(100 * (characterData.level ** 1.5));
+	// TODO: Move the max level to config.json.
+	const MAX_LEVEL = 100;
+
+	const safeLevel = Math.min(characterData.level, MAX_LEVEL);
+	const xpToNextLevel = Math.floor(100 * (safeLevel ** 1.5));
+
 	// Fetch equipped items
 
 	const equipmentSlots = ['weapon', 'offhand', 'helmet', 'chestplate', 'leggings', 'boots', 'ring1', 'ring2', 'amulet'];
@@ -388,6 +393,10 @@ module.exports = {
      */
 	async modals(interaction) {
 		const [,, action, userId] = interaction.customId.split('_');
+
+		if (!userId || !action) {
+			return interaction.reply({ content: 'Invalid interaction format.', flags: MessageFlags.Ephemeral });
+		}
 
 		if (interaction.user.id !== userId) {
 			return interaction.reply({ content: 'This interaction is not for you.', flags: MessageFlags.Ephemeral });

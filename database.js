@@ -1372,6 +1372,22 @@ setupTables();
 
 // eslint-disable-next-line no-unused-vars
 function alterTableAddColumn(tableName, columnDef) {
+	// Validate table name against a whitelist
+	const allowedTables = [
+		'guild_list',
+		'raid_history',
+		/* add other tables as needed */
+	];
+
+	if (!allowedTables.includes(tableName)) {
+		throw new Error(`Invalid table name: ${tableName}`);
+	}
+
+	// Basic validation for column definition (prevent semicolons and comments)
+	if (columnDef.includes(';') || columnDef.includes('--') || columnDef.includes('/*')) {
+		throw new Error('Invalid column definition');
+	}
+
 	try {
 		db.prepare(`ALTER TABLE ${tableName} ADD COLUMN ${columnDef}`).run();
 		console.log(`[DB Migration] Successfully added column "${columnDef}" to ${tableName} table.`);
@@ -1382,7 +1398,6 @@ function alterTableAddColumn(tableName, columnDef) {
 		}
 	}
 }
-
 
 module.exports = db;
 module.exports.JACKPOT_BASE_AMOUNT = JACKPOT_BASE_AMOUNT;
