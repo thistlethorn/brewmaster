@@ -485,7 +485,7 @@ module.exports = {
 		const amount = parseInt(interaction.fields.getTextInputValue('crown_amount'), 10);
 		const balance = db.prepare('SELECT crowns FROM user_economy WHERE user_id = ?').get(userId)?.crowns || 0;
 
-		if (isNaN(amount) || amount < 0) {
+		if (isNaN(amount) || amount < 0 || amount > Number.MAX_SAFE_INTEGER) {
 			return interaction.reply({ content: 'Please enter a valid, non-negative number.', flags: MessageFlags.Ephemeral });
 		}
 		if (amount > balance) {

@@ -136,7 +136,7 @@ async function handleVictory(interaction, combatState) {
 	finally {
 		// 3. Cleanup (always)
 		db.transaction(() => {
-			db.prepare('UPDATE characters SET character_status = \'IDLE\' WHERE user_id = ?').run(userId);
+			db.prepare('UPDATE characters SET character_status = \'IDLE\' WHERE user_id = ? AND character_status IN (\'IN_COMBAT\', \'VICTORY_PENDING\')').run(userId);
 			db.prepare(`
         INSERT INTO character_pve_progress (user_id, node_id, times_cleared, last_cleared_at)
         VALUES (?, ?, 1, ?)
@@ -253,7 +253,7 @@ async function handleEngage(interaction) {
 
 		const parent = interaction.channel;
 		if (!parent?.isTextBased?.() || parent.type === ChannelType.DM || !parent.threads) {
-			return interaction.reply({ content: 'This command must be used in a server text channel that supports private threads.', flags: MessageFlags.Ephemeral });
+			return interaction.editReply({ content: 'This command must be used in a server text channel that supports private threads.', flags: MessageFlags.Ephemeral });
 		}
 		const thread = await parent.threads.create({
 			name: `[Adventure] ${character.character_name} vs. ${node.name}`,

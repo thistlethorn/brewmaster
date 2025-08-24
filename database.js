@@ -632,9 +632,7 @@ const setupTables = db.transaction(() => {
             -- For unique properties like durability
             instance_data_json TEXT CHECK(instance_data_json IS NULL OR json_valid(instance_data_json)),
             FOREIGN KEY(user_id) REFERENCES characters(user_id) ON DELETE CASCADE,
-            FOREIGN KEY(item_id) REFERENCES items(item_id),
-
-            UNIQUE(user_id, equipped_slot)
+            FOREIGN KEY(item_id) REFERENCES items(item_id)
         )
     `).run();
 
@@ -680,12 +678,13 @@ const setupTables = db.transaction(() => {
 
             -- NULL if anyone can craft it
             required_archetype_id INTEGER,
-            required_level INTEGER DEFAULT 1,
+            required_level INTEGER DEFAULT 1 CHECK (required_level >= 1),
 
             -- e.g., '{"iron_ore_id": 5, "oak_wood_id": 2}'
             reagents_json TEXT NOT NULL CHECK(json_valid(reagents_json)),
 
-            FOREIGN KEY(crafted_item_id) REFERENCES items(item_id)
+            FOREIGN KEY(crafted_item_id) REFERENCES items(item_id),
+            FOREIGN KEY(required_archetype_id) REFERENCES archetypes(id)
         )
     `).run();
 
@@ -882,6 +881,7 @@ const setupTables = db.transaction(() => {
             drop_chance REAL NOT NULL CHECK (drop_chance >= 0.0 AND drop_chance <= 1.0),
             min_quantity INTEGER DEFAULT 1,
             max_quantity INTEGER DEFAULT 1,
+            CHECK (min_quantity >= 1 AND max_quantity >= min_quantity),
 
             FOREIGN KEY(loot_table_id) REFERENCES loot_tables(loot_table_id) ON DELETE CASCADE,
             FOREIGN KEY(item_id) REFERENCES items(item_id)
@@ -1349,6 +1349,11 @@ const setupTables = db.transaction(() => {
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_tqp_idle
 		ON tony_quotes_pending(LOWER(TRIM(quote_text)))
 		WHERE quote_type = 'idle'
+	`).run();
+	db.prepare(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_user_inventory_equipped_slot
+		ON user_inventory(user_id, equipped_slot)
+		WHERE equipped_slot IS NOT NULL
 	`).run();
 
 });
