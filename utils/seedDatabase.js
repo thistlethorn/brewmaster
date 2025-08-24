@@ -89,6 +89,9 @@ const pveNodes = [
 /**
  * Seeds all PvE-related data idempotently.
  * This function can be run multiple times without creating duplicate entries.
+ * Seed core datasets (Origins, Archetypes) if empty and then run PvE seeding.
+ * @returns {Boolean} true on success
+ * @throws {Error} when seeding fails
  */
 function seedPveData() {
 	db.transaction(() => {

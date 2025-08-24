@@ -519,7 +519,7 @@ const setupTables = db.transaction(() => {
             temporary_health INTEGER DEFAULT 0 CHECK (temporary_health >= 0),
             current_mana INTEGER DEFAULT 10 CHECK (current_mana >= 0),
             max_mana INTEGER DEFAULT 10 CHECK (max_mana >= 1),
-            current_ki INTEGER DEFAULT 0 (current_ki >= 0),
+            current_ki INTEGER DEFAULT 0 CHECK (current_ki >= 0),
             max_ki INTEGER DEFAULT 0 CHECK (max_ki >= 0),
 
             -- === Base Stats ===
@@ -546,7 +546,7 @@ const setupTables = db.transaction(() => {
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
 
             FOREIGN KEY(origin_id) REFERENCES origins(id),
-            FOREIGN KEY(archetype_id) REFERENCES archetypes(id)
+            FOREIGN KEY(archetype_id) REFERENCES archetypes(id),
             FOREIGN KEY(active_trophy_id) REFERENCES items(item_id) ON DELETE SET NULL
         )
     `).run();
@@ -1088,7 +1088,7 @@ const setupTables = db.transaction(() => {
             session_id INTEGER PRIMARY KEY AUTOINCREMENT,
             initiator_user_id TEXT NOT NULL,
             receiver_user_id TEXT NOT NULL,
-            ui_message_id TEXT NOT NULL,
+            ui_message_id TEXT,
 
             -- 'PENDING', 'LOCKED', 'CONFIRMED', 'COMPLETED', 'CANCELLED'
             status TEXT NOT NULL DEFAULT 'PENDING',

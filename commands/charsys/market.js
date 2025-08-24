@@ -7,6 +7,11 @@ const activeTrades = new Set();
 const TRADE_TIMEOUT = 30 * 60 * 1000;
 const tradeTimestamps = new Map();
 
+
+/**
+* Mark a user as being in an active trade and record a heartbeat timestamp.
+* @param {string} userId
+*/
 function addToActiveTrades(userId) {
 	activeTrades.add(userId);
 	tradeTimestamps.set(userId, Date.now());
@@ -52,9 +57,9 @@ function buildTradeButtons(sessionId, session, userId) {
 	const row2 = new ActionRowBuilder().addComponents(
 		new ButtonBuilder()
 			.setCustomId(`trade_lock_offer_${sessionId}`)
-			.setLabel(isLocked ? 'Unlock Offer' : 'Lock Offer')
-			.setStyle(isLocked ? ButtonStyle.Secondary : ButtonStyle.Primary)
-			.setEmoji(isLocked ? '🔓' : '🔒'),
+			.setLabel('Toggle Lock/Unlock')
+			.setStyle(ButtonStyle.Primary)
+			.setEmoji('🔒'),
 		new ButtonBuilder().setCustomId(`trade_cancel_trade_${sessionId}`).setLabel('Cancel Trade').setStyle(ButtonStyle.Danger).setEmoji('❌'),
 	);
 	return [row1, row2];
@@ -382,6 +387,7 @@ module.exports = {
 	async buttons(interaction) {
 		const [, action, subAction, sessionId] = interaction.customId.split('_');
 		const userId = interaction.user.id;
+		tradeTimestamps.set(userId, Date.now());
 
 		const session = db.prepare('SELECT * FROM trade_sessions WHERE session_id = ?').get(sessionId);
 		if (!session || (userId !== session.initiator_user_id && userId !== session.receiver_user_id)) {
@@ -390,7 +396,6 @@ module.exports = {
 		if (session.status !== 'PENDING') {
 			return interaction.reply({ content: 'This trade is no longer active.', flags: MessageFlags.Ephemeral });
 		}
-
 		switch (`${action}_${subAction}`) {
 		case 'add_item': {
 			const items = db.prepare(`
@@ -476,7 +481,7 @@ module.exports = {
 	async modals(interaction) {
 		const [,, sessionId] = interaction.customId.split('_');
 		const userId = interaction.user.id;
-
+		tradeTimestamps.set(userId, Date.now());
 		const amount = parseInt(interaction.fields.getTextInputValue('crown_amount'), 10);
 		const balance = db.prepare('SELECT crowns FROM user_economy WHERE user_id = ?').get(userId)?.crowns || 0;
 
@@ -511,6 +516,7 @@ module.exports = {
 	async menus(interaction) {
 		const [,, subAction, sessionId] = interaction.customId.split('_');
 		const userId = interaction.user.id;
+		tradeTimestamps.set(userId, Date.now());
 
 		if (subAction === 'additem') {
 			const inventoryId = parseInt(interaction.values[0]);
