@@ -514,13 +514,13 @@ const setupTables = db.transaction(() => {
             stat_points_unspent INTEGER DEFAULT 0,
 
             -- === Resource Pools ===
-            current_health INTEGER DEFAULT 10,
-            max_health INTEGER DEFAULT 10,
-            temporary_health INTEGER DEFAULT 0,
-            current_mana INTEGER DEFAULT 10,
-            max_mana INTEGER DEFAULT 10,
-            current_ki INTEGER DEFAULT 0,
-            max_ki INTEGER DEFAULT 0,
+            current_health INTEGER DEFAULT 10 CHECK (current_health >= 0),
+            max_health INTEGER DEFAULT 10 CHECK (max_health >= 1),
+            temporary_health INTEGER DEFAULT 0 CHECK (temporary_health >= 0),
+            current_mana INTEGER DEFAULT 10 CHECK (current_mana >= 0),
+            max_mana INTEGER DEFAULT 10 CHECK (max_mana >= 1),
+            current_ki INTEGER DEFAULT 0 (current_ki >= 0),
+            max_ki INTEGER DEFAULT 0 CHECK (max_ki >= 0),
 
             -- === Base Stats ===
             stat_might INTEGER DEFAULT 5,
@@ -547,6 +547,7 @@ const setupTables = db.transaction(() => {
 
             FOREIGN KEY(origin_id) REFERENCES origins(id),
             FOREIGN KEY(archetype_id) REFERENCES archetypes(id)
+            FOREIGN KEY(active_trophy_id) REFERENCES items(item_id) ON DELETE SET NULL
         )
     `).run();
 
@@ -743,7 +744,8 @@ const setupTables = db.transaction(() => {
 
             -- ISO timestamp for when the effect wears off
             expires_at TEXT NOT NULL,
-            FOREIGN KEY(target_user_id) REFERENCES characters(user_id) ON DELETE CASCADE
+            FOREIGN KEY(target_user_id) REFERENCES characters(user_id) ON DELETE CASCADE,
+            FOREIGN KEY(ability_id) REFERENCES abilities(ability_id)
         )
     `).run();
 
@@ -1200,7 +1202,10 @@ const setupTables = db.transaction(() => {
             status TEXT NOT NULL DEFAULT 'IN_PROGRESS',
 
             -- When the mission ends or the effect wears off
-            expires_at TEXT NOT NULL
+            expires_at TEXT NOT NULL,
+
+            FOREIGN KEY(saboteur_user_id) REFERENCES characters(user_id) ON DELETE CASCADE,
+            FOREIGN KEY(target_guild_tag) REFERENCES guild_list(guild_tag) ON DELETE CASCADE
         )
     `).run();
 
@@ -1232,8 +1237,6 @@ const setupTables = db.transaction(() => {
 
     `).run();
     */
-
-	// END OF CHARACTER SUPERSYSTEM TABLES
 
 
 	//  Dynamic configuration keypair settings

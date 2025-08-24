@@ -73,6 +73,9 @@ module.exports = {
 				const command = interaction.client.commands.get(interaction.commandName);
 				if (!command) {
 					console.error(`No command matching ${interaction.commandName} was found.`);
+		        	if (!interaction.responded) {
+						await interaction.respond([]);
+					}
 					return;
 				}
 				try {
@@ -82,6 +85,9 @@ module.exports = {
 				}
 				catch (error) {
 					console.error(error);
+					if (!interaction.responded) {
+						await interaction.respond([]);
+					}
 				}
 				return;
 			}
@@ -100,6 +106,10 @@ module.exports = {
 						return;
 					}
 				}
+				else if (!interaction.replied && !interaction.deferred) {
+					await interaction.reply({ content: 'Trade actions are currently unavailable.', flags: MessageFlags.Ephemeral });
+					return;
+				}
 			}
 
 			if (interaction.isStringSelectMenu() && interaction.customId.startsWith('trade_')) {
@@ -115,6 +125,10 @@ module.exports = {
 						}
 						return;
 					}
+				}
+				else if (!interaction.replied && !interaction.deferred) {
+					await interaction.reply({ content: 'Trade actions are currently unavailable.', flags: MessageFlags.Ephemeral });
+					return;
 				}
 			}
 
@@ -134,6 +148,10 @@ module.exports = {
 						return;
 					}
 				}
+				else if (!interaction.replied && !interaction.deferred) {
+					await interaction.reply({ content: 'Inventory actions are currently unavailable.', flags: MessageFlags.Ephemeral });
+					return;
+				}
 			}
 
 			if (interaction.isModalSubmit() && interaction.customId.startsWith('char_create_')) {
@@ -150,6 +168,10 @@ module.exports = {
 						}
 						return;
 					}
+				}
+				else if (!interaction.replied && !interaction.deferred) {
+					await interaction.reply({ content: 'Character creation is currently unavailable.', flags: MessageFlags.Ephemeral });
+					return;
 				}
 			}
 
@@ -168,6 +190,10 @@ module.exports = {
 						}
 						return;
 					}
+				}
+				else if (!interaction.replied && !interaction.deferred) {
+					await interaction.reply({ content: 'Character creation actions are currently unavailable.', flags: MessageFlags.Ephemeral });
+					return;
 				}
 			}
 
@@ -252,6 +278,10 @@ module.exports = {
 						return;
 					}
 				}
+				else if (!interaction.replied && !interaction.deferred) {
+					await interaction.reply({ content: 'PvE is currently unavailable.', flags: MessageFlags.Ephemeral });
+					return;
+				}
 			}
 			if (interaction.isButton() && interaction.customId.startsWith('trade_')) {
 				if (marketCommand && typeof marketCommand.buttons === 'function') {
@@ -266,6 +296,10 @@ module.exports = {
 						}
 						return;
 					}
+				}
+				else if (!interaction.replied && !interaction.deferred) {
+					await interaction.reply({ content: 'Trade actions are currently unavailable.', flags: MessageFlags.Ephemeral });
+					return;
 				}
 			}
 			if (interaction.isButton()) {

@@ -250,7 +250,12 @@ async function handleEngage(interaction) {
 	try {
 		await interaction.reply({ content: 'Creating your battle instance...', flags: MessageFlags.Ephemeral });
 
-		const thread = await interaction.channel.threads.create({
+
+		const parent = interaction.channel;
+		if (!parent?.isTextBased?.() || parent.type === ChannelType.DM || !parent.threads) {
+			return interaction.reply({ content: 'This command must be used in a server text channel that supports private threads.', flags: MessageFlags.Ephemeral });
+		}
+		const thread = await parent.threads.create({
 			name: `[Adventure] ${character.character_name} vs. ${node.name}`,
 			type: ChannelType.PrivateThread,
 			reason: `PvE combat instance for ${interaction.user.tag}`,
