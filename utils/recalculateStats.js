@@ -62,27 +62,27 @@ async function recalculateStats(userId) {
 
 
 		// 4. Ensure current health/mana don't exceed the new maximums.
-		// Clamp current_* between 0 and their respective max values, handling null/undefined safely
-		const currentHealth = Math.max(
+		// Clamp current_* between 0 and their respective max values, handling non-finite values safely
+		const toFinite = (v, fallback) => {
+			const n = Number(v);
+			return Number.isFinite(n) ? n : fallback;
+		};
+		const clamp = (n, min, max) => Math.min(Math.max(n, min), max);
+
+		const currentHealth = clamp(
+			toFinite(character.current_health, finalStats.max_health),
 			0,
-			Math.min(
-				Number(character.current_health ?? finalStats.max_health),
-				finalStats.max_health,
-			),
+			finalStats.max_health,
 		);
-		const currentMana = Math.max(
+		const currentMana = clamp(
+			toFinite(character.current_mana, finalStats.max_mana),
 			0,
-			Math.min(
-				Number(character.current_mana ?? finalStats.max_mana),
-				finalStats.max_mana,
-			),
+			finalStats.max_mana,
 		);
-		const currentKi = Math.max(
+		const currentKi = clamp(
+			toFinite(character.current_ki, finalStats.max_ki),
 			0,
-			Math.min(
-				Number(character.current_ki ?? finalStats.max_ki),
-				finalStats.max_ki,
-			),
+			finalStats.max_ki,
 		);
 
 

@@ -35,6 +35,7 @@ async function addXp(userId, amount, interaction) {
 
 	let xpToNextLevel = Math.max(1, Math.floor(100 * (level ** 1.5)));
 
+	let levelsGained = 0;
 	// Loop to handle multiple level-ups from a single XP gain
 	while (xp >= xpToNextLevel) {
 		level++;
@@ -42,7 +43,7 @@ async function addXp(userId, amount, interaction) {
 
 		// Award 2 stat points per level
 		stat_points_unspent += 2;
-		hasLeveledUp = true;
+		levelsGained += 1;
 		xpToNextLevel = Math.max(1, Math.floor(100 * (level ** 1.5)));
 	}
 
@@ -59,19 +60,24 @@ async function addXp(userId, amount, interaction) {
 		updateChar();
 
 		// If a level-up occurred, send a notification.
-		if (hasLeveledUp && interaction) {
+		if (levelsGained > 0 && interaction) {
+			const pointsGained = levelsGained * 2;
 			const levelUpEmbed = new EmbedBuilder()
 				.setColor(0xF1C40F)
 				.setTitle('🌟 LEVEL UP! 🌟')
 				.setDescription(`Congratulations, you have reached **Level ${level}**!`)
 				.addFields(
-					{ name: 'Stat Points Gained', value: 'You have received **2** unspent stat points!', inline: true },
+					{ name: 'Stat Points Gained', value: `You gained **${pointsGained}** unspent stat points.`, inline: true },
 					{ name: 'Total Unspent Points', value: `You now have **${stat_points_unspent}** points available.`, inline: true },
 				)
 				.setFooter({ text: 'Use /character spendpoints (coming soon) to improve your stats!' });
 
-			// Use followUp to avoid "interaction already replied" errors if the command has other responses.
-			await interaction.followUp({ embeds: [levelUpEmbed], flags: MessageFlags.Ephemeral });
+			if (interaction.deferred || interaction.replied) {
+				await interaction.followUp({ embeds: [levelUpEmbed], flags: MessageFlags.Ephemeral });
+			}
+			else {
+				await interaction.reply({ embeds: [levelUpEmbed], flags: MessageFlags.Ephemeral });
+			}
 		}
 	}
 	catch (error) {

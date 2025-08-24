@@ -241,12 +241,18 @@ function seedPveData() {
 				let seededCount = 0;
 				pveNodes.forEach(nodeSeed => {
 					const nodeId = nodeIdMap.get(nodeSeed.name);
-					if (!nodeId) return;
+					if (!nodeId) {
+						console.error(`[DB Seeding] Node not found: ${nodeSeed.name}`);
+						throw new Error(`Missing node: ${nodeSeed.name}`);
+					}
 
 					const monsterComp = JSON.parse(nodeSeed.monster_composition_json);
 					monsterComp.forEach(comp => {
 						const monsterId = monsterIdMap.get(comp.name);
-						if (!monsterId) return;
+						if (!monsterId) {
+							console.error(`[DB Seeding] Monster not found: ${comp.name} for node ${nodeSeed.name}`);
+							throw new Error(`Missing monster: ${comp.name} in node ${nodeSeed.name}`);
+						}
 						stmt.run(nodeId, monsterId, comp.count);
 						seededCount++;
 					});

@@ -1093,8 +1093,8 @@ const setupTables = db.transaction(() => {
             initiator_locked INTEGER DEFAULT 0,
             receiver_locked INTEGER DEFAULT 0,
 
-            initiator_crown_offer INTEGER NOT NULL DEFAULT 0,
-            receiver_crown_offer INTEGER NOT NULL DEFAULT 0,
+            initiator_crown_offer INTEGER NOT NULL DEFAULT 0 CHECK (initiator_crown_offer >= 0),
+            receiver_crown_offer INTEGER NOT NULL DEFAULT 0 CHECK (receiver_crown_offer >= 0),
 
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
 
@@ -1112,8 +1112,8 @@ const setupTables = db.transaction(() => {
             -- Which user is offering this item/crowns
             user_id TEXT NOT NULL,
 
-            -- The specific instance from their inventory (NULL if offering crowns)
-            inventory_id INTEGER,
+            -- The specific instance from their inventory
+            inventory_id INTEGER NOT NULL,
 
 
             PRIMARY KEY (session_id, user_id, inventory_id),
@@ -1348,46 +1348,23 @@ const setupTables = db.transaction(() => {
 		WHERE quote_type = 'idle'
 	`).run();
 
-	const crownCleanupResult = db.prepare(`
-		DELETE FROM trade_session_items
-		WHERE inventory_id IS NULL
-		AND rowid NOT IN (
-			SELECT MIN(rowid)
-			FROM trade_session_items
-			WHERE inventory_id IS NULL
-			GROUP BY session_id, user_id
-		)
-	`).run();
-
-	if (crownCleanupResult.changes > 0) {
-		console.log(`[DB Cleanup] Removed ${crownCleanupResult.changes} duplicate crown entries from trade_session_items.`);
-	}
-
-	// Add the new unique index for crown offers in trades
-	db.prepare(`
-		CREATE UNIQUE INDEX IF NOT EXISTS idx_trade_session_crowns
-		ON trade_session_items(session_id, user_id)
-		WHERE inventory_id IS NULL
-	`).run();
-
 });
 
 setupTables();
 
-
-/**
+/*
+**
  * Safely add a column to a whitelisted table.
  * NOTE: SQLite cannot add constraints via ALTER; use rebuild migrations for FKs/CHECKs.
  * @param {'guild_list'|'raid_history'|'TABLE_NAME_HERE'} tableName the name of the table to alter
  * @param {string} columnDef e.g., "wager_pot INTEGER DEFAULT 0"
- */
-// eslint-disable-next-line no-unused-vars
+ *
 function alterTableAddColumn(tableName, columnDef) {
 	// Validate table name against a whitelist
 	const allowedTables = [
 		'guild_list',
 		'raid_history',
-		/* add other tables as needed */
+        // Add other table names as needed
 	];
 
 	if (!allowedTables.includes(tableName)) {
@@ -1409,6 +1386,7 @@ function alterTableAddColumn(tableName, columnDef) {
 		}
 	}
 }
+*/
 
 module.exports = db;
 module.exports.JACKPOT_BASE_AMOUNT = JACKPOT_BASE_AMOUNT;

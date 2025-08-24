@@ -59,7 +59,8 @@ async function handleCreate(interaction) {
  */
 function generateXpBar(currentXp, requiredXp) {
 	const totalBars = 10;
-	const progress = requiredXp > 0 ? Math.floor((currentXp / requiredXp) * totalBars) : 0;
+	const ratio = requiredXp > 0 ? Math.min(1, Math.max(0, currentXp / requiredXp)) : 0;
+	const progress = Math.round(ratio * totalBars);
 	const filledBars = '🟦'.repeat(progress);
 	const emptyBars = '⬜'.repeat(totalBars - progress);
 	return `\`[${filledBars}${emptyBars}]\` **${currentXp} / ${requiredXp}** XP`;
@@ -95,8 +96,14 @@ async function handleView(interaction) {
 	// TODO: Move the max level to config.json.
 	const MAX_LEVEL = 100;
 
-	const safeLevel = Math.min(characterData.level, MAX_LEVEL);
-	const xpToNextLevel = Math.floor(100 * (safeLevel ** 1.5));
+	const level = Math.min(characterData.level, MAX_LEVEL);
+
+	// This is the XP the character has accumulated for their CURRENT level.
+	// It's read directly from the database because addXp.js stores it this way.
+	const xpIntoLevel = characterData.xp;
+
+	// This is the total amount of XP needed to complete the CURRENT level.
+	const xpRequiredForNext = Math.floor(100 * (level ** 1.5));
 
 	// Fetch equipped items
 
@@ -125,7 +132,7 @@ async function handleView(interaction) {
 		.setThumbnail(characterData.character_image || null)
 		.addFields(
 			{ name: '📜 Character Info', value: `**Origin:** ${characterData.origin_name}\n**Title:** ${characterData.character_title || 'None'}\n**Alignment:** ${characterData.character_alignment || 'Unaligned'}`, inline: false },
-			{ name: '📈 Level Progression', value: generateXpBar(characterData.xp, xpToNextLevel), inline: false },
+			{ name: '📈 Level Progression', value: generateXpBar(xpIntoLevel, xpRequiredForNext), inline: false },
 			{ name: '❤️ Health', value: `\`${characterData.current_health} / ${characterData.max_health}\``, inline: true },
 			{ name: '💙 Mana', value: `\`${characterData.current_mana} / ${characterData.max_mana}\``, inline: true },
 			{ name: '🔥 Ki', value: `\`${characterData.current_ki} / ${characterData.max_ki}\``, inline: true },
@@ -168,13 +175,13 @@ async function handleEquip(interaction) {
 	if (!character) {
 		return interaction.reply({ content: 'You must create a character first with `/character create`.', flags: MessageFlags.Ephemeral });
 	}
-
+	const itemSlotType = intendedSlot.startsWith('ring') ? 'ring' : intendedSlot;
 	// Verify the item exists in the user's inventory and is equippable in the intended slot.
 	const itemToEquip = db.prepare(`
         SELECT i.name, i.effects_json FROM user_inventory ui
         JOIN items i ON ui.item_id = i.item_id
         WHERE ui.inventory_id = ? AND ui.user_id = ? AND json_extract(i.effects_json, '$.slot') = ?
-    `).get(inventoryId, userId, intendedSlot);
+    `).get(inventoryId, userId, itemSlotType);
 
 	if (!itemToEquip) {
 		return interaction.reply({ content: 'The selected item is not valid for that slot or was not found in your inventory.', flags: MessageFlags.Ephemeral });
@@ -321,6 +328,7 @@ module.exports = {
 					return interaction.respond([]);
 				}
 
+				const itemSlotType = slot.startsWith('ring') ? 'ring' : slot;
 				const focusedValue = focusedOption.value.toLowerCase();
 				// Find items in inventory that match the chosen slot.
 				const equippableItems = db.prepare(`
@@ -328,7 +336,7 @@ module.exports = {
                     FROM user_inventory ui
                     JOIN items i ON ui.item_id = i.item_id
                     WHERE ui.user_id = ? AND json_extract(i.effects_json, '$.slot') = ?
-                `).all(userId, slot);
+                `).all(userId, itemSlotType);
 
 				const filtered = equippableItems
 					.filter(item => item.name.toLowerCase().includes(focusedValue))

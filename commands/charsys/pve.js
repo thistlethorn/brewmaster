@@ -52,107 +52,111 @@ async function handleVictory(interaction, combatState) {
 	const progress = db.prepare('SELECT times_cleared FROM character_pve_progress WHERE user_id = ? AND node_id = ?').get(userId, nodeData.node_id);
 	const isFirstClear = !progress || progress.times_cleared === 0;
 	const rewardJson = isFirstClear ? nodeData.first_completion_reward_json : nodeData.repeatable_reward_json;
-	 let rewards = {};
-	try {
-		rewards = rewardJson ? JSON.parse(rewardJson) : {};
-	}
-	catch {
-		rewards = {};
+	let rewards = {};
+	if (rewardJson) {
+		try {
+			rewards = JSON.parse(rewardJson);
+		}
+		catch (error) {
+			console.error(`Failed to parse reward JSON for node ${nodeData.node_id}:`, error);
+			rewards = {};
+		}
 	}
 	rewards.xp = Number(rewards.xp) || 0;
 	rewards.crowns = Number(rewards.crowns) || 0;
 
 	const rewardText = [];
 
-	// Handle XP first since it's async
-	if (rewards.xp > 0) {
-		await addXp(userId, rewards.xp, interaction);
-		rewardText.push(`**${rewards.xp}** XP`);
-	}
-
-	// Then handle crowns in a transaction
-	if (rewards.crowns > 0) {
-		db.transaction(() => {
-			db.prepare(`
-                INSERT INTO user_economy (user_id, crowns)
-                VALUES (?, ?)
-                ON CONFLICT(user_id) DO UPDATE SET crowns = user_economy.crowns + excluded.crowns
-            `).run(userId, rewards.crowns);
-		})();
-		rewardText.push(`**${rewards.crowns}** Crowns`);
-	}
-
-	if (rewardText.length > 0) {
-		victoryEmbed.addFields({ name: 'Rewards Gained', value: rewardText.join('\n') });
-	}
-
-	// 2. Distribute Loot
-	const lootedItems = [];
-	const lootTransaction = db.transaction(() => {
-		for (const monster of combatState.monsters) {
-			if (!monster.loot_table_id) continue;
-			const entries = db.prepare(`
-				SELECT lte.*, i.name as item_name 
-				FROM loot_table_entries lte 
-				JOIN items i ON lte.item_id = i.item_id 
-				WHERE lte.loot_table_id = ?
-			`).all(monster.loot_table_id);
-
-			for (const entry of entries) {
-				if (Math.random() < entry.drop_chance) {
-					const quantity = Math.floor(Math.random() * (entry.max_quantity - entry.min_quantity + 1)) + entry.min_quantity;
-					const isStackable = db.prepare('SELECT is_stackable FROM items WHERE item_id = ?').get(entry.item_id)?.is_stackable === 1;
-					if (isStackable) {
-						const existing = db.prepare('SELECT inventory_id, quantity FROM user_inventory WHERE user_id = ? AND item_id = ? AND equipped_slot IS NULL')
-							.get(userId, entry.item_id);
-						if (existing) {
-							db.prepare('UPDATE user_inventory SET quantity = quantity + ? WHERE inventory_id = ?').run(quantity, existing.inventory_id);
-						}
-						else {
-							db.prepare('INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, ?)').run(userId, entry.item_id, quantity);
-						}
-					}
-					else {
-						for (let n = 0; n < quantity; n++) {
-							db.prepare('INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, 1)').run(userId, entry.item_id);
-						}
-					}
-					lootedItems.push(`• ${entry.item_name} x${quantity}`);
-				}
+	  const lootedItems = [];
+	try {
+		// XP (async)
+		if (rewards.xp > 0) {
+			try {
+				await addXp(userId, rewards.xp, interaction);
+				rewardText.push(`**${rewards.xp}** XP`);
+			}
+			catch (err) {
+				console.error('Failed to grant XP:', err);
+				victoryEmbed.addFields({ name: 'XP Grant Failed', value: 'XP could not be awarded due to an internal error.' });
 			}
 		}
-	});
-
-	try {
+		// Crowns (sync)
+		if (rewards.crowns > 0) {
+			db.transaction(() => {
+				db.prepare(`
+					INSERT INTO user_economy (user_id, crowns)
+					VALUES (?, ?)
+					ON CONFLICT(user_id) DO UPDATE SET crowns = user_economy.crowns + excluded.crowns
+				`).run(userId, rewards.crowns);
+			})();
+			rewardText.push(`**${rewards.crowns}** Crowns`);
+		}
+		if (rewardText.length > 0) {
+			victoryEmbed.addFields({ name: 'Rewards Gained', value: rewardText.join('\n') });
+		}
+		// Loot
+		const lootTransaction = db.transaction(() => {
+			for (const monster of combatState.monsters) {
+				if (!monster.loot_table_id) continue;
+				const entries = db.prepare(`
+          SELECT lte.*, i.name AS item_name, i.is_stackable AS is_stackable
+          FROM loot_table_entries lte
+          JOIN items i ON lte.item_id = i.item_id
+          WHERE lte.loot_table_id = ?
+        `).all(monster.loot_table_id);
+				for (const entry of entries) {
+					if (Math.random() < entry.drop_chance) {
+						const quantity = Math.floor(Math.random() * (entry.max_quantity - entry.min_quantity + 1)) + entry.min_quantity;
+						if (entry.is_stackable === 1) {
+							const existing = db.prepare('SELECT inventory_id, quantity FROM user_inventory WHERE user_id = ? AND item_id = ? AND equipped_slot IS NULL')
+								.get(userId, entry.item_id);
+							if (existing) {
+								db.prepare('UPDATE user_inventory SET quantity = quantity + ? WHERE inventory_id = ?').run(quantity, existing.inventory_id);
+							}
+							else {
+								db.prepare('INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, ?)').run(userId, entry.item_id, quantity);
+							}
+						}
+						else {
+							for (let n = 0; n < quantity; n++) {
+								db.prepare('INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, 1)').run(userId, entry.item_id);
+							}
+						}
+						lootedItems.push(`• ${entry.item_name} x${quantity}`);
+					}
+				}
+			}
+		});
 		lootTransaction();
 	}
 	catch (error) {
-		console.error('Failed to distribute loot:', error);
-		victoryEmbed.addFields({
-			name: '⚠️ Warning',
-			value: 'There was an issue distributing loot. Please contact an admin.',
-		});
+		console.error('Victory processing failed:', error);
+		victoryEmbed.addFields({ name: '⚠️ Warning', value: 'Some rewards could not be processed. Please contact an admin.' });
 	}
-
-	if (lootedItems.length > 0) {
-		victoryEmbed.addFields({ name: 'Loot Acquired', value: lootedItems.join('\n') });
-	}
-
-	// 3. Cleanup
-	db.transaction(() => {
-		db.prepare('UPDATE characters SET character_status = \'IDLE\' WHERE user_id = ?').run(userId);
-		db.prepare('INSERT INTO character_pve_progress (user_id, node_id, times_cleared, last_cleared_at) VALUES (?, ?, 1, ?) ON CONFLICT(user_id, node_id) DO UPDATE SET times_cleared = times_cleared + 1, last_cleared_at = excluded.last_cleared_at')
-			.run(userId, nodeData.node_id, new Date().toISOString());
-	})();
-	activeCombats.delete(thread.id);
-
-	try {
-		await thread.send({ embeds: [victoryEmbed] });
-		await thread.setLocked(true);
-		await thread.setArchived(true);
-	}
-	catch (error) {
-		console.error('Failed to cleanup thread after victory:', error);
+	finally {
+		// 3. Cleanup (always)
+		db.transaction(() => {
+			db.prepare('UPDATE characters SET character_status = \'IDLE\' WHERE user_id = ?').run(userId);
+			db.prepare(`
+        INSERT INTO character_pve_progress (user_id, node_id, times_cleared, last_cleared_at)
+        VALUES (?, ?, 1, ?)
+        ON CONFLICT(user_id, node_id) DO UPDATE
+          SET times_cleared = times_cleared + 1,
+              last_cleared_at = excluded.last_cleared_at
+      `).run(userId, nodeData.node_id, new Date().toISOString());
+		})();
+		activeCombats.delete(thread.id);
+		if (lootedItems.length > 0) {
+			victoryEmbed.addFields({ name: 'Loot Acquired', value: lootedItems.join('\n') });
+		}
+		try {
+			await thread.send({ embeds: [victoryEmbed] });
+			await thread.setLocked(true);
+			await thread.setArchived(true);
+		}
+		catch (error) {
+			console.error('Failed to cleanup thread after victory:', error);
+		}
 	}
 }
 
@@ -426,12 +430,18 @@ module.exports.buttons = async (interaction) => {
 		const allMonstersDefeated = combatState.monsters.every(m => m.current_health <= 0);
 		if (allMonstersDefeated) {
 			// Immediately mark the victory in the database to prevent loss
-			const updated = db.transaction(() => {
-				const res = db.prepare(
-					'UPDATE characters SET character_status = \'VICTORY_PENDING\' WHERE user_id = ? AND character_status = \'IN_COMBAT\'',
-				).run(combatState.userId);
-				return res.changes || 0;
-			})();
+			let updated = 0;
+			try {
+				updated = db.transaction(() => {
+					const res = db.prepare(
+						'UPDATE characters SET character_status = \'VICTORY_PENDING\' WHERE user_id = ? AND character_status = \'IN_COMBAT\'',
+					).run(combatState.userId);
+					return res.changes || 0;
+				})();
+			}
+			catch (error) {
+				console.error('Failed to update character status to VICTORY_PENDING:', error);
+			}
 			if (updated === 1) {
 				return handleVictory(interaction, combatState);
 			}

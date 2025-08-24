@@ -152,16 +152,17 @@ async function updateTradeUI(interaction, sessionId) {
  * @param {number} sessionId
  */
 async function executeTrade(interaction, sessionId) {
+	let currentSession;
 	try {
 		const tradeExecutionTx = db.transaction(() => {
-			const currentSession = db.prepare('SELECT * FROM trade_sessions WHERE session_id = ?').get(sessionId);
+			currentSession = db.prepare('SELECT * FROM trade_sessions WHERE session_id = ?').get(sessionId);
 			if (!currentSession || currentSession.status !== 'PENDING' || !currentSession.initiator_locked || !currentSession.receiver_locked) {
 				throw new Error('Trade is no longer pending');
 			}
 
 			const offers = db.prepare('SELECT * FROM trade_session_items WHERE session_id = ?').all(sessionId);
-			const initiatorOffers = offers.filter(o => o.user_id === session.initiator_user_id);
-			const receiverOffers = offers.filter(o => o.user_id === session.receiver_user_id);
+			const initiatorOffers = offers.filter(o => o.user_id === currentSession.initiator_user_id);
+			const receiverOffers = offers.filter(o => o.user_id === currentSession.receiver_user_id);
 
 			const processOffers = (senderId, receiverId, sentOffers) => {
 				const totalCrowns = sentOffers.reduce((sum, offer) => sum + (offer.crown_amount || 0), 0);
@@ -203,18 +204,18 @@ async function executeTrade(interaction, sessionId) {
 				}
 			};
 
-			processOffers(session.initiator_user_id, session.receiver_user_id, initiatorOffers);
-			processOffers(session.receiver_user_id, session.initiator_user_id, receiverOffers);
+			processOffers(currentSession.initiator_user_id, currentSession.receiver_user_id, initiatorOffers);
+			processOffers(currentSession.receiver_user_id, currentSession.initiator_user_id, receiverOffers);
 
 			db.prepare('UPDATE trade_sessions SET status = \'COMPLETED\' WHERE session_id = ?').run(sessionId);
 		});
 
 		tradeExecutionTx();
 
-		activeTrades.delete(session.initiator_user_id);
-		activeTrades.delete(session.receiver_user_id);
-		tradeTimestamps.delete(session.initiator_user_id);
-		tradeTimestamps.delete(session.receiver_user_id);
+		activeTrades.delete(currentSession.initiator_user_id);
+		activeTrades.delete(currentSession.receiver_user_id);
+		tradeTimestamps.delete(currentSession.initiator_user_id);
+		tradeTimestamps.delete(currentSession.receiver_user_id);
 
 		const successEmbed = new EmbedBuilder()
 			.setColor(0x2ECC71)
@@ -236,11 +237,11 @@ async function executeTrade(interaction, sessionId) {
 		}
 
 		let failingUser = null;
-		if (error.message.includes(session.initiator_user_id)) {
-			failingUser = await interaction.client.users.fetch(session.initiator_user_id);
+		if (error.message.includes(currentSession.initiator_user_id)) {
+			failingUser = await interaction.client.users.fetch(currentSession.initiator_user_id);
 		}
-		else if (error.message.includes(session.receiver_user_id)) {
-			failingUser = await interaction.client.users.fetch(session.receiver_user_id);
+		else if (error.message.includes(currentSession.receiver_user_id)) {
+			failingUser = await interaction.client.users.fetch(currentSession.receiver_user_id);
 		}
 
 		const errorMessage = failingUser
@@ -253,10 +254,10 @@ async function executeTrade(interaction, sessionId) {
 		});
 
 		db.prepare('UPDATE trade_sessions SET status = \'CANCELLED\' WHERE session_id = ?').run(sessionId);
-		activeTrades.delete(session.initiator_user_id);
-		activeTrades.delete(session.receiver_user_id);
-		tradeTimestamps.delete(session.initiator_user_id);
-		tradeTimestamps.delete(session.receiver_user_id);
+		activeTrades.delete(currentSession.initiator_user_id);
+		activeTrades.delete(currentSession.receiver_user_id);
+		tradeTimestamps.delete(currentSession.initiator_user_id);
+		tradeTimestamps.delete(currentSession.receiver_user_id);
 
 		const cancelEmbed = new EmbedBuilder()
 			.setColor(0xE74C3C)
@@ -542,7 +543,8 @@ module.exports = {
 					return interaction.update({ content: 'You do not own this item.', components: [] });
 				}
 				throw error;
-			}			await interaction.update({ content: 'Item added to your offer.', components: [] });
+			}
+			await interaction.update({ content: 'Item added to your offer.', components: [] });
 			await updateTradeUI(interaction, sessionId);
 		}
 		else if (subAction === 'removeitem') {
