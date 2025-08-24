@@ -511,16 +511,16 @@ const setupTables = db.transaction(() => {
             level INTEGER DEFAULT 1 CHECK (level >= 1),
             xp INTEGER DEFAULT 0 CHECK (xp >= 0),
             character_status TEXT NOT NULL DEFAULT 'IDLE',
-            stat_points_unspent INTEGER DEFAULT 0,
+            stat_points_unspent INTEGER DEFAULT 0 CHECK (stat_points_unspent >= 0),
 
             -- === Resource Pools ===
-            current_health INTEGER DEFAULT 10 CHECK (current_health >= 0),
             max_health INTEGER DEFAULT 10 CHECK (max_health >= 1),
+            current_health INTEGER DEFAULT 10 CHECK (current_health >= 0 AND current_health <= max_health),
             temporary_health INTEGER DEFAULT 0 CHECK (temporary_health >= 0),
-            current_mana INTEGER DEFAULT 10 CHECK (current_mana >= 0),
             max_mana INTEGER DEFAULT 10 CHECK (max_mana >= 1),
-            current_ki INTEGER DEFAULT 0 CHECK (current_ki >= 0),
+            current_mana INTEGER DEFAULT 10 CHECK (current_mana >= 0 AND current_mana <= max_mana),
             max_ki INTEGER DEFAULT 0 CHECK (max_ki >= 0),
+            current_ki INTEGER DEFAULT 0 CHECK (current_ki >= 0 AND current_ki <= max_ki),
 
             -- === Base Stats ===
             stat_might INTEGER DEFAULT 5,
@@ -697,7 +697,7 @@ const setupTables = db.transaction(() => {
 
             -- 'SLAY', 'GATHER', 'CRAFT', 'DELIVER'
             quest_type TEXT,
-            required_level INTEGER DEFAULT 1,
+            required_level INTEGER DEFAULT 1 CHECK (required_level >= 1),
             xp_reward INTEGER,
             crown_reward INTEGER,
 
@@ -897,7 +897,7 @@ const setupTables = db.transaction(() => {
             -- e.g., "Goblin Outpost", "Spider-Infested Cave"
             name TEXT NOT NULL,
             description TEXT,
-            required_level INTEGER DEFAULT 1,
+            required_level INTEGER DEFAULT 1 CHECK (required_level >= 1),
 
             -- Bonus for the first time clearing it
             first_completion_reward_json TEXT CHECK(first_completion_reward_json IS NULL OR json_valid(first_completion_reward_json)),
@@ -985,10 +985,10 @@ const setupTables = db.transaction(() => {
             stock_quantity INTEGER,
 
             -- NULL means this item cannot be bought, only sold to the vendor
-            buy_price INTEGER,
+            buy_price INTEGER CHECK (buy_price IS NULL OR buy_price >= 0),
 
             -- NULL means this item cannot be sold to the vendor
-            sell_price INTEGER,
+            sell_price INTEGER CHECK (sell_price IS NULL OR sell_price >= 0),
 
             PRIMARY KEY (vendor_id, item_id),
             FOREIGN KEY(vendor_id) REFERENCES npc_vendors(vendor_id) ON DELETE CASCADE,
@@ -1006,8 +1006,8 @@ const setupTables = db.transaction(() => {
 
             -- e.g., 'EVOCATION', 'CONJURATION', 'ABJURATION'
             spell_school TEXT,
-            required_level INTEGER NOT NULL,
-            mana_cost INTEGER DEFAULT 0,
+            required_level INTEGER NOT NULL CHECK (required_level >= 1),
+            mana_cost INTEGER NOT NULL DEFAULT 0 CHECK (mana_cost >= 0),
 
             -- e.g., '[{"item_id": 5, "quantity": 1}]' for a material component
             component_cost_json TEXT CHECK(component_cost_json IS NULL OR json_valid(component_cost_json)),
@@ -1276,6 +1276,12 @@ const setupTables = db.transaction(() => {
 
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_loot_entries_table ON loot_table_entries(loot_table_id)').run();
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_auction_status_expiry ON auction_house_listings(status, expires_at)').run();
+	db.prepare('CREATE INDEX IF NOT EXISTS idx_inv_user_item ON user_inventory(user_id, item_id)').run();
+	db.prepare('CREATE INDEX IF NOT EXISTS idx_trade_items_session ON trade_session_items(session_id)').run();
+	db.prepare('CREATE INDEX IF NOT EXISTS idx_vendor_stock_vendor ON vendor_stock(vendor_id)').run();
+	db.prepare('CREATE INDEX IF NOT EXISTS idx_pve_progress_user ON character_pve_progress(user_id)').run();
+	db.prepare('CREATE INDEX IF NOT EXISTS idx_node_monsters_node ON pve_node_monsters(node_id)').run();
+
 	// All of the unique indexes
 	// NOTE: Uniqueness for quotes is GLOBAL, not per-user. The same quote/trigger cannot exist twice
 	// on the server, regardless of who submitted it.

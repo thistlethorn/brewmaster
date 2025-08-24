@@ -259,7 +259,7 @@ function seedDatabase() {
 	}
 	catch (error) {
 		console.error('[DB Seeding] Failed to seed database:', error);
-		throw new Error('Database seeding failed!');
+		throw new Error(`Database seeding failed: ${error.message}`);
 	}
 }
 

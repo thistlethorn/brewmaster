@@ -81,6 +81,9 @@ module.exports = {
 				try {
 					if (typeof command.autocomplete === 'function') {
 						await command.autocomplete(interaction);
+						if (!interaction.responded) {
+							await interaction.respond([]);
+						}
 					}
 				}
 				catch (error) {

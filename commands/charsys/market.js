@@ -17,7 +17,7 @@ function addToActiveTrades(userId) {
 	tradeTimestamps.set(userId, Date.now());
 }
 
-setInterval(() => {
+const cleanupInterval = setInterval(() => {
 	const now = Date.now();
 	for (const [userId, timestamp] of tradeTimestamps.entries()) {
 		if (now - timestamp > TRADE_TIMEOUT) {
@@ -231,6 +231,9 @@ async function executeTrade(interaction, sessionId) {
 	}
 	catch (error) {
 		console.error('Trade execution error:', error);
+		if (!currentSession) {
+			currentSession = db.prepare('SELECT * FROM trade_sessions WHERE session_id = ?').get(sessionId);
+		}
 
 		if (error.message === 'Trade is no longer pending') {
 			return interaction.followUp({
@@ -326,17 +329,38 @@ module.exports = {
 
 				collector.on('collect', async i => {
 					if (i.customId.startsWith('trade_accept')) {
+						if (!activeTrades.has(initiator.id) || !activeTrades.has(receiver.id)) {
+							await i.update({ content: 'This trade request has expired.', embeds: [], components: [] });
+							return;
+						}
 						await i.deferUpdate();
 						tradeAccepted = true;
-						const result = db.prepare('INSERT INTO trade_sessions (initiator_user_id, receiver_user_id, status, initiator_locked, receiver_locked) VALUES (?, ?, \'PENDING\', 0, 0)').run(initiator.id, receiver.id);
-						const sessionId = result.lastInsertRowid;
-						const session = db.prepare('SELECT * FROM trade_sessions WHERE session_id = ?').get(sessionId);
+						let sessionId;
+						let session;
+						let thread;
+						try {
+							const result = db.prepare('INSERT INTO trade_sessions (initiator_user_id, receiver_user_id, status, initiator_locked, receiver_locked) VALUES (?, ?, \'PENDING\', 0, 0)').run(initiator.id, receiver.id);
+							sessionId = result.lastInsertRowid;
+							session = db.prepare('SELECT * FROM trade_sessions WHERE session_id = ?').get(sessionId);
 
-						const thread = await interaction.channel.threads.create({
-							name: `Trade-${initiator.username}-${receiver.username}`,
-							type: ChannelType.PrivateThread,
-							reason: `Secure trade session ${sessionId}`,
-						});
+							thread = await interaction.channel.threads.create({
+								name: `Trade-${initiator.username}-${receiver.username}`,
+								type: ChannelType.PrivateThread,
+								reason: `Secure trade session ${sessionId}`,
+							});
+						}
+						catch (error) {
+							// Clean up the session if thread creation failed
+							if (sessionId) {
+								db.prepare('DELETE FROM trade_sessions WHERE session_id = ?').run(sessionId);
+							}
+							activeTrades.delete(initiator.id);
+							activeTrades.delete(receiver.id);
+							tradeTimestamps.delete(initiator.id);
+							tradeTimestamps.delete(receiver.id);
+							throw error;
+						}
+
 
 						await thread.members.add(initiator.id);
 						await thread.members.add(receiver.id);
@@ -352,6 +376,10 @@ module.exports = {
 
 					}
 					else if (i.customId.startsWith('trade_decline')) {
+						if (!activeTrades.has(initiator.id) || !activeTrades.has(receiver.id)) {
+							await i.update({ content: 'This trade request has expired.', embeds: [], components: [] });
+							return;
+						}
 						activeTrades.delete(initiator.id);
 						activeTrades.delete(receiver.id);
 						await i.update({ content: `${receiver.username} has declined the trade request.`, embeds: [], components: [] });
@@ -359,13 +387,19 @@ module.exports = {
 				});
 
 				collector.on('end', async (collected, reason) => {
-					if (reason === 'time' && !tradeAccepted) {
-						activeTrades.delete(initiator.id);
-						activeTrades.delete(receiver.id);
-						if (requestMessage) {
-							await requestMessage.edit({ content: 'The trade request has expired.', embeds: [], components: [] }).catch((e) => {console.error(e);});
+					try {
+						if (reason === 'time' && !tradeAccepted) {
+							activeTrades.delete(initiator.id);
+							activeTrades.delete(receiver.id);
+							if (requestMessage) {
+								await requestMessage.edit({ content: 'The trade request has expired.', embeds: [], components: [] }).catch((e) => {console.error(e);});
+							}
 						}
 					}
+					catch (e) {
+						console.error('Failed to cleanup on collector ending:', e);
+					}
+
 				});
 
 			}
@@ -433,7 +467,7 @@ module.exports = {
 
 			const menu = new StringSelectMenuBuilder()
 				.setCustomId(`trade_menu_removeitem_${sessionId}`)
-				.setPlaceholder('Select an item to remove from your offer...')
+				.setPlaceholder(items.length > 25 ? 'Select an item (showing first 25)...' : 'Select an item to add to your offer...')
 				.addOptions(offeredItems.map(item => ({ label: item.name, value: item.inventory_id.toString() })));
 			await interaction.reply({ components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
 			break;
@@ -579,4 +613,9 @@ module.exports = {
 		}
 
 	},
+};
+
+// Export for cleanup on shutdown
+module.exports.cleanup = () => {
+	clearInterval(cleanupInterval);
 };
