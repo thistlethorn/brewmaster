@@ -67,7 +67,24 @@ async function recalculateStats(userId) {
 			const n = Number(v);
 			return Number.isFinite(n) ? n : fallback;
 		};
-		const clamp = (n, min, max) => Math.min(Math.max(n, min), max);
+		const clamp = (n, min, max) => {
+			const lo = Math.min(min, max);
+			const hi = Math.max(min, max);
+			return Math.min(Math.max(n, lo), hi);
+		};
+
+		// Normalize derived stats to sane, finite ranges to prevent invalid DB writes
+		const normalizeFinalStats = () => {
+			finalStats.max_health = Math.max(0, toFinite(finalStats.max_health, 0));
+			finalStats.max_mana = Math.max(0, toFinite(finalStats.max_mana, 0));
+			finalStats.max_ki = Math.max(0, toFinite(finalStats.max_ki, 0));
+			finalStats.armor_class = Math.max(0, toFinite(finalStats.armor_class, 10));
+			// crit_chance is a probability
+			finalStats.crit_chance = clamp(toFinite(finalStats.crit_chance, 0.05), 0, 1);
+			// crit damage should not drop below 1x
+			finalStats.crit_damage_modifier = Math.max(1, toFinite(finalStats.crit_damage_modifier, 1.5));
+		};
+		normalizeFinalStats();
 
 		const currentHealth = clamp(
 			toFinite(character.current_health, finalStats.max_health),

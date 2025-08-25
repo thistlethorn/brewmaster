@@ -22,9 +22,11 @@ async function addXp(userId, amount, interaction) {
 	level = Math.max(1, Math.floor(level));
 	xp = Math.max(0, Math.floor(xp));
 
-	let stat_points_unspent = Number.isFinite(character.stat_points_unspent)
-		? Math.max(0, Math.floor(character.stat_points_unspent))
+	const rawSpu = Number(character.stat_points_unspent);
+	let stat_points_unspent = Number.isFinite(rawSpu)
+		? Math.max(0, Math.floor(rawSpu))
 		: 0;
+
 	// Validate and normalize XP delta
 	const delta = Number.isFinite(amount) ? Math.floor(amount) : NaN;
 	if (!Number.isFinite(delta) || delta < 0) {

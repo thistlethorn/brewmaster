@@ -362,8 +362,22 @@ module.exports = {
 						}
 
 
-						await thread.members.add(initiator.id);
-						await thread.members.add(receiver.id);
+						try {
+							await thread.members.add(initiator.id);
+							await thread.members.add(receiver.id);
+						}
+						catch (error) {
+							console.error('Failed to add members to trade thread:', error);
+							// Clean up the session
+							db.prepare('UPDATE trade_sessions SET status = \'CANCELLED\' WHERE session_id = ?').run(sessionId);
+							activeTrades.delete(initiator.id);
+							activeTrades.delete(receiver.id);
+							tradeTimestamps.delete(initiator.id);
+							tradeTimestamps.delete(receiver.id);
+							await thread.delete().catch(console.error);
+							await requestMessage.edit({ content: 'Failed to create trade thread. The trade has been cancelled.', embeds: [], components: [] });
+							return;
+						}
 
 						const tradeEmbed = buildTradeEmbed(initiator, receiver);
 						const tradeButtons = buildTradeButtons(sessionId, session, initiator.id);
@@ -408,7 +422,7 @@ module.exports = {
 				activeTrades.delete(initiator.id);
 				activeTrades.delete(receiver.id);
 				tradeTimestamps.delete(initiator.id);
-			    tradeTimestamps.delete(receiver.id);
+				tradeTimestamps.delete(receiver.id);
 
 				await interaction.followUp({ content: 'An error occurred while trying to start the trade.', flags: MessageFlags.Ephemeral });
 			}
@@ -467,7 +481,7 @@ module.exports = {
 
 			const menu = new StringSelectMenuBuilder()
 				.setCustomId(`trade_menu_removeitem_${sessionId}`)
-				.setPlaceholder(items.length > 25 ? 'Select an item (showing first 25)...' : 'Select an item to add to your offer...')
+				.setPlaceholder(offeredItems.length > 25 ? 'Select an item to remove (showing first 25)...' : 'Select an item to remove from your offer...')
 				.addOptions(offeredItems.map(item => ({ label: item.name, value: item.inventory_id.toString() })));
 			await interaction.reply({ components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
 			break;
@@ -513,7 +527,8 @@ module.exports = {
 	},
 
 	async modals(interaction) {
-		const [,, sessionId] = interaction.customId.split('_');
+		const parts = interaction.customId.split('_');
+		const sessionId = parts[parts.length - 1];
 		const userId = interaction.user.id;
 		tradeTimestamps.set(userId, Date.now());
 		const amount = parseInt(interaction.fields.getTextInputValue('crown_amount'), 10);

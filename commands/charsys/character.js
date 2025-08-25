@@ -590,10 +590,10 @@ module.exports = {
 						stat_charm: stats.charm,
 						stat_fortune: stats.fortune,
 					});
-					creationSessions.delete(userId);
 				});
 
 				createCharacterTx();
+				creationSessions.delete(userId);
 
 				const successEmbed = new EmbedBuilder()
 					.setColor(0x2ECC71)
