@@ -45,20 +45,22 @@ function recalculateStats(userId) {
             WHERE ui.user_id = ? AND ui.equipped_slot IS NOT NULL
         `).all(userId);
 
-		// Add base stat bonuses from all equipped items.
-		for (const item of equippedItems) {
-			try {
-				const effects = JSON.parse(item.effects_json);
-				if (effects && effects.base_stats) {
-					for (const stat in effects.base_stats) {
-						if (Object.prototype.hasOwnProperty.call(totalBaseStats, stat)) {
-							totalBaseStats[stat] += Number(effects.base_stats[stat]) || 0;
-						}
-					}
-				}
-			}
+		// Parse once and reuse
+		const parsedEffects = equippedItems.map((row) => {
+			if (!row.effects_json) return null;
+			try { return JSON.parse(row.effects_json); }
 			catch (e) {
-				console.error(`[recalculateStats] Failed to parse base_stats from effects_json for user ${userId}:`, item.effects_json, e);
+				console.error(`[recalculateStats] Bad effects_json for user ${userId}:`, row.effects_json, e);
+				return null;
+			}
+		});
+		// Add base stat bonuses from all equipped items.
+		for (const effects of parsedEffects) {
+			if (!effects || !effects.base_stats) continue;
+			for (const stat in effects.base_stats) {
+				if (Object.prototype.hasOwnProperty.call(totalBaseStats, stat)) {
+					totalBaseStats[stat] += Number(effects.base_stats[stat]) || 0;
+				}
 			}
 		}
 

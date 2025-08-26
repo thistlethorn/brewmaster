@@ -17,7 +17,10 @@ const sessionCleanupInterval = setInterval(() => {
 	}
 }, 5 * 60 * 1000);
 
-// Add a cleanup function that can be called on bot shutdown
+/**
+ * Clears the character creation session timer and in-memory state.
+ * Call on bot shutdown to avoid dangling intervals and memory.
+ */
 function charCreateSessionCleanup() {
 	if (sessionCleanupInterval) {
 		clearInterval(sessionCleanupInterval);
@@ -82,6 +85,7 @@ function generateXpBar(currentXp, requiredXp) {
 async function handleView(interaction) {
 	const targetUser = interaction.options.getUser('user') || interaction.user;
 
+	recalculateStats(targetUser.id);
 	// Fetch all character data in one go, joining with origins and archetypes.
 	const characterData = db.prepare(`
         SELECT
@@ -144,7 +148,11 @@ async function handleView(interaction) {
 			{ name: '📈 Level Progression', value: generateXpBar(xpIntoLevel, xpRequiredForNext), inline: false },
 			{ name: '❤️ Health', value: `\`${characterData.current_health} / ${characterData.max_health}\``, inline: true },
 			{ name: '💙 Mana', value: `\`${characterData.current_mana} / ${characterData.max_mana}\``, inline: true },
-			{ name: '🔥 Ki', value: `\`${characterData.current_ki} / ${characterData.max_ki}\``, inline: true },
+			...(characterData.max_ki > 0 ? [{
+				name: '🔥 Ki',
+				value: `\`${characterData.current_ki} / ${characterData.max_ki}\``,
+				inline: true,
+			}] : []),
 			{
 				name: '📊 Base Stats',
 				value: `**Might:** ${characterData.stat_might} | **Finesse:** ${characterData.stat_finesse} | **Wits:** ${characterData.stat_wits}\n` +
@@ -155,7 +163,7 @@ async function handleView(interaction) {
 				name: '⚔️ Combat Stats',
 				value: `**Armor Class:** ${characterData.armor_class}\n` +
                        `**Crit Chance:** ${Math.round(characterData.crit_chance * 100)}%\n` +
-                       `**Crit Damage:** ${characterData.crit_damage_modifier}x`,
+                       `**Crit Damage:** ${(Math.round(characterData.crit_damage_modifier * 100) / 100).toFixed(2)}x`,
 				inline: false,
 			},
 			{
@@ -220,7 +228,7 @@ async function handleEquip(interaction) {
 
 		equipTx();
 
-		await recalculateStats(userId);
+		recalculateStats(userId);
 
 		await interaction.reply({ content: `✅ Successfully equipped **${itemToEquip.name}**. Your stats have been updated.`, flags: MessageFlags.Ephemeral });
 
@@ -262,7 +270,7 @@ async function handleUnequip(interaction) {
             WHERE user_id = ? AND equipped_slot = ?
         `).run(userId, slotToUnequip);
 
-		await recalculateStats(userId);
+		recalculateStats(userId);
 
 		const itemName = itemInfo ? `**${itemInfo.name}**` : 'the item';
 		await interaction.reply({ content: `✅ Successfully unequipped ${itemName} from your ${slotToUnequip} slot.`, flags: MessageFlags.Ephemeral });
@@ -632,6 +640,15 @@ module.exports = {
 	},
 };
 
+
+/**
+* Builds up to maxRows of 5-button rows for selection UIs.
+* @param {Array<{id:number|string,name:string}>} items
+* @param {string} customIdPrefix e.g., 'char_create_origin'
+* @param {string} userId appended as the last segment in customIds
+* @param {number} [maxRows=5] hard cap of rows to render (buttons capped at maxRows*5)
+* @returns {import('discord.js').ActionRowBuilder[]}
+*/
 function createButtonRows(items, customIdPrefix, userId, maxRows = 5) {
 	const rows = [];
 	let currentRow = new ActionRowBuilder();
