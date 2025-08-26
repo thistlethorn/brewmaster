@@ -7,6 +7,19 @@ const { addXp } = require('../../utils/addXp');
 // Key: threadId, Value: { combat state object }
 const activeCombats = new Map();
 
+// Cleanup stale combats after 1 hour
+setInterval(() => {
+	const oneHourAgo = Date.now() - 60 * 60 * 1000;
+	for (const [threadId, combat] of activeCombats.entries()) {
+		if (combat.startTime < oneHourAgo) {
+			activeCombats.delete(threadId);
+			// Also update DB to set status to IDLE if still IN_COMBAT
+			db.prepare('UPDATE characters SET character_status = \'IDLE\' WHERE user_id = ? AND character_status = \'IN_COMBAT\'')
+				.run(combat.userId);
+		}
+	}
+}, 5 * 60 * 1000);
+
 /**
  * Creates the main combat UI embed.
  * @param {object} combatState The current state of the combat encounter.
@@ -82,13 +95,6 @@ async function handleVictory(interaction, combatState) {
 		}
 		// Crowns (sync)
 		if (rewards.crowns > 0) {
-			db.transaction(() => {
-				db.prepare(`
-					INSERT INTO user_economy (user_id, crowns)
-					VALUES (?, ?)
-					ON CONFLICT(user_id) DO UPDATE SET crowns = user_economy.crowns + excluded.crowns
-				`).run(userId, rewards.crowns);
-			})();
 			rewardText.push(`**${rewards.crowns}** Crowns`);
 		}
 		if (rewardText.length > 0) {
@@ -136,6 +142,11 @@ async function handleVictory(interaction, combatState) {
 	finally {
 		// 3. Cleanup (always)
 		db.transaction(() => {
+			db.prepare(`
+					INSERT INTO user_economy (user_id, crowns)
+					VALUES (?, ?)
+					ON CONFLICT(user_id) DO UPDATE SET crowns = user_economy.crowns + excluded.crowns
+				`).run(userId, rewards.crowns);
 			db.prepare('UPDATE characters SET character_status = \'IDLE\' WHERE user_id = ? AND character_status IN (\'IN_COMBAT\', \'VICTORY_PENDING\')').run(userId);
 			db.prepare(`
         INSERT INTO character_pve_progress (user_id, node_id, times_cleared, last_cleared_at)
@@ -434,6 +445,8 @@ module.exports.buttons = async (interaction) => {
 		// Check for victory
 		const allMonstersDefeated = combatState.monsters.every(m => m.current_health <= 0);
 		if (allMonstersDefeated) {
+			if (combatState.isProcessingVictory) return;
+			combatState.isProcessingVictory = true;
 			// Immediately mark the victory in the database to prevent loss
 			let updated = 0;
 			try {

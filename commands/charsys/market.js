@@ -15,15 +15,33 @@ const tradeTimestamps = new Map();
 function addToActiveTrades(userId) {
 	activeTrades.add(userId);
 	tradeTimestamps.set(userId, Date.now());
+	// Prevent unbounded growth by limiting map size
+	if (tradeTimestamps.size > 1000) {
+		// Remove oldest entries
+		const entries = Array.from(tradeTimestamps.entries());
+		entries.sort((a, b) => a[1] - b[1]);
+		for (let i = 0; i < 100; i++) {
+			const [oldUserId] = entries[i];
+			if (!activeTrades.has(oldUserId)) {
+				tradeTimestamps.delete(oldUserId);
+			}
+		}
+	}
+
 }
 
 const cleanupInterval = setInterval(() => {
-	const now = Date.now();
-	for (const [userId, timestamp] of tradeTimestamps.entries()) {
-		if (now - timestamp > TRADE_TIMEOUT) {
-			activeTrades.delete(userId);
-			tradeTimestamps.delete(userId);
+	try {
+		const now = Date.now();
+		for (const [userId, timestamp] of tradeTimestamps.entries()) {
+			if (now - timestamp > TRADE_TIMEOUT) {
+				activeTrades.delete(userId);
+				tradeTimestamps.delete(userId);
+			}
 		}
+	}
+	catch (error) {
+		console.error('Trade cleanup interval error:', error);
 	}
 }, 5 * 60 * 1000);
 
@@ -35,7 +53,7 @@ const cleanupInterval = setInterval(() => {
  */
 function buildTradeEmbed(initiator, receiver) {
 	return new EmbedBuilder()
-		.setTitle(`Trading Session: ${initiator.username} ↔️ ${receiver.username}`);
+		.setTitle(`Trading Session: ${initiator.displayName} ↔️ ${receiver.displayName}`);
 }
 
 /**
@@ -116,8 +134,8 @@ async function updateTradeUI(interaction, sessionId) {
 	const embed = buildTradeEmbed(initiator, receiver)
 		.setColor(session.initiator_locked && session.receiver_locked ? 0xFEE75C : 0x3498DB)
 		.addFields(
-			{ name: `${session.initiator_locked ? '✅' : '🔒'} ${initiator.username}'s Offer`, value: initiatorOfferText, inline: true },
-			{ name: `${session.receiver_locked ? '✅' : '🔒'} ${receiver.username}'s Offer`, value: receiverOfferText, inline: true },
+			{ name: `${session.initiator_locked ? '🔒' : '📦'} ${initiator.displayName}'s Offer`, value: initiatorOfferText, inline: true },
+			{ name: `${session.receiver_locked ? '🔒' : '📦'} ${receiver.displayName}'s Offer`, value: receiverOfferText, inline: true },
 		);
 
 	let components = [];
@@ -184,12 +202,15 @@ async function executeTrade(interaction, sessionId) {
 				// Debit the sender
 				const debitResult = db.prepare('UPDATE user_economy SET crowns = crowns - ? WHERE user_id = ? AND crowns >= ?').run(amount, sendingId, amount);
 				if (debitResult.changes === 0) {
-					throw new Error(`Insufficient funds for user ${sendingId} at time of trade.`);
+					throw new Error(`Insufficient crowns for user ${sendingId}. Required: ${amount}`);
 				}
 
 				// Credit the receiver
-				db.prepare('INSERT INTO user_economy (user_id, crowns) VALUES (?, 0) ON CONFLICT(user_id) DO NOTHING').run(receivingId);
-				const creditResult = db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ? AND crowns + ? <= 9223372036854775807').run(amount, receivingId, amount);
+				const creditResult = db.prepare(`
+					INSERT INTO user_economy (user_id, crowns) VALUES (?, ?)
+					ON CONFLICT(user_id) DO UPDATE SET crowns = crowns + excluded.crowns
+					WHERE crowns + excluded.crowns <= 9223372036854775807
+				`).run(receivingId, amount);
 				if (creditResult.changes === 0) {
 					throw new Error(`Crown transfer would exceed maximum balance for user ${receivingId}`);
 				}
@@ -251,7 +272,7 @@ async function executeTrade(interaction, sessionId) {
 		}
 
 		const errorMessage = failingUser
-			? `${failingUser.username} no longer has enough crowns to complete the trade.`
+			? `${failingUser.displayName} no longer has enough crowns to complete the trade.`
 			: 'A critical database error occurred.';
 
 		await interaction.followUp({
@@ -308,12 +329,12 @@ module.exports = {
 				addToActiveTrades(initiator.id);
 				addToActiveTrades(receiver.id);
 
-				await interaction.reply({ content: `Sending a trade request to ${receiver.username}...`, flags: MessageFlags.Ephemeral });
+				await interaction.reply({ content: `Sending a trade request to ${receiver.displayName}...`, flags: MessageFlags.Ephemeral });
 
 				const requestEmbed = new EmbedBuilder()
 					.setColor(0xFEE75C)
 					.setTitle('Incoming Trade Request!')
-					.setDescription(`${initiator.username} wants to trade with you. Do you accept?`)
+					.setDescription(`${initiator.displayName} wants to trade with you. Do you accept?`)
 					.setFooter({ text: 'This request will expire in 60 seconds.' });
 
 				const requestRow = new ActionRowBuilder().addComponents(
@@ -329,11 +350,11 @@ module.exports = {
 
 				collector.on('collect', async i => {
 					if (i.customId.startsWith('trade_accept')) {
+						await i.deferUpdate();
 						if (!activeTrades.has(initiator.id) || !activeTrades.has(receiver.id)) {
-							await i.update({ content: 'This trade request has expired.', embeds: [], components: [] });
+							await requestMessage.edit({ content: 'This trade request has expired.', embeds: [], components: [] });
 							return;
 						}
-						await i.deferUpdate();
 						tradeAccepted = true;
 						let sessionId;
 						let session;
@@ -344,7 +365,7 @@ module.exports = {
 							session = db.prepare('SELECT * FROM trade_sessions WHERE session_id = ?').get(sessionId);
 
 							thread = await interaction.channel.threads.create({
-								name: `Trade-${initiator.username}-${receiver.username}`,
+								name: `Trade-${initiator.displayName}-${receiver.displayName}`,
 								type: ChannelType.PrivateThread,
 								reason: `Secure trade session ${sessionId}`,
 							});
@@ -396,7 +417,7 @@ module.exports = {
 						}
 						activeTrades.delete(initiator.id);
 						activeTrades.delete(receiver.id);
-						await i.update({ content: `${receiver.username} has declined the trade request.`, embeds: [], components: [] });
+						await i.update({ content: `${receiver.displayName} has declined the trade request.`, embeds: [], components: [] });
 					}
 				});
 
@@ -434,6 +455,9 @@ module.exports = {
 
 	async buttons(interaction) {
 		const [, action, subAction, sessionId] = interaction.customId.split('_');
+		if (!sessionId || !action || !subAction) {
+			return interaction.reply({ content: 'Invalid trade action.', flags: MessageFlags.Ephemeral });
+		}
 		const userId = interaction.user.id;
 		tradeTimestamps.set(userId, Date.now());
 
@@ -455,7 +479,7 @@ module.exports = {
 
 			const menu = new StringSelectMenuBuilder()
 				.setCustomId(`trade_menu_additem_${sessionId}`)
-				.setPlaceholder('Select an item to add to your offer...')
+				.setPlaceholder(items.length > 25 ? `Select an item (showing first 25 of ${items.length})...` : 'Select an item to add to your offer...')
 				.addOptions(items.slice(0, 25).map(item => ({ label: item.name, value: item.inventory_id.toString() })));
 			await interaction.reply({ components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
 			break;
@@ -517,7 +541,7 @@ module.exports = {
 			const cancelEmbed = new EmbedBuilder()
 				.setColor(0xE74C3C)
 				.setTitle('Trade Cancelled')
-				.setDescription(`This trade has been cancelled by ${interaction.user.username}.`);
+				.setDescription(`This trade has been cancelled by ${interaction.user.displayName}.`);
 
 			await interaction.update({ embeds: [cancelEmbed], components: [] });
 			setTimeout(() => interaction.channel.delete().catch(console.error), 10000);
@@ -569,7 +593,7 @@ module.exports = {
 
 		if (subAction === 'additem') {
 			const inventoryId = parseInt(interaction.values[0]);
-			const alreadyOffered = db.prepare('SELECT 1 FROM trade_session_items WHERE session_id = ? AND inventory_id = ?').get(sessionId, inventoryId);
+			let alreadyOffered = db.prepare('SELECT 1 FROM trade_session_items WHERE session_id = ? AND inventory_id = ?').get(sessionId, inventoryId);
 			if (alreadyOffered) {
 				return interaction.update({ content: 'You have already offered this item.', components: [] });
 			}
@@ -584,6 +608,11 @@ module.exports = {
 
 			try {
 				const addItemTx = db.transaction(() => {
+					// Check if already offered inside transaction
+					alreadyOffered = db.prepare('SELECT 1 FROM trade_session_items WHERE session_id = ? AND inventory_id = ?').get(sessionId, inventoryId);
+					if (alreadyOffered) {
+						throw new Error('Already offered');
+					}
 					// Verify ownership inside transaction
 					const itemOwnership = db.prepare('SELECT user_id FROM user_inventory WHERE inventory_id = ?').get(inventoryId);
 					if (!itemOwnership || itemOwnership.user_id !== userId) {

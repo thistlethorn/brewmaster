@@ -175,7 +175,11 @@ async function handleEquip(interaction) {
 	if (!character) {
 		return interaction.reply({ content: 'You must create a character first with `/character create`.', flags: MessageFlags.Ephemeral });
 	}
+	const validSlots = ['weapon', 'offhand', 'helmet', 'chestplate', 'leggings', 'boots', 'ring', 'amulet'];
 	const itemSlotType = intendedSlot.startsWith('ring') ? 'ring' : intendedSlot;
+	if (!validSlots.includes(itemSlotType)) {
+		return interaction.reply({ content: 'Invalid equipment slot specified.', flags: MessageFlags.Ephemeral });
+	}
 	// Verify the item exists in the user's inventory and is equippable in the intended slot.
 	const itemToEquip = db.prepare(`
         SELECT i.name, i.effects_json FROM user_inventory ui
@@ -327,8 +331,11 @@ module.exports = {
 					// If the user hasn't chosen a slot yet, show no items.
 					return interaction.respond([]);
 				}
-
+				const validSlotTypes = ['weapon', 'offhand', 'helmet', 'chestplate', 'leggings', 'boots', 'ring', 'amulet'];
 				const itemSlotType = slot.startsWith('ring') ? 'ring' : slot;
+				if (!validSlotTypes.includes(itemSlotType)) {
+					return interaction.respond([]);
+				}
 				const focusedValue = focusedOption.value.toLowerCase();
 				// Find items in inventory that match the chosen slot.
 				const equippableItems = db.prepare(`

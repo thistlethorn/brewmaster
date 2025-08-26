@@ -136,7 +136,14 @@ function seedPveData() {
 		const itemIds = new Map(db.prepare('SELECT item_id, name FROM items').all().map(i => [i.name, i.item_id]));
 		const lootTableIds = new Map(db.prepare('SELECT loot_table_id, name FROM loot_tables').all().map(lt => [lt.name, lt.loot_table_id]));
 		// This map associates the temporary, hardcoded ID from the data array with the *actual* database ID.
-		const localLootTableIdToDbId = new Map(lootTables.map(lt => [lt.id, lootTableIds.get(lt.name)]));
+		const localLootTableIdToDbId = new Map();
+		for (const lt of lootTables) {
+			const dbId = lootTableIds.get(lt.name);
+			if (!dbId) {
+				throw new Error(`[DB Seeding] Failed to resolve database ID for loot table: ${lt.name}`);
+			}
+			localLootTableIdToDbId.set(lt.id, dbId);
+		}
 
 
 		// 4. Seed Loot Table Entries (Depends on Items and Loot Tables)
@@ -197,7 +204,14 @@ function seedPveData() {
 				console.error(`[DB Seeding] ERROR: Could not resolve node ID for composition: ${nodeSeed.name}. Skipping.`);
 				continue;
 			}
-			const monsterComp = JSON.parse(nodeSeed.monster_composition_json);
+			let monsterComp;
+			try {
+				monsterComp = JSON.parse(nodeSeed.monster_composition_json);
+			}
+			catch (error) {
+				console.error(`[DB Seeding] ERROR: Invalid JSON in monster_composition_json for node: ${nodeSeed.name}. Skipping.`, error);
+				continue;
+			}
 			for (const comp of monsterComp) {
 				const realMonsterId = monsterIds.get(comp.name);
 				if (!realMonsterId) {

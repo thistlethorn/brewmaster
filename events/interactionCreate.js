@@ -85,6 +85,9 @@ module.exports = {
 							await interaction.respond([]);
 						}
 					}
+					else if (!interaction.responded) {
+						await interaction.respond([]);
+					}
 				}
 				catch (error) {
 					console.error(error);

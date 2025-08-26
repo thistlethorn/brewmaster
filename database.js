@@ -1366,41 +1366,5 @@ const setupTables = db.transaction(() => {
 
 setupTables();
 
-/*
-**
- * Safely add a column to a whitelisted table.
- * NOTE: SQLite cannot add constraints via ALTER; use rebuild migrations for FKs/CHECKs.
- * @param {'guild_list'|'raid_history'|'TABLE_NAME_HERE'} tableName the name of the table to alter
- * @param {string} columnDef e.g., "wager_pot INTEGER DEFAULT 0"
- *
-function alterTableAddColumn(tableName, columnDef) {
-	// Validate table name against a whitelist
-	const allowedTables = [
-		'guild_list',
-		'raid_history',
-        // Add other table names as needed
-	];
-
-	if (!allowedTables.includes(tableName)) {
-		throw new Error(`Invalid table name: ${tableName}`);
-	}
-
-	// Basic validation for column definition (prevent semicolons and comments)
-	if (columnDef.includes(';') || columnDef.includes('--') || columnDef.includes('/*')) {
-		throw new Error('Invalid column definition');
-	}
-
-	try {
-		db.prepare(`ALTER TABLE ${tableName} ADD COLUMN ${columnDef}`).run();
-		console.log(`[DB Migration] Successfully added column "${columnDef}" to ${tableName} table.`);
-	}
-	catch (error) {
-		if (!error.message.includes('duplicate column name')) {
-			console.error(`[DB Migration] Failed to add column "${columnDef}" to ${tableName}:`, error);
-		}
-	}
-}
-*/
-
 module.exports = db;
 module.exports.JACKPOT_BASE_AMOUNT = JACKPOT_BASE_AMOUNT;

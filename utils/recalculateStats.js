@@ -13,14 +13,14 @@ async function recalculateStats(userId) {
 			throw new Error(`Character not found for user ${userId}`);
 		}
 
-		// 1. Initialize with base stats
+		// 1. Initialize with the character's stored stats (sane fallbacks)
 		const finalStats = {
-			max_health: 10,
-			max_mana: 10,
-			max_ki: 0,
-			armor_class: 10,
-			crit_chance: 0.05,
-			crit_damage_modifier: 1.5,
+			max_health: Number.isFinite(Number(character.max_health)) ? Number(character.max_health) : 10,
+			max_mana: Number.isFinite(Number(character.max_mana)) ? Number(character.max_mana) : 10,
+			max_ki: Number.isFinite(Number(character.max_ki)) ? Number(character.max_ki) : 0,
+			armor_class: Number.isFinite(Number(character.armor_class)) ? Number(character.armor_class) : 10,
+			crit_chance: Number.isFinite(Number(character.crit_chance)) ? Number(character.crit_chance) : 0.05,
+			crit_damage_modifier: Number.isFinite(Number(character.crit_damage_modifier)) ? Number(character.crit_damage_modifier) : 1.5,
 		};
 
 		// 2. Aggregate bonuses from equipped items

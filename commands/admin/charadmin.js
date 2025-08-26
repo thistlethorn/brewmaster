@@ -44,7 +44,14 @@ module.exports = {
 		const amount = interaction.options.getInteger('amount');
 		const level = interaction.options.getInteger('level');
 
-		const character = db.prepare('SELECT * FROM characters WHERE user_id = ?').get(targetUser.id);
+		let character;
+		try {
+			character = db.prepare('SELECT * FROM characters WHERE user_id = ?').get(targetUser.id);
+		}
+		catch (dbError) {
+			console.error('Database error fetching character:', dbError);
+			return interaction.reply({ content: 'Failed to fetch character data.', flags: MessageFlags.Ephemeral });
+		}
 		if (!character) {
 			return interaction.reply({ content: 'The target user does not have a character.', flags: MessageFlags.Ephemeral });
 		}
@@ -56,9 +63,10 @@ module.exports = {
 		try {
 			switch (subcommand) {
 			case 'addxp':
-				await interaction.reply({ content: `Granting ${amount} XP to ${targetUser.username}...`, flags: MessageFlags.Ephemeral });
+				await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 				await addXp(targetUser.id, amount, interaction);
 				await recalculateStats(targetUser.id);
+				await interaction.editReply({ content: `Successfully granted ${amount} XP to ${targetUser.username}.` });
 				break;
 
 			case 'removexp':
