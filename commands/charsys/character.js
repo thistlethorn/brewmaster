@@ -7,7 +7,8 @@ const { recalculateStats } = require('../../utils/recalculateStats');
 const creationSessions = new Map();
 const SESSION_TIMEOUT = 30 * 60 * 1000;
 
-setInterval(() => {
+
+const sessionCleanupInterval = setInterval(() => {
 	const now = Date.now();
 	for (const [userId, session] of creationSessions.entries()) {
 		if (now - session.timestamp > SESSION_TIMEOUT) {
@@ -15,6 +16,14 @@ setInterval(() => {
 		}
 	}
 }, 5 * 60 * 1000);
+
+// Add a cleanup function that can be called on bot shutdown
+function charCreateSessionCleanup() {
+	if (sessionCleanupInterval) {
+		clearInterval(sessionCleanupInterval);
+	}
+	creationSessions.clear();
+}
 
 /**
  * Handles the initial /character create command.
@@ -645,3 +654,5 @@ function createButtonRows(items, customIdPrefix, userId, maxRows = 5) {
 	}
 	return rows;
 }
+
+module.exports.charCreateSessionCleanup = charCreateSessionCleanup;

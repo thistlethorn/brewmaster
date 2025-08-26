@@ -7,18 +7,22 @@ const { addXp } = require('../../utils/addXp');
 // Key: threadId, Value: { combat state object }
 const activeCombats = new Map();
 
-// Cleanup stale combats after 1 hour
+// Cleanup stale combats every hour
+const CLEANUP_INTERVAL = 60 * 60 * 1000;
+const COMBAT_TIMEOUT = 60 * 60 * 1000;
+
 setInterval(() => {
-	const oneHourAgo = Date.now() - 60 * 60 * 1000;
+	const oneHourAgo = Date.now() - COMBAT_TIMEOUT;
 	for (const [threadId, combat] of activeCombats.entries()) {
-		if (combat.startTime < oneHourAgo) {
+		if (!combat.startTime || combat.startTime < oneHourAgo) {
 			activeCombats.delete(threadId);
 			// Also update DB to set status to IDLE if still IN_COMBAT
-			db.prepare('UPDATE characters SET character_status = \'IDLE\' WHERE user_id = ? AND character_status = \'IN_COMBAT\'')
-				.run(combat.userId);
+			db.prepare(`
+				UPDATE characters SET character_status = 'IDLE' WHERE user_id = ? AND character_status = 'IN_COMBAT'
+			`).run(combat.userId);
 		}
 	}
-}, 5 * 60 * 1000);
+}, CLEANUP_INTERVAL);
 
 /**
  * Creates the main combat UI embed.
@@ -305,6 +309,7 @@ async function handleEngage(interaction) {
 			character: { ...character },
 			monsters,
 			combatLog: ['The battle begins!'],
+			startTime: Date.now(),
 		};
 		activeCombats.set(thread.id, combatState);
 

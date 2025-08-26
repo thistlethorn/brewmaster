@@ -1116,6 +1116,7 @@ const setupTables = db.transaction(() => {
 
             -- The specific instance from their inventory
             inventory_id INTEGER NOT NULL,
+            quantity INTEGER NOT NULL DEFAULT 1 CHECK (quantity >= 1),
 
 
             PRIMARY KEY (session_id, user_id, inventory_id),
@@ -1124,6 +1125,21 @@ const setupTables = db.transaction(() => {
             FOREIGN KEY(inventory_id) REFERENCES user_inventory(inventory_id) ON DELETE CASCADE
         )
     `).run();
+
+	db.exec(`
+        CREATE TRIGGER IF NOT EXISTS trg_trade_item_ownership_insert
+        BEFORE INSERT ON trade_session_items
+        FOR EACH ROW
+        BEGIN
+            SELECT CASE
+            WHEN NOT EXISTS (
+                SELECT 1 FROM user_inventory
+                WHERE inventory_id = NEW.inventory_id AND user_id = NEW.user_id
+            )
+            THEN RAISE(ABORT, 'Ownership Mismatch: User does not own this inventory item.')
+            END;
+        END;
+    `);
 
 	db.prepare(`
         CREATE TABLE IF NOT EXISTS guild_projects (
