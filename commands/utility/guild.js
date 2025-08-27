@@ -1637,9 +1637,10 @@ async function handleFullInfo(interaction) {
 
 		if (bounty) {
 			const placerGuild = db.prepare('SELECT guild_name FROM guild_list WHERE guild_tag = ?').get(bounty.placer_guild_tag);
+			const placerName = placerGuild?.guild_name || `Guild Tag [${bounty.placer_guild_tag}]`;
 			embed.addFields({
 				name: '🎯 ACTIVE BOUNTY 🎯',
-				value: `This guild has a bounty of **👑 ${bounty.amount.toLocaleString()}** placed on it by **${placerGuild.guild_name}**!`,
+				value: `This guild has a bounty of **👑 ${bounty.amount.toLocaleString()}** placed on it by **${placerName}**!`,
 			});
 		}
 
@@ -1845,9 +1846,10 @@ async function buildDetailEmbed(guildTag, view, interaction, parts) {
 			);
 		if (bounty) {
 			const placerGuild = db.prepare('SELECT guild_name FROM guild_list WHERE guild_tag = ?').get(bounty.placer_guild_tag);
+			const placerName = placerGuild?.guild_name ? 'Guild ' + placerGuild?.guild_name : `Guild Tag [${bounty.placer_guild_tag}]`;
 			embed.addFields({
 				name: '🎯 ACTIVE BOUNTY 🎯',
-				value: `This guild has a bounty of **👑 ${bounty.amount.toLocaleString()}** placed on it by **${placerGuild.guild_name}**!`,
+				value: `This guild has a bounty of **👑 ${bounty.amount.toLocaleString()}** placed on it by **${placerName}**!`,
 			});
 		}
 		break;
@@ -4012,7 +4014,6 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 
 			if (bounty) {
 				bountyClaimed = bounty.amount;
-				netLoot += bountyClaimed;
 
 				db.transaction(() => {
 					// Mark bounty as claimed

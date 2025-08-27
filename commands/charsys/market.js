@@ -43,7 +43,7 @@ const cleanupInterval = setInterval(() => {
 	catch (error) {
 		console.error('Trade cleanup interval error:', error);
 	}
-}, 5 * 60 * 1000);
+}, TRADE_TIMEOUT);
 
 /**
  * Creates the base User Interface embed for a trade session.
@@ -364,8 +364,9 @@ module.exports = {
 							sessionId = result.lastInsertRowid;
 							session = db.prepare('SELECT * FROM trade_sessions WHERE session_id = ?').get(sessionId);
 
+							const threadName = `Trade-${initiator.displayName}-${receiver.displayName}`.substring(0, 100);
 							thread = await interaction.channel.threads.create({
-								name: `Trade-${initiator.displayName}-${receiver.displayName}`,
+								name: threadName,
 								type: ChannelType.PrivateThread,
 								reason: `Secure trade session ${sessionId}`,
 							});
@@ -454,10 +455,11 @@ module.exports = {
 	},
 
 	async buttons(interaction) {
-		const [, action, subAction, sessionId] = interaction.customId.split('_');
-		if (!sessionId || !action || !subAction) {
+		const parts = interaction.customId.split('_');
+		if (parts.length !== 4 || !parts[1] || !parts[2] || !parts[3]) {
 			return interaction.reply({ content: 'Invalid trade action.', flags: MessageFlags.Ephemeral });
 		}
+		const [, action, subAction, sessionId] = parts;
 		const userId = interaction.user.id;
 		tradeTimestamps.set(userId, Date.now());
 
@@ -593,10 +595,6 @@ module.exports = {
 
 		if (subAction === 'additem') {
 			const inventoryId = parseInt(interaction.values[0]);
-			let alreadyOffered = db.prepare('SELECT 1 FROM trade_session_items WHERE session_id = ? AND inventory_id = ?').get(sessionId, inventoryId);
-			if (alreadyOffered) {
-				return interaction.update({ content: 'You have already offered this item.', components: [] });
-			}
 
 			// Check if user's offer is locked
 			const session = db.prepare('SELECT * FROM trade_sessions WHERE session_id = ?').get(sessionId);
@@ -625,6 +623,9 @@ module.exports = {
 			catch (error) {
 				if (error.message === 'Item not owned') {
 					return interaction.update({ content: 'You do not own this item.', components: [] });
+				}
+				if (error.message === 'Already offered') {
+					return interaction.update({ content: 'You have already offered this item.', components: [] });
 				}
 				throw error;
 			}

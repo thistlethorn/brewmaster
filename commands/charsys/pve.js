@@ -11,7 +11,7 @@ const activeCombats = new Map();
 const CLEANUP_INTERVAL = 60 * 60 * 1000;
 const COMBAT_TIMEOUT = 60 * 60 * 1000;
 
-setInterval(() => {
+const cleanupIntervalId = setInterval(() => {
 	const oneHourAgo = Date.now() - COMBAT_TIMEOUT;
 	for (const [threadId, combat] of activeCombats.entries()) {
 		if (!combat.startTime || combat.startTime < oneHourAgo) {
@@ -84,7 +84,7 @@ async function handleVictory(interaction, combatState) {
 
 	const rewardText = [];
 
-	  const lootedItems = [];
+	const lootedItems = [];
 	try {
 		// XP (async)
 		if (rewards.xp > 0) {
@@ -128,8 +128,9 @@ async function handleVictory(interaction, combatState) {
 							}
 						}
 						else {
+							const stmt = db.prepare('INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, 1)');
 							for (let n = 0; n < quantity; n++) {
-								db.prepare('INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, 1)').run(userId, entry.item_id);
+								stmt.run(userId, entry.item_id);
 							}
 						}
 						lootedItems.push(`• ${entry.item_name} x${quantity}`);
@@ -267,7 +268,7 @@ async function handleEngage(interaction) {
 
 
 		const parent = interaction.channel;
-		if (!parent?.isTextBased?.() || parent.type === ChannelType.DM || !parent.threads) {
+		if (!parent?.isTextBased?.() || parent.type === ChannelType.DM || !parent.threads || ![ChannelType.GuildText, ChannelType.GuildForum].includes(parent.type)) {
 			return interaction.editReply({ content: 'This command must be used in a server text channel that supports private threads.', flags: MessageFlags.Ephemeral });
 		}
 		const thread = await parent.threads.create({
@@ -450,8 +451,6 @@ module.exports.buttons = async (interaction) => {
 		// Check for victory
 		const allMonstersDefeated = combatState.monsters.every(m => m.current_health <= 0);
 		if (allMonstersDefeated) {
-			if (combatState.isProcessingVictory) return;
-			combatState.isProcessingVictory = true;
 			// Immediately mark the victory in the database to prevent loss
 			let updated = 0;
 			try {
@@ -495,4 +494,7 @@ module.exports.buttons = async (interaction) => {
 			await interaction.editReply({ embeds: [updatedEmbed] });
 		}
 	}
+};
+module.exports.cleanup = () => {
+	clearInterval(cleanupIntervalId);
 };

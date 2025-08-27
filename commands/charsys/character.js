@@ -15,7 +15,7 @@ const sessionCleanupInterval = setInterval(() => {
 			creationSessions.delete(userId);
 		}
 	}
-}, 5 * 60 * 1000);
+}, SESSION_TIMEOUT);
 
 /**
  * Clears the character creation session timer and in-memory state.
@@ -192,9 +192,13 @@ async function handleEquip(interaction) {
 	if (!character) {
 		return interaction.reply({ content: 'You must create a character first with `/character create`.', flags: MessageFlags.Ephemeral });
 	}
-	const validSlots = ['weapon', 'offhand', 'helmet', 'chestplate', 'leggings', 'boots', 'ring', 'amulet'];
+	const validEquipTargetSlots = ['weapon', 'offhand', 'helmet', 'chestplate', 'leggings', 'boots', 'ring1', 'ring2', 'amulet'];
+	if (!validEquipTargetSlots.includes(intendedSlot)) {
+		return interaction.reply({ content: 'Invalid equipment slot specified.', flags: MessageFlags.Ephemeral });
+	}
+	const validItemSlotTypes = ['weapon', 'offhand', 'helmet', 'chestplate', 'leggings', 'boots', 'ring', 'amulet'];
 	const itemSlotType = intendedSlot.startsWith('ring') ? 'ring' : intendedSlot;
-	if (!validSlots.includes(itemSlotType)) {
+	if (!validItemSlotTypes.includes(itemSlotType)) {
 		return interaction.reply({ content: 'Invalid equipment slot specified.', flags: MessageFlags.Ephemeral });
 	}
 	// Verify the item exists in the user's inventory and is equippable in the intended slot.
@@ -246,6 +250,11 @@ async function handleEquip(interaction) {
 async function handleUnequip(interaction) {
 	const userId = interaction.user.id;
 	const slotToUnequip = interaction.options.getString('slot');
+
+	const validEquipTargetSlots = ['weapon', 'offhand', 'helmet', 'chestplate', 'leggings', 'boots', 'ring1', 'ring2', 'amulet'];
+	if (!validEquipTargetSlots.includes(slotToUnequip)) {
+		return interaction.reply({ content: 'Invalid equipment slot specified.', flags: MessageFlags.Ephemeral });
+	}
 
 	const character = db.prepare('SELECT * FROM characters WHERE user_id = ?').get(userId);
 	if (!character) {
@@ -335,6 +344,12 @@ module.exports = {
 				.setName('help')
 				.setDescription('Get help and information about the character system.')),
 
+	/**
+	* Autocomplete handler for /character subcommands.
+	* - equip/item: filters inventory items for the selected slot
+	* - unequip/slot: lists currently equipped slots
+	* @param {import('discord.js').AutocompleteInteraction} interaction
+	*/
 	async autocomplete(interaction) {
 		const subcommand = interaction.options.getSubcommand();
 		const focusedOption = interaction.options.getFocused(true);
@@ -390,11 +405,15 @@ module.exports = {
 					};
 				});
 
-				await interaction.respond(equippedSlots);
+				await interaction.respond(equippedSlots.slice(0, 25));
 			}
 		}
 	},
 
+	/**
+	* Executes the /character command by dispatching to subcommand handlers.
+	* @param {import('discord.js').ChatInputCommandInteraction} interaction
+	*/
 	async execute(interaction) {
 		const subcommand = interaction.options.getSubcommand();
 
