@@ -22,6 +22,10 @@ function formatOption(option) {
 module.exports = {
 	name: Events.InteractionCreate,
 	async execute(interaction) {
+		const characterCommand = interaction.client.commands.get('character');
+		const inventoryCommand = interaction.client.commands.get('inventory');
+		const marketCommand = interaction.client.commands.get('market');
+
 		try {
 			const subcommand = interaction.options?.getSubcommand(false) || null;
 			const subcommandGroup = interaction.options?.getSubcommandGroup(false) || null;
@@ -64,6 +68,142 @@ module.exports = {
 					interaction.isAutocomplete() ? ' [Autocomplete]' : ''
 				}`,
 			);
+
+			if (interaction.isAutocomplete()) {
+				const command = interaction.client.commands.get(interaction.commandName);
+				if (!command) {
+					console.error(`No command matching ${interaction.commandName} was found.`);
+		        	if (!interaction.responded) {
+						await interaction.respond([]);
+					}
+					return;
+				}
+				try {
+					if (typeof command.autocomplete === 'function') {
+						await command.autocomplete(interaction);
+						if (!interaction.responded) {
+							await interaction.respond([]);
+						}
+					}
+					else if (!interaction.responded) {
+						await interaction.respond([]);
+					}
+				}
+				catch (error) {
+					console.error(error);
+					if (!interaction.responded) {
+						await interaction.respond([]);
+					}
+				}
+				return;
+			}
+
+			if (interaction.isModalSubmit() && interaction.customId.startsWith('trade_')) {
+				if (marketCommand && typeof marketCommand.modals === 'function') {
+					try {
+						await marketCommand.modals(interaction);
+						return;
+					}
+					catch (error) {
+						console.error('[Error] Trade modal error:', error);
+						if (!interaction.replied && !interaction.deferred) {
+							await interaction.reply({ content: 'There was an error processing your trade action.', flags: MessageFlags.Ephemeral });
+						}
+						return;
+					}
+				}
+				else if (!interaction.replied && !interaction.deferred) {
+					await interaction.reply({ content: 'Trade actions are currently unavailable.', flags: MessageFlags.Ephemeral });
+					return;
+				}
+			}
+
+			if (interaction.isStringSelectMenu() && interaction.customId.startsWith('trade_')) {
+				if (marketCommand && typeof marketCommand.menus === 'function') {
+					try {
+						await marketCommand.menus(interaction);
+						return;
+					}
+					catch (error) {
+						console.error('[Error] Trade stringmenu error:', error);
+						if (!interaction.replied && !interaction.deferred) {
+							await interaction.reply({ content: 'There was an error processing your trade action.', flags: MessageFlags.Ephemeral });
+						}
+						return;
+					}
+				}
+				else if (!interaction.replied && !interaction.deferred) {
+					await interaction.reply({ content: 'Trade actions are currently unavailable.', flags: MessageFlags.Ephemeral });
+					return;
+				}
+			}
+
+
+			if (interaction.isButton() && interaction.customId.startsWith('inventory_')) {
+				if (inventoryCommand && typeof inventoryCommand.buttons === 'function') {
+					try {
+						await inventoryCommand.buttons(interaction);
+						console.log(`[Execute] Handled Inventory Button for ${interaction.user.displayName}`);
+						return;
+					}
+					catch (error) {
+						console.error('[Error] Inventory button error:', error);
+						if (!interaction.replied && !interaction.deferred) {
+							await interaction.reply({ content: 'There was an error processing your inventory action.', flags: MessageFlags.Ephemeral });
+						}
+						return;
+					}
+				}
+				else if (!interaction.replied && !interaction.deferred) {
+					await interaction.reply({ content: 'Inventory actions are currently unavailable.', flags: MessageFlags.Ephemeral });
+					return;
+				}
+			}
+
+			if (interaction.isModalSubmit() && interaction.customId.startsWith('char_create_')) {
+				if (characterCommand && typeof characterCommand.modals === 'function') {
+					try {
+						await characterCommand.modals(interaction);
+						console.log(`[Execute] Handled Character Creation Modal for ${interaction.user.displayName}`);
+						return;
+					}
+					catch (error) {
+						console.error('[Error] Character creation modal error:', error);
+						if (!interaction.replied && !interaction.deferred) {
+							await interaction.reply({ content: 'There was an error processing your character details.', flags: MessageFlags.Ephemeral });
+						}
+						return;
+					}
+				}
+				else if (!interaction.replied && !interaction.deferred) {
+					await interaction.reply({ content: 'Character creation is currently unavailable.', flags: MessageFlags.Ephemeral });
+					return;
+				}
+			}
+
+			if (interaction.isButton() && interaction.customId.startsWith('char_create_')) {
+				if (characterCommand && typeof characterCommand.buttons === 'function') {
+					try {
+						await characterCommand.buttons(interaction);
+						console.log(`[Execute] Handled Character Creation Button for ${interaction.user.displayName}`);
+						return;
+					}
+					catch (error) {
+						console.error('[Error] Character creation button error:', error);
+						// Check if we can still reply or if we need to follow up
+						if (!interaction.replied && !interaction.deferred) {
+							await interaction.reply({ content: 'There was an error processing your selection.', flags: MessageFlags.Ephemeral });
+						}
+						return;
+					}
+				}
+				else if (!interaction.replied && !interaction.deferred) {
+					await interaction.reply({ content: 'Character creation actions are currently unavailable.', flags: MessageFlags.Ephemeral });
+					return;
+				}
+			}
+
+
 			let gameMasterCommand = null;
 			try {
 				gameMasterCommand = require('../utils/handleGameMasterInteraction.js');
@@ -126,6 +266,46 @@ module.exports = {
 						await interaction.reply({ content: 'There was an error processing your custom contribution.', flags: MessageFlags.Ephemeral });
 						return;
 					}
+				}
+			}
+			if (interaction.isButton() && interaction.customId.startsWith('pve_')) {
+				const pveCommand = interaction.client.commands.get('pve');
+				if (pveCommand && typeof pveCommand.buttons === 'function') {
+					try {
+						await pveCommand.buttons(interaction);
+						return;
+					}
+					catch (error) {
+						console.error('[Error] PvE button interaction error:', error);
+						// Attempt to inform user if possible
+						if (!interaction.replied && !interaction.deferred) {
+							await interaction.reply({ content: 'An error occurred during combat.', flags: MessageFlags.Ephemeral });
+						}
+						return;
+					}
+				}
+				else if (!interaction.replied && !interaction.deferred) {
+					await interaction.reply({ content: 'PvE is currently unavailable.', flags: MessageFlags.Ephemeral });
+					return;
+				}
+			}
+			if (interaction.isButton() && interaction.customId.startsWith('trade_')) {
+				if (marketCommand && typeof marketCommand.buttons === 'function') {
+					try {
+						await marketCommand.buttons(interaction);
+						return;
+					}
+					catch (error) {
+						console.error('[Error] Trade button interaction error:', error);
+						if (!interaction.replied && !interaction.deferred) {
+							await interaction.reply({ content: 'An error occurred while processing this trade action.', flags: MessageFlags.Ephemeral });
+						}
+						return;
+					}
+				}
+				else if (!interaction.replied && !interaction.deferred) {
+					await interaction.reply({ content: 'Trade actions are currently unavailable.', flags: MessageFlags.Ephemeral });
+					return;
 				}
 			}
 			if (interaction.isButton()) {

@@ -6,12 +6,20 @@ const { resumeActiveGiveaways } = require('../utils/handleMotwGiveaway');
 const { resumeDailyReminders } = require('../tasks/dailyReminder');
 const { resumeTempRoleRemovals } = require('../tasks/tempRoleManager');
 const { setupIdleChatter } = require('../tasks/idleChatter');
+const { seedDatabase } = require('../utils/seedDatabase');
 
 module.exports = {
 	name: Events.ClientReady,
 	once: true,
 	execute(client) {
 		console.log(`Ready! Logged in as ${client.user.tag}`);
+		seedDatabase()
+			.then(() => console.log('[Ready.js] Database charsys seeding process finished.'))
+			.catch((error) => {
+				console.error('[Ready.js] Failed to seed database:', error);
+				client.destroy();
+				process.exit(1);
+			});
 		setupWeeklyReset(client);
 		console.log('[Ready.js] setupWeeklyReset is complete');
 		setupBumpReminder(client);

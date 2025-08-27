@@ -1518,7 +1518,7 @@ async function handleFullInfo(interaction) {
 			const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Not Found').setDescription('No guild found with that tag!');
 			return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 		}
-
+		const bounty = db.prepare('SELECT amount, placer_guild_tag FROM guild_bounties WHERE target_guild_tag = ? AND status = ?').get(guildTag, 'ACTIVE');
 		const memberData = db.prepare('SELECT owner, vice_gm FROM guildmember_tracking WHERE user_id = ? AND guild_tag = ?').get(interaction.user.id, guildTag);
 		const isMember = !!memberData;
 		const isOwner = memberData?.owner === 1;
@@ -1634,6 +1634,15 @@ async function handleFullInfo(interaction) {
 		if (truces.length > 0) diplomacyValue += `**Truces:** ${truces.join(', ')}\n`;
 
 		embed.addFields({ name: 'Diplomatic Standing', value: diplomacyValue, inline: false });
+
+		if (bounty) {
+			const placerGuild = db.prepare('SELECT guild_name FROM guild_list WHERE guild_tag = ?').get(bounty.placer_guild_tag);
+			const placerName = placerGuild?.guild_name || `Guild Tag [${bounty.placer_guild_tag}]`;
+			embed.addFields({
+				name: '🎯 ACTIVE BOUNTY 🎯',
+				value: `This guild has a bounty of **👑 ${bounty.amount.toLocaleString()}** placed on it by **${placerName}**!`,
+			});
+		}
 
 		embed.setFooter({ text: `Guild Tag: ${guildInfo.guild_tag} • Created on ${new Date(guildInfo.created_at).toLocaleDateString()}` }).setTimestamp();
 
@@ -1780,7 +1789,7 @@ async function buildDetailEmbed(guildTag, view, interaction, parts) {
             LEFT JOIN raid_cooldowns rc ON rc.guild_tag = gl.guild_tag
             WHERE gl.guild_tag = ?
         `).get(guildTag);
-
+		const bounty = db.prepare('SELECT amount, placer_guild_tag FROM guild_bounties WHERE target_guild_tag = ? AND status = ?').get(guildTag, 'ACTIVE');
 		// --- Diplomacy Info ---
 		const relationships = db.prepare(`
 			SELECT * FROM guild_relationships 
@@ -1835,6 +1844,14 @@ async function buildDetailEmbed(guildTag, view, interaction, parts) {
 					inline: false,
 				},
 			);
+		if (bounty) {
+			const placerGuild = db.prepare('SELECT guild_name FROM guild_list WHERE guild_tag = ?').get(bounty.placer_guild_tag);
+			const placerName = placerGuild?.guild_name ? 'Guild ' + placerGuild?.guild_name : `Guild Tag [${bounty.placer_guild_tag}]`;
+			embed.addFields({
+				name: '🎯 ACTIVE BOUNTY 🎯',
+				value: `This guild has a bounty of **👑 ${bounty.amount.toLocaleString()}** placed on it by **${placerName}**!`,
+			});
+		}
 		break;
 	}
 	case 'members': {
@@ -2721,7 +2738,10 @@ async function handleList(interaction) {
 			if (tier >= 4) return ONLY_CRESTS[1];
 			return ONLY_CRESTS[0];
 		};
-
+		const bounties = db.prepare(`
+			SELECT target_guild_tag, amount FROM guild_bounties WHERE status = 'ACTIVE'
+		`).all();
+		const bountyMap = new Map(bounties.map(b => [b.target_guild_tag, b.amount]));
 		const embed = new EmbedBuilder()
 			.setColor(0x5865F2)
 			.setTitle('🏰 Guild Directory')
@@ -2736,7 +2756,8 @@ async function handleList(interaction) {
 				const crest = getCrestForTier(guild.tier);
 				const statusIcon = guild.is_open ? '🔓' : '🔒';
 				const attitude = guild.attitude || 'Neutral';
-
+				const bountyAmount = bountyMap.get(guild.guild_tag);
+				const bountyText = bountyAmount ? `\n**Bounty:** 👑 ${bountyAmount.toLocaleString()}` : '';
 				return {
 					name: `${crest} ${statusIcon} ${guild.guild_name}`,
 					value: [
@@ -2745,6 +2766,7 @@ async function handleList(interaction) {
 						`**Owner:** ${owner}`,
 						`**Members:** ${guild.member_count}`,
 						`**Status:** ${guild.is_open ? '🟢 Open to join' : '🔴 Invite only'}`,
+						bountyText,
 					].filter(Boolean).join('\n'),
 					inline: true,
 				};
@@ -3690,6 +3712,82 @@ function calculateCataclysmicFailureChance(primaryDefender, defendingAllies) {
 	return { chance: highestChance, triggeredBy };
 }
 
+async function handleBounty(interaction) {
+	const userId = interaction.user.id;
+	const targetTag = interaction.options.getString('guild_tag').toUpperCase();
+	const amount = interaction.options.getInteger('amount');
+	const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Bounty Placement Failed');
+
+	const placerGuild = db.prepare(`
+        SELECT gl.guild_tag, gl.guild_name, COALESCE(ge.balance, 0) as balance
+        FROM guildmember_tracking gmt
+        JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
+        LEFT JOIN guild_economy ge ON gl.guild_tag = ge.guild_tag
+        WHERE gmt.user_id = ? AND (gmt.owner = 1 OR gmt.vice_gm = 1)
+    `).get(userId);
+
+	if (!placerGuild) {
+		errorEmbed.setDescription('You must be a Guildmaster or Vice-GM to place a bounty.');
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
+	}
+
+	if (placerGuild.guild_tag === targetTag) {
+		errorEmbed.setDescription('You can\'t place a bounty on your own guild, wise guy.');
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
+	}
+
+	const targetGuild = db.prepare('SELECT guild_name FROM guild_list WHERE guild_tag = ?').get(targetTag);
+	if (!targetGuild) {
+		errorEmbed.setDescription(`Couldn't find any guild with the tag [${targetTag}].`);
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
+	}
+
+	const existingBounty = db.prepare('SELECT 1 FROM guild_bounties WHERE target_guild_tag = ? AND status = ?').get(targetTag, 'ACTIVE');
+	if (existingBounty) {
+		errorEmbed.setDescription(`**${targetGuild.guild_name}** already has an active bounty. You must wait for it to be claimed.`);
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
+	}
+
+	if (placerGuild.balance < amount) {
+		errorEmbed.setDescription(`Your guild vault only has **${placerGuild.balance.toLocaleString()}** Crowns. You can't afford this bounty.`);
+		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
+	}
+
+	try {
+		db.transaction(() => {
+			const result = db.prepare('UPDATE guild_economy SET balance = balance - ? WHERE guild_tag = ? AND balance >= ?').run(amount, placerGuild.guild_tag, amount);
+			if (result.changes === 0) {
+				throw new Error('Insufficient funds at time of transaction.');
+			}
+			db.prepare(`
+                INSERT INTO guild_bounties (placer_guild_tag, target_guild_tag, amount, status)
+                VALUES (?, ?, ?, 'ACTIVE')
+            `).run(placerGuild.guild_tag, targetTag, amount);
+		})();
+
+		const successEmbed = new EmbedBuilder()
+			.setColor(0x2ECC71)
+			.setTitle('✅ Bounty Placed!')
+			.setDescription(`You have successfully placed a bounty of **👑 ${amount.toLocaleString()}** on **${targetGuild.guild_name} [${targetTag}]**.`);
+		await interaction.reply({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
+
+		const announceEmbed = new EmbedBuilder()
+			.setColor(0xE67E22)
+			.setTitle('🎯 A Bounty Has Been Posted! 🎯')
+			.setDescription(`**${placerGuild.guild_name} [${placerGuild.guild_tag}]** has placed a bounty on **${targetGuild.guild_name} [${targetTag}]**!`)
+			.addFields({ name: 'Bounty Amount', value: `**👑 ${amount.toLocaleString()}**` })
+			.setFooter({ text: 'The first guild to successfully raid the target will claim the prize!' })
+			.setTimestamp();
+		await sendGuildAnnouncement(interaction.client, announceEmbed);
+
+	}
+	catch (error) {
+		console.error('Bounty placement error:', error);
+		errorEmbed.setTitle('❌ Transaction Error').setDescription('An error occurred while placing the bounty. Your funds have not been spent.');
+		await interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
+	}
+}
+
 async function resolveBattleSequentially(interaction, warMessage, raidId, attackerTag, defenderTag) {
 	console.log(`[Raid Resolution] Collector ended for raid ID ${raidId}. Starting battle resolution.`);
 
@@ -3911,6 +4009,25 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 			const lostDuringEscape = Math.floor(totalLoot * (escapeLossPercent / 100));
 			netLoot = totalLoot - lostDuringEscape;
 
+			let bountyClaimed = 0;
+			const bounty = db.prepare('SELECT bounty_id, amount FROM guild_bounties WHERE target_guild_tag = ? AND status = ?').get(defenderTag, 'ACTIVE');
+
+			if (bounty) {
+				bountyClaimed = bounty.amount;
+
+				db.transaction(() => {
+					// Mark bounty as claimed
+					db.prepare('UPDATE guild_bounties SET status = ?, claimed_by_tag = ?, claimed_at = CURRENT_TIMESTAMP WHERE bounty_id = ?')
+						.run('CLAIMED', attackerTag, bounty.bounty_id);
+
+					// Add bounty directly to attacker's vault
+					db.prepare('UPDATE guild_economy SET balance = balance + ? WHERE guild_tag = ?')
+						.run(bountyClaimed, attackerTag);
+				})();
+
+				console.log(`[Raid Resolution] [${raidId}] Guild ${attackerTag} claimed a bounty of ${bountyClaimed} from ${defenderTag}.`);
+			}
+
 			db.transaction(() => {
 				if (stolenFromGuild > 0) db.prepare('UPDATE guild_economy SET balance = balance - ? WHERE guild_tag = ?').run(stolenFromGuild, defenderTag);
 				if (netLoot > 0) db.prepare('UPDATE guild_economy SET balance = balance + ? WHERE guild_tag = ?').run(netLoot, attackerTag);
@@ -3920,7 +4037,7 @@ async function resolveBattleSequentially(interaction, warMessage, raidId, attack
 			const isDestroyed = !db.prepare('SELECT 1 FROM guild_list WHERE guild_tag = ?').get(defenderTag);
 			const description = isDestroyed ? `The attacking alliance has utterly destroyed **${finalDefenderData.guild_name}**!` : `The attacking alliance has triumphed over **${finalDefenderData.guild_name}**!`;
 
-			const spoilsField = { name: 'Spoils of War', value: `Plunder from Vault: **${stolenFromGuild.toLocaleString()}**\nPlunder from Members: **${stolenFromMembers.toLocaleString()}**\n**Total Loot:** **${totalLoot.toLocaleString()}**\nLost During Escape (-${escapeLossPercent}%): **-${lostDuringEscape.toLocaleString()}**\n---\nThe entire net plunder of **${netLoot.toLocaleString()} Crowns** has been transferred to **${finalAttackerData.guild_name}**'s vault.` };
+			const spoilsField = { name: 'Spoils of War', value: `Plunder from Vault: **${stolenFromGuild.toLocaleString()}**\nPlunder from Members: **${stolenFromMembers.toLocaleString()}**\n**Total Loot:** **${totalLoot.toLocaleString()}**\n${bountyClaimed > 0 ? `**Bounty Claimed:** **${bountyClaimed.toLocaleString()}**` : ''}\nLost During Escape (-${escapeLossPercent}%): **-${lostDuringEscape.toLocaleString()}**\n---\nThe entire net plunder of **${netLoot.toLocaleString()} Crowns** has been transferred to **${finalAttackerData.guild_name}**'s vault.` };
 			const opportunistWinningsText = await processOpportunistPayouts(raidId,
 			    success ? 'attacker' : 'defender',
 			    success ? attackingParticipants : defendingParticipants);
@@ -5552,6 +5669,20 @@ module.exports = {
 					option.setName('new_owner')
 						.setDescription('New guild owner')
 						.setRequired(true)))
+		.addSubcommand(subcommand =>
+			subcommand
+				.setName('bounty')
+				.setDescription('Place a bounty from your guild vault on another guild.')
+				.addStringOption(option =>
+					option.setName('guild_tag')
+						.setDescription('The tag of the guild to place a bounty on.')
+						.setRequired(true)
+						.setAutocomplete(true))
+				.addIntegerOption(option =>
+					option.setName('amount')
+						.setDescription('The bounty amount in Crowns.')
+						.setRequired(true)
+						.setMinValue(1000)))
 		.addSubcommandGroup(subcommandGroup =>
 			subcommandGroup
 				.setName('payout')
@@ -5778,6 +5909,9 @@ module.exports = {
 				else if (subcommandGroup === 'diplomacy') {
 					return fetchAllGuildsByTagAutocomplete(interaction);
 				}
+				else if (subcommand === 'bounty') {
+					return fetchAllGuildsByTagAutocomplete(interaction);
+				}
 			}
 			return;
 		}
@@ -5842,6 +5976,9 @@ module.exports = {
 			else {
 				await handleInfo(interaction);
 			}
+		}
+		else if (subcommand === 'bounty') {
+			await handleBounty(interaction);
 		}
 		else if (subcommand === 'create') {await handleCreate(interaction);}
 		else if (subcommand === 'delete') {await handleDelete(interaction);}
