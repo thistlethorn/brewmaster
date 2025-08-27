@@ -59,18 +59,13 @@ function buildTradeEmbed(initiator, receiver) {
 /**
  * Creates the action buttons for the trading UI based on the session's state.
  * @param {string} sessionId The ID of the trade session.
- * @param {object} session The current session data from the database.
- * @param {string} userId The ID of the user viewing the buttons.
  * @returns {ActionRowBuilder[]}
  */
-function buildTradeButtons(sessionId, session, userId) {
-	const userIsInitiator = userId === session.initiator_user_id;
-	const isLocked = userIsInitiator ? session.initiator_locked : session.receiver_locked;
-
+function buildTradeButtons(sessionId) {
 	const row1 = new ActionRowBuilder().addComponents(
-		new ButtonBuilder().setCustomId(`trade_add_item_${sessionId}`).setLabel('Add Item').setStyle(ButtonStyle.Success).setEmoji('🎒').setDisabled(!!isLocked),
-		new ButtonBuilder().setCustomId(`trade_add_crowns_${sessionId}`).setLabel('Add Crowns').setStyle(ButtonStyle.Success).setEmoji('👑').setDisabled(!!isLocked),
-		new ButtonBuilder().setCustomId(`trade_remove_item_${sessionId}`).setLabel('Remove Item').setStyle(ButtonStyle.Secondary).setEmoji('✏️').setDisabled(!!isLocked),
+		new ButtonBuilder().setCustomId(`trade_add_item_${sessionId}`).setLabel('Add Item').setStyle(ButtonStyle.Success).setEmoji('🎒'),
+		new ButtonBuilder().setCustomId(`trade_add_crowns_${sessionId}`).setLabel('Add Crowns').setStyle(ButtonStyle.Success).setEmoji('👑'),
+		new ButtonBuilder().setCustomId(`trade_remove_item_${sessionId}`).setLabel('Remove Item').setStyle(ButtonStyle.Secondary).setEmoji('✏️'),
 	);
 	const row2 = new ActionRowBuilder().addComponents(
 		new ButtonBuilder()
@@ -152,7 +147,7 @@ async function updateTradeUI(interaction, sessionId) {
 		// We need to generate buttons for both users to see their correct "Lock/Unlock" state.
 		// Since we can only edit the message once, we send a generic set. The button handler will use the interaction user's ID to determine their state.
 		// A more advanced solution would be sending ephemeral "control panel" messages to each user, but this is simpler and effective.
-		components = buildTradeButtons(sessionId, session, interaction.user.id);
+		components = buildTradeButtons(sessionId);
 	}
 
 	  // Resolve the trade UI message to edit.
@@ -567,7 +562,10 @@ module.exports = {
 			return interaction.reply({ content: `You cannot offer more crowns than you have! (Balance: ${balance})`, flags: MessageFlags.Ephemeral });
 		}
 
-		const session = db.prepare('SELECT initiator_user_id, receiver_user_id, initiator_locked, receiver_locked, initiator_crown_offer, receiver_crown_offer FROM trade_sessions WHERE session_id = ?').get(sessionId);
+		const session = db.prepare('SELECT initiator_user_id, receiver_user_id, initiator_locked, receiver_locked, initiator_crown_offer, receiver_crown_offer, status FROM trade_sessions WHERE session_id = ?').get(sessionId);
+		if (!session || session.status !== 'PENDING' || (userId !== session.initiator_user_id && userId !== session.receiver_user_id)) {
+			return interaction.reply({ content: 'This trade session is invalid or no longer active.', flags: MessageFlags.Ephemeral });
+		}
 		const isInitiator = userId === session.initiator_user_id;
 		const isLocked = isInitiator ? session.initiator_locked : session.receiver_locked;
 
@@ -594,7 +592,10 @@ module.exports = {
 		tradeTimestamps.set(userId, Date.now());
 
 		if (subAction === 'additem') {
-			const inventoryId = parseInt(interaction.values[0]);
+			const inventoryId = parseInt(interaction.values[0], 10);
+			if (Number.isNaN(inventoryId)) {
+				return interaction.update({ content: 'Invalid item selection.', components: [] });
+			}
 
 			// Check if user's offer is locked
 			const session = db.prepare('SELECT * FROM trade_sessions WHERE session_id = ?').get(sessionId);
@@ -607,7 +608,7 @@ module.exports = {
 			try {
 				const addItemTx = db.transaction(() => {
 					// Check if already offered inside transaction
-					alreadyOffered = db.prepare('SELECT 1 FROM trade_session_items WHERE session_id = ? AND inventory_id = ?').get(sessionId, inventoryId);
+					const alreadyOffered = db.prepare('SELECT 1 FROM trade_session_items WHERE session_id = ? AND inventory_id = ?').get(sessionId, inventoryId);
 					if (alreadyOffered) {
 						throw new Error('Already offered');
 					}

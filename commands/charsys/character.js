@@ -489,6 +489,11 @@ module.exports = {
 			const origin = db.prepare('SELECT * FROM origins WHERE id = ?').get(session.originId);
 			const archetype = db.prepare('SELECT * FROM archetypes WHERE id = ?').get(session.archetypeId);
 
+			if (!origin || !archetype) {
+				creationSessions.delete(userId);
+				return interaction.editReply({ content: 'Your creation data is invalid or has expired. Please restart with `/character create`.', components: [], embeds: [] });
+			}
+
 			const confirmEmbed = new EmbedBuilder()
 				.setColor(0xFEE75C)
 				.setTitle(`Final Confirmation for ${session.name}`)
