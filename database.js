@@ -10,7 +10,6 @@ const db = new Database(path.join(__dirname, 'bump_data.db'));
 db.pragma('foreign_keys = ON');
 db.pragma('journal_mode = WAL');
 
-
 // Initialize tables in one transaction
 const setupTables = db.transaction(() => {
 
@@ -606,6 +605,14 @@ const setupTables = db.transaction(() => {
 
             -- Data Fields
             crown_value INTEGER DEFAULT 0,
+
+            -- Weapon-Specific Combat Fields
+            -- (e.g., '1d6', '2d4'). NULL for non-weapons.
+            damage_dice TEXT,
+            -- (e.g., 'Slashing', 'Piercing', 'Bludgeoning'). NULL for non-weapons.
+            damage_type TEXT,
+            -- ('one-handed', 'two-handed'). NULL for non-weapons.
+            handedness TEXT CHECK(handedness IS NULL OR handedness IN ('one-handed', 'two-handed')),
 
             -- A flexible field for all item-specific data
             effects_json TEXT CHECK(effects_json IS NULL OR json_valid(effects_json))
@@ -1379,7 +1386,23 @@ const setupTables = db.transaction(() => {
 	`).run();
 
 });
+/*
+const dropTables = db.transaction(() => {
+	// ONE TIME MIGRATION SCRIPT - WILL REMOVE THIS SECTION ONCE THE NEW STARTER ITEMS ARE IMPLEMENTED!!!! DO NOT FORGET!!!!!!
 
+	console.log('[MIGRATION] Dropping item-related tables for a clean seed...');
+	db.exec('DROP TABLE IF EXISTS items;');
+	db.exec('DROP TABLE IF EXISTS user_inventory;');
+	db.exec('DROP TABLE IF EXISTS loot_table_entries;');
+	console.log('[MIGRATION] Tables dropped successfully.');
+});
+
+db.pragma('foreign_keys = OFF');
+console.log('[MIGRATION] FKEYS: OFF');
+dropTables();
+db.pragma('foreign_keys = ON');
+console.log('[MIGRATION] FKEYS: ON');
+*/
 setupTables();
 
 module.exports = db;

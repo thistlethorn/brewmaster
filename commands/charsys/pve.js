@@ -413,6 +413,54 @@ module.exports = {
 };
 
 /**
+ * Parses a dice string (e.g., '2d6') and returns a random roll.
+ * @param {string} diceString The dice notation string.
+ * @returns {number} The result of the roll.
+ */
+function rollDice(diceString) {
+	if (!diceString || !/^\d+d\d+$/.test(diceString)) {
+		return 1;
+		// Default to 1 damage if notation is invalid
+	}
+	const [numDice, numSides] = diceString.split('d').map(Number);
+	let total = 0;
+	for (let i = 0; i < numDice; i++) {
+		total += Math.floor(Math.random() * numSides) + 1;
+	}
+	return total;
+}
+
+/**
+ * Calculates the correct stat modifier for an attack based on its damage type.
+ * @param {string} damageType The type of damage (e.g., 'Slashing', 'Bludgeoning').
+ * @param {object} stats The character's full stat block.
+ * @returns {number} The calculated integer modifier for the damage roll.
+ */
+function getDamageModifier(damageType, stats) {
+	// Standard D&D-style modifier calculation: (Stat - 10) / 2
+	// Your system uses a base of 5, so we'll adapt: (Stat - 5) / 2
+	const mightMod = Math.floor((stats.stat_might - 5) / 2);
+	const finesseMod = Math.floor((stats.stat_finesse - 5) / 2);
+	const witsMod = Math.floor((stats.stat_wits - 5) / 2);
+
+	switch (damageType) {
+	case 'Slashing':
+		// Use whichever is higher between Might and Finesse
+		return Math.max(mightMod, finesseMod);
+	case 'Piercing':
+		// Defaults to Finesse
+		return finesseMod;
+	case 'Arcane':
+		// Defaults to Wits
+		return witsMod;
+	case 'Bludgeoning':
+	default:
+		// Defaults to Might (this also covers unarmed strikes)
+		return mightMod;
+	}
+}
+
+/**
 * PvE buttons handler.
 * Expected customId format: pve_attack_threadId_index
 * @param {import('discord.js').ButtonInteraction} interaction
@@ -440,9 +488,26 @@ module.exports.buttons = async (interaction) => {
 
 		if (monster.current_health <= 0) return;
 
-		// Player's turn
-		const playerDamage = Math.max(1, character.stat_might);
+		const weapon = db.prepare(`
+            SELECT i.damage_dice, i.damage_type
+            FROM user_inventory ui
+            JOIN items i ON ui.item_id = i.item_id
+            WHERE ui.user_id = ? AND ui.equipped_slot = 'weapon'
+        `).get(character.user_id);
+
+
+		// 2. Determine damage type and roll dice
+		const damageType = weapon ? weapon.damage_type : 'Bludgeoning';
+		const diceRoll = rollDice(weapon ? weapon.damage_dice : '1d4');
+
+		// 3. Get the correct stat modifier using our new helper function
+		const statModifier = getDamageModifier(damageType, character);
+
+		// 4. Total damage is the dice roll + modifier, with a minimum of 1
+		const playerDamage = Math.max(1, diceRoll + statModifier);
+
 		monster.current_health = Math.max(0, monster.current_health - playerDamage);
+
 		combatState.combatLog.push(`> You attack **${monster.name} #${targetIndex + 1}** for **${playerDamage}** damage.`);
 		if (monster.current_health === 0) {
 			combatState.combatLog.push(`> **${monster.name} #${targetIndex + 1}** has been defeated!`);

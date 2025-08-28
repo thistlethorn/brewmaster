@@ -3,7 +3,109 @@ const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, Butt
 const db = require('../../database');
 
 const ITEMS_PER_PAGE = 10;
+const rarityColors = {
+	'COMMON': 0x95A5A6,
+	// Gray
 
+	'UNCOMMON': 0x2ECC71,
+	// Green
+
+	'RARE': 0x3498DB,
+	// Blue
+
+	'EPIC': 0x9B59B6,
+	// Purple
+
+	'LEGENDARY': 0xF1C40F,
+	// Gold
+
+	'MYTHIC': 0xE67E22,
+	// Orange
+};
+
+/**
+ * Handles the /inventory item_info command.
+ * @param {import('discord.js').ChatInputCommandInteraction} interaction
+ */
+async function handleItemInfo(interaction) {
+	const userId = interaction.user.id;
+	const inventoryId = interaction.options.getInteger('item');
+
+	const itemData = db.prepare(`
+        SELECT
+            i.name, i.description, i.item_type, i.rarity,
+            i.is_tradeable, i.crown_value,
+            i.damage_dice, i.damage_type, i.handedness, i.effects_json,
+            ui.quantity, ui.equipped_slot
+        FROM user_inventory ui
+        JOIN items i ON ui.item_id = i.item_id
+        WHERE ui.user_id = ? AND ui.inventory_id = ?
+    `).get(userId, inventoryId);
+
+	if (!itemData) {
+		return interaction.reply({ content: 'Could not find that item in your inventory.', flags: MessageFlags.Ephemeral });
+	}
+
+	const embed = new EmbedBuilder()
+		.setTitle(itemData.name)
+		.setColor(rarityColors[itemData.rarity.toUpperCase()] || 0x95A5A6)
+		.setDescription(itemData.description || '*No description available.*');
+
+	let status = itemData.equipped_slot
+		? `Equipped (${itemData.equipped_slot.charAt(0).toUpperCase() + itemData.equipped_slot.slice(1)})`
+		: 'In Inventory';
+	if (itemData.quantity > 1) {
+		status += ` (Quantity: ${itemData.quantity})`;
+	}
+
+	embed.addFields({ name: 'Status', value: status, inline: false });
+
+	const details = [
+		`**Rarity:** ${itemData.rarity}`,
+		`**Type:** ${itemData.item_type}`,
+		`**Value:** ${itemData.crown_value} Crowns`,
+		`**Tradeable:** ${itemData.is_tradeable ? 'Yes' : 'No'}`,
+	];
+	embed.addFields({ name: 'Details', value: details.join('\n'), inline: false });
+
+	// Combat stats for weapons
+	if (itemData.damage_dice) {
+		const combatDetails = [
+			`**Damage:** \`${itemData.damage_dice}\``,
+			`**Type:** ${itemData.damage_type}`,
+			`**Handedness:** ${itemData.handedness}`,
+		];
+		embed.addFields({ name: 'Combat Stats', value: combatDetails.join('\n'), inline: true });
+	}
+
+	// Effects from JSON
+	if (itemData.effects_json) {
+		try {
+			const effects = JSON.parse(itemData.effects_json);
+			const effectLines = [];
+			if (effects.slot) {
+				effectLines.push(`**Slot:** ${effects.slot.charAt(0).toUpperCase() + effects.slot.slice(1)}`);
+			}
+			if (effects.stats) {
+				for (const [stat, value] of Object.entries(effects.stats)) {
+					const sign = value > 0 ? '+' : '';
+					effectLines.push(`**${stat.charAt(0).toUpperCase() + stat.slice(1)}:** ${sign}${value}`);
+				}
+			}
+
+			if (effectLines.length > 0) {
+				embed.addFields({ name: 'Effects', value: effectLines.join('\n'), inline: true });
+			}
+
+		}
+		catch (error) {
+			console.error(`Failed to parse effects_json for item info (inv_id: ${inventoryId}):`, error);
+		}
+	}
+
+
+	await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+}
 /**
  * Handles the /inventory view command, displaying a paginated list of items.
  * @param {import('discord.js').ChatInputCommandInteraction | import('discord.js').ButtonInteraction} interaction
@@ -100,19 +202,56 @@ module.exports = {
 		.setDescription('Manage your character\'s inventory.')
 		.addSubcommand(subcommand =>
 			subcommand
+				.setName('item_info')
+				.setDescription('Inspect a specific item in your inventory.')
+				.addIntegerOption(option =>
+					option.setName('item')
+						.setDescription('The inventory item to inspect.')
+						.setRequired(true)
+						.setAutocomplete(true)))
+		.addSubcommand(subcommand =>
+			subcommand
 				.setName('view')
 				.setDescription('View your character\'s inventory.')
 				.addIntegerOption(option =>
 					option.setName('page')
 						.setDescription('The page number to view.')
 						.setRequired(false))),
+	async autocomplete(interaction) {
+		const subcommand = interaction.options.getSubcommand();
+		const focusedOption = interaction.options.getFocused(true);
+		const userId = interaction.user.id;
 
+		if (subcommand === 'item_info' && focusedOption.name === 'item') {
+			const focusedValue = focusedOption.value.toLowerCase();
+			const inventory = db.prepare(`
+				SELECT ui.inventory_id, i.name
+				FROM user_inventory ui
+				JOIN items i ON ui.item_id = i.item_id
+				WHERE ui.user_id = ?
+				ORDER BY i.name ASC
+			`).all(userId);
+
+			const filtered = inventory
+				.filter(item => item.name.toLowerCase().includes(focusedValue))
+				.map(item => ({
+					name: item.name,
+					value: item.inventory_id,
+				}));
+
+			await interaction.respond(filtered.slice(0, 25));
+		}
+	},
 	async execute(interaction) {
 		const subcommand = interaction.options.getSubcommand();
-		if (subcommand === 'view') {
+		switch (subcommand) {
+		case 'view':
 			await handleView(interaction);
-		}
-		else {
+			break;
+		case 'item_info':
+			await handleItemInfo(interaction);
+			break;
+		default:
 			await interaction.reply({ content: 'This inventory command is not yet implemented.', flags: MessageFlags.Ephemeral });
 		}
 	},

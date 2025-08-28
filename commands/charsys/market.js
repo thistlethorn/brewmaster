@@ -319,6 +319,22 @@ module.exports = {
 			if (activeTrades.has(initiator.id) || activeTrades.has(receiver.id)) {
 				return interaction.reply({ content: 'One of the participants is already in an active trade session.', flags: MessageFlags.Ephemeral });
 			}
+			const getTradeableItemCount = (userId) => {
+				const row = db.prepare(`
+                    SELECT COUNT(ui.inventory_id) as itemCount
+                    FROM user_inventory ui
+                    JOIN items i ON ui.item_id = i.item_id
+                    WHERE ui.user_id = ? AND i.is_tradeable = 1 AND ui.equipped_slot IS NULL
+                `).get(userId);
+				return row?.itemCount || 0;
+			};
+
+			const initiatorItemCount = getTradeableItemCount(initiator.id);
+			const receiverItemCount = getTradeableItemCount(receiver.id);
+
+			if (initiatorItemCount === 0 && receiverItemCount === 0) {
+				return interaction.reply({ content: 'A trade cannot be started if neither participant has any tradeable items in their inventory. Use `/econ pay` for crown-only transfers.', flags: MessageFlags.Ephemeral });
+			}
 
 			try {
 				addToActiveTrades(initiator.id);

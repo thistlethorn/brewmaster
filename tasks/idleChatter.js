@@ -4,7 +4,7 @@ const sendMessageToChannel = require('../utils/sendMessageToChannel');
 const config = require('../config.json');
 const IDLE_CHATTER_CHANNEL_ID = config.discord?.idleChatterChannelId;
 // 1 hour
-const MIN_COOLDOWN_MS = 60 * 60 * 1000;
+const MIN_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 // 1 hour
 const MAX_ADDITIONAL_MS = 60 * 60 * 1000;
 

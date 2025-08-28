@@ -43,8 +43,8 @@ const pveItems = [
 	{ name: 'Venom Gland', description: 'A gland filled with a weak, but usable, poison.', item_type: 'MATERIAL', is_stackable: 1, crown_value: 8 },
 	{ name: 'Bone Fragments', description: 'Shards of animated bone.', item_type: 'MATERIAL', is_stackable: 1, crown_value: 2 },
 	// Weapons
-	{ name: 'Crude Dagger', description: 'A poorly made goblin shiv.', item_type: 'WEAPON', rarity: 'COMMON', is_stackable: 0, crown_value: 10, effects_json: '{"slot": "weapon", "stats": {"crit_chance": 0.01}}' },
-	{ name: 'Rusty Shortsword', description: 'A standard shortsword, degraded by time and undeath.', item_type: 'WEAPON', rarity: 'COMMON', is_stackable: 0, crown_value: 15, effects_json: '{"slot": "weapon", "stats": {"might": 1}}' },
+	{ name: 'Crude Dagger', description: 'A poorly made goblin shiv.', item_type: 'WEAPON', rarity: 'COMMON', is_stackable: 0, crown_value: 10, damage_dice: '1d4', damage_type: 'Piercing', handedness: 'one-handed', effects_json: '{"slot": "weapon", "stats": {"crit_chance": 0.01}}' },
+	{ name: 'Rusty Shortsword', description: 'A standard shortsword, degraded by time and undeath.', item_type: 'WEAPON', rarity: 'COMMON', is_stackable: 0, crown_value: 15, damage_dice: '1d6', damage_type: 'Slashing', handedness: 'one-handed', effects_json: '{"slot": "weapon"}' },
 ];
 
 const lootTables = [
@@ -84,6 +84,67 @@ const pveNodes = [
 	{ name: 'Whispering Woods Outskirts', description: 'Goblins and other creatures lurk at the edge of the forest.', required_level: 1, monster_composition_json: '[{"name": "Goblin Grunt", "count": 2}, {"name": "Forest Spider", "count": 1}]', first_completion_reward_json: '{"xp": 50, "crowns": 100}', repeatable_reward_json: '{"xp": 15, "crowns": 25}' },
 	{ name: 'Forgotten Crypt Entrance', description: 'The restless dead guard the entrance to an ancient tomb.', required_level: 2, monster_composition_json: '[{"name": "Skeleton Warrior", "count": 3}]', first_completion_reward_json: '{"xp": 80, "crowns": 150}', repeatable_reward_json: '{"xp": 25, "crowns": 40}' },
 ];
+const standardStartingKitData = [
+	{ name: 'Simple Dagger', description: 'A small, utilitarian blade. More a tool than a dedicated weapon.', item_type: 'WEAPON', rarity: 'STARTER', is_stackable: 0, crown_value: 5, damage_dice: '1d4', damage_type: 'Piercing', handedness: 'one-handed', effects_json: '{"slot": "weapon", "is_tradeable": 0}' },
+	{ name: 'Worn Buckler', description: 'A small, strap-on shield of hardened leather and wood.', item_type: 'ARMOR', rarity: 'STARTER', is_stackable: 0, crown_value: 10, effects_json: '{"slot": "offhand", "is_tradeable": 0, "ac_bonus": 1}' },
+	{ name: 'Traveler\'s Hood', description: 'A simple but sturdy hood to protect against the elements.', item_type: 'ARMOR', rarity: 'STARTER', is_stackable: 0, crown_value: 5, effects_json: '{"slot": "helmet", "is_tradeable": 0}' },
+	{ name: 'Traveler\'s Tunic', description: 'A durable tunic of rough-spun cloth, suitable for a new adventurer.', item_type: 'ARMOR', rarity: 'STARTER', is_stackable: 0, crown_value: 5, effects_json: '{"slot": "chestplate", "is_tradeable": 0}' },
+	{ name: 'Traveler\'s Trousers', description: 'Simple, durable trousers fit for a long journey.', item_type: 'ARMOR', rarity: 'STARTER', is_stackable: 0, crown_value: 5, effects_json: '{"slot": "leggings", "is_tradeable": 0}' },
+	{ name: 'Worn Leather Boots', description: 'Sturdy boots that have seen many roads.', item_type: 'ARMOR', rarity: 'STARTER', is_stackable: 0, crown_value: 5, effects_json: '{"slot": "boots", "is_tradeable": 0}' },
+	{ name: 'Simple Iron Band', description: 'A plain, unadorned band of common iron.', item_type: 'ACCESSORY', rarity: 'STARTER', is_stackable: 0, crown_value: 2, effects_json: '{"slot": "ring", "is_tradeable": 0}' },
+	{ name: 'Frayed Rope Amulet', description: 'A simple loop of frayed rope, perhaps once a good luck charm.', item_type: 'ACCESSORY', rarity: 'STARTER', is_stackable: 0, crown_value: 2, effects_json: '{"slot": "amulet", "is_tradeable": 0}' },
+];
+
+
+const startingEquipmentData = [
+	// Channeler
+	{ name: 'Channeler\'s Focus', description: 'A smooth, crystal-tipped wand that hums with latent power.', item_type: 'WEAPON', rarity: 'STARTER', is_stackable: 0, crown_value: 15, damage_dice: '1d4', damage_type: 'Arcane', handedness: 'one-handed', effects_json: '{"slot": "weapon", "is_tradeable": 0, "base_stats": {"wits": 1}}' },
+	{ name: 'Acolyte\'s Robes', description: 'Simple, blessed robes that offer minor mystical protection.', item_type: 'ARMOR', rarity: 'STARTER', is_stackable: 0, crown_value: 10, effects_json: '{"slot": "chestplate", "is_tradeable": 0, "ac_bonus": 1}' },
+
+	// Golemancer
+	{ name: 'Tinkerer\'s Hammer', description: 'A heavy, versatile tool, effective for both intricate repairs and blunt dissuasion.', item_type: 'WEAPON', rarity: 'STARTER', is_stackable: 0, crown_value: 15, damage_dice: '1d6', damage_type: 'Bludgeoning', handedness: 'one-handed', effects_json: '{"slot": "weapon", "is_tradeable": 0, "base_stats": {"might": 1}}' },
+	{ name: 'Reinforced Apron', description: 'A thick leather apron, stained with oil and grease, offering surprising resilience.', item_type: 'ARMOR', rarity: 'STARTER', is_stackable: 0, crown_value: 10, effects_json: '{"slot": "chestplate", "is_tradeable": 0, "base_stats": {"grit": 1}}' },
+
+	// Justicar
+	{ name: 'Candor\'s Mace', description: 'A solid iron mace, designed to enforce order and deliver judgment.', item_type: 'WEAPON', rarity: 'STARTER', is_stackable: 0, crown_value: 15, damage_dice: '1d6', damage_type: 'Bludgeoning', handedness: 'one-handed', effects_json: '{"slot": "weapon", "is_tradeable": 0, "base_stats": {"grit": 1}}' },
+	{ name: 'Vow Keeper\'s Sigil', description: 'A holy symbol worn on a simple chain, representing a sacred oath.', item_type: 'ACCESSORY', rarity: 'STARTER', is_stackable: 0, crown_value: 10, effects_json: '{"slot": "amulet", "is_tradeable": 0, "base_stats": {"wits": 1}}' },
+
+	// Slayer
+	{ name: 'Slayer\'s Hunting Brand', description: 'A sharp, practical blade, perfect for exploiting a creature\'s weakness.', item_type: 'WEAPON', rarity: 'STARTER', is_stackable: 0, crown_value: 15, damage_dice: '1d6', damage_type: 'Slashing', handedness: 'one-handed', effects_json: '{"slot": "weapon", "is_tradeable": 0, "base_stats": {"fortune": 1}}' },
+	{ name: 'Stalker\'s Mantle', description: 'A dark, heavy cloak that helps its wearer blend into the shadows.', item_type: 'ARMOR', rarity: 'STARTER', is_stackable: 0, crown_value: 10, effects_json: '{"slot": "chestplate", "is_tradeable": 0, "base_stats": {"finesse": 1}}' },
+
+	// Shifter
+	{ name: 'Unstable Effigy', description: 'A strange, shifting wooden doll that crackles with chaotic energy.', item_type: 'WEAPON', rarity: 'STARTER', is_stackable: 0, crown_value: 15, effects_json: '{"slot": "offhand", "is_tradeable": 0, "base_stats": {"fortune": 2}}' },
+	{ name: 'Fey-Touched Tunic', description: 'A brightly colored tunic that seems to change hue in the light.', item_type: 'ARMOR', rarity: 'STARTER', is_stackable: 0, crown_value: 10, effects_json: '{"slot": "chestplate", "is_tradeable": 0, "base_stats": {"finesse": 1}}' },
+
+	// Reaper
+	{ name: 'Ritualist\'s Dagger', description: 'A grim dagger used for carving runes and harvesting essences.', item_type: 'WEAPON', rarity: 'STARTER', is_stackable: 0, crown_value: 15, damage_dice: '1d4', damage_type: 'Slashing', handedness: 'one-handed', effects_json: '{"slot": "weapon", "is_tradeable": 0, "base_stats": {"wits": 1}}' },
+	{ name: 'Siphoning Charm', description: 'A dark amulet that seems to draw warmth from the air around it.', item_type: 'ACCESSORY', rarity: 'STARTER', is_stackable: 0, crown_value: 10, effects_json: '{"slot": "amulet", "is_tradeable": 0, "base_stats": {"fortune": 1}}' },
+
+	// Ascetic
+	{ name: 'Weighted Knuckle Wraps', description: 'Simple cloth wraps with small lead weights sewn in to add force to every strike.', item_type: 'WEAPON', rarity: 'STARTER', is_stackable: 0, crown_value: 15, damage_dice: '1d8', damage_type: 'Bludgeoning', handedness: 'two-handed', effects_json: '{"slot": "weapon", "is_tradeable": 0, "base_stats": {"might": 1}}' },
+	{ name: 'Ring of Inner Focus', description: 'A plain iron ring that helps quiet the mind and steel the body against hardship.', item_type: 'ACCESSORY', rarity: 'STARTER', is_stackable: 0, crown_value: 10, effects_json: '{"slot": "ring", "is_tradeable": 0, "base_stats": {"grit": 1}}' },
+
+	// Saboteur
+	{ name: 'Saboteur\'s Stiletto', description: 'A thin, easily concealed dagger designed for subtlety and speed.', item_type: 'WEAPON', rarity: 'STARTER', is_stackable: 0, crown_value: 15, damage_dice: '1d4', damage_type: 'Piercing', handedness: 'one-handed', effects_json: '{"slot": "weapon", "is_tradeable": 0, "base_stats": {"finesse": 1}}' },
+	{ name: 'Infiltrator\'s Charm', description: 'A small, nondescript charm that aids in observation and analysis.', item_type: 'ACCESSORY', rarity: 'STARTER', is_stackable: 0, crown_value: 10, effects_json: '{"slot": "amulet", "is_tradeable": 0, "base_stats": {"wits": 1}}' },
+
+	// Scholar
+	{ name: 'Tome of Beginnings', description: 'A heavy book filled with foundational knowledge, bound in sturdy leather.', item_type: 'WEAPON', rarity: 'STARTER', is_stackable: 0, crown_value: 15, effects_json: '{"slot": "offhand", "is_tradeable": 0, "base_stats": {"wits": 2}}' },
+	{ name: 'Amulet of Keen Insight', description: 'A simple amulet with a polished obsidian stone that seems to sharpen one\'s perception.', item_type: 'ACCESSORY', rarity: 'STARTER', is_stackable: 0, crown_value: 10, effects_json: '{"slot": "amulet", "is_tradeable": 0, "base_stats": {"fortune": 1}}' },
+
+	// Artisan
+	{ name: 'Artisan\'s Hammer', description: 'A well-balanced hammer, perfect for a forge, yet serviceable in a fight.', item_type: 'WEAPON', rarity: 'STARTER', is_stackable: 0, crown_value: 15, damage_dice: '1d6', damage_type: 'Bludgeoning', handedness: 'one-handed', effects_json: '{"slot": "weapon", "is_tradeable": 0, "base_stats": {"finesse": 1}}' },
+	{ name: 'Guildsman\'s Ring', description: 'A simple ring denoting membership in a crafter\'s guild, it focuses the mind on details.', item_type: 'ACCESSORY', rarity: 'STARTER', is_stackable: 0, crown_value: 10, effects_json: '{"slot": "ring", "is_tradeable": 0, "base_stats": {"wits": 1}}' },
+
+	// Zealot
+	{ name: 'Zealot\'s Banner', description: 'A tattered banner on a short pole, meant to be held aloft to inspire allies.', item_type: 'WEAPON', rarity: 'STARTER', is_stackable: 0, crown_value: 15, effects_json: '{"slot": "offhand", "is_tradeable": 0, "base_stats": {"charm": 2}}' },
+	{ name: 'Devotee\'s Pauldrons', description: 'Simple, hardened leather pauldrons that protect the shoulders from harm.', item_type: 'ARMOR', rarity: 'STARTER', is_stackable: 0, crown_value: 10, effects_json: '{"slot": "chestplate", "is_tradeable": 0, "base_stats": {"grit": 1}}' },
+
+	// Warden
+	{ name: 'Warden\'s Shield', description: 'A solid, wooden shield emblazoned with a simple protective sigil.', item_type: 'WEAPON', rarity: 'STARTER', is_stackable: 0, crown_value: 15, effects_json: '{"slot": "offhand", "is_tradeable": 0, "ac_bonus": 2}' },
+	{ name: 'Enforcer\'s Cudgel', description: 'A heavy, reliable club used for maintaining order and protecting the innocent.', item_type: 'WEAPON', rarity: 'STARTER', is_stackable: 0, crown_value: 10, damage_dice: '1d6', damage_type: 'Bludgeoning', handedness: 'one-handed', effects_json: '{"slot": "weapon", "is_tradeable": 0, "base_stats": {"might": 1}}' },
+];
 
 
 /**
@@ -97,7 +158,7 @@ function seedPveData() {
 	db.transaction(() => {
 		// Prepare all statements once for efficiency.
 		const selectItem = db.prepare('SELECT 1 FROM items WHERE name = ?');
-		const insertItem = db.prepare('INSERT INTO items (name, description, item_type, rarity, is_stackable, crown_value, effects_json) VALUES (?, ?, ?, ?, ?, ?, ?)');
+		const insertItem = db.prepare('INSERT INTO items (name, description, item_type, rarity, is_stackable, is_tradeable, crown_value, damage_dice, damage_type, handedness, effects_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
 		const selectLootTable = db.prepare('SELECT 1 FROM loot_tables WHERE name = ?');
 		const insertLootTable = db.prepare('INSERT INTO loot_tables (name, description) VALUES (?, ?)');
 		const selectLootEntry = db.prepare('SELECT 1 FROM loot_table_entries WHERE loot_table_id = ? AND item_id = ?');
@@ -109,12 +170,14 @@ function seedPveData() {
 		const selectPveNodeMonster = db.prepare('SELECT 1 FROM pve_node_monsters WHERE node_id = ? AND monster_id = ?');
 		const insertPveNodeMonster = db.prepare('INSERT INTO pve_node_monsters (node_id, monster_id, count) VALUES (?, ?, ?)');
 
+		const allItems = [...pveItems, ...startingEquipmentData, ...standardStartingKitData];
+
 		// 1. Seed Items (No dependencies)
 		console.log('[DB Seeding] Seeding PvE items...');
 		let itemsAdded = 0;
-		for (const item of pveItems) {
+		for (const item of allItems) {
 			if (!selectItem.get(item.name)) {
-				insertItem.run(item.name, item.description, item.item_type, item.rarity || 'COMMON', item.is_stackable, item.crown_value, item.effects_json || null);
+				insertItem.run(item.name, item.description, item.item_type, item.rarity || 'COMMON', item.is_stackable, item.is_tradeable, item.crown_value, item.damage_dice || null, item.damage_type || null, item.handedness || null, item.effects_json || null);
 				itemsAdded++;
 			}
 		}

@@ -79,7 +79,6 @@ function recalculateStats(userId) {
 			max_mana: 10 + (character.level * 3) + (totalBaseStats.wits * 10),
 			max_ki: (totalBaseStats.might + totalBaseStats.grit) * 2,
 			armor_class: 10 + Math.floor(totalBaseStats.finesse / 3),
-			// result -> calc'd formula
 			crit_chance: finalCritChance,
 			crit_damage_modifier: 1.5 + (totalBaseStats.might * 0.01),
 		};

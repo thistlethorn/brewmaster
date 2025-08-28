@@ -7,6 +7,29 @@ const { recalculateStats } = require('../../utils/recalculateStats');
 const creationSessions = new Map();
 const SESSION_TIMEOUT = 30 * 60 * 1000;
 
+/**
+ * Calculates the correct stat modifier for an attack based on its damage type.
+ * @param {string} damageType The type of damage (e.g., 'Slashing', 'Bludgeoning').
+ * @param {object} stats The character's full stat block.
+ * @returns {number} The calculated integer modifier for the damage roll.
+ */
+function getDamageModifier(damageType, stats) {
+	const mightMod = Math.floor((stats.stat_might - 5) / 2);
+	const finesseMod = Math.floor((stats.stat_finesse - 5) / 2);
+	const witsMod = Math.floor((stats.stat_wits - 5) / 2);
+
+	switch (damageType) {
+	case 'Slashing':
+		return Math.max(mightMod, finesseMod);
+	case 'Piercing':
+		return finesseMod;
+	case 'Arcane':
+		return witsMod;
+	case 'Bludgeoning':
+	default:
+		return mightMod;
+	}
+}
 
 const sessionCleanupInterval = setInterval(() => {
 	const now = Date.now();
@@ -85,7 +108,6 @@ function generateXpBar(currentXp, requiredXp) {
 async function handleView(interaction) {
 	const targetUser = interaction.options.getUser('user') || interaction.user;
 
-	recalculateStats(targetUser.id);
 	// Fetch all character data in one go, joining with origins and archetypes.
 	const characterData = db.prepare(`
         SELECT
@@ -104,6 +126,7 @@ async function handleView(interaction) {
 			: `${targetUser.username} has not created a character yet.`;
 		return interaction.reply({ content, flags: MessageFlags.Ephemeral });
 	}
+	recalculateStats(targetUser.id);
 
 	// Calculate XP required for the next level.
 	// TODO: Move the max level to config.json.
@@ -122,21 +145,60 @@ async function handleView(interaction) {
 
 	const equipmentSlots = ['weapon', 'offhand', 'helmet', 'chestplate', 'leggings', 'boots', 'ring1', 'ring2', 'amulet'];
 	const equippedItems = db.prepare(`
-        SELECT i.name, ui.equipped_slot
+        SELECT i.name, i.damage_dice, i.damage_type, ui.equipped_slot
         FROM user_inventory ui
         JOIN items i ON ui.item_id = i.item_id
         WHERE ui.user_id = ? AND ui.equipped_slot IS NOT NULL
     `).all(targetUser.id);
 
 	// Create a map for easy lookup: { helmet: 'Iron Helm', weapon: 'Rusty Sword' }
-	const equippedMap = new Map(equippedItems.map(item => [item.equipped_slot, item.name]));
+	const equippedMap = new Map(equippedItems.map(item => [item.equipped_slot, item]));
+
+	let damageString = '';
+	const weapon = equippedMap.get('weapon');
+	if (weapon) {
+		// --- This block only runs if a weapon IS equipped ---
+		const damageType = weapon.damage_type;
+		const statModifier = getDamageModifier(damageType, characterData);
+		const statSign = statModifier >= 0 ? '+' : '';
+		let statPulledFrom = '';
+
+		switch (damageType) {
+		case 'Bludgeoning':
+			statPulledFrom = 'Might';
+			break;
+		case 'Arcane':
+			statPulledFrom = 'Wits';
+			break;
+		case 'Piercing':
+			statPulledFrom = 'Finesse';
+			break;
+		case 'Slashing':
+			statPulledFrom = characterData.stat_finesse > characterData.stat_might ? 'Finesse' : 'Might';
+			break;
+		default:
+			statPulledFrom = 'Might*';
+			break;
+		}
+
+		damageString = `**Damage:** \`${weapon.damage_dice}${statSign}${statModifier}\` ${damageType} [${statPulledFrom} Based]`;
+	}
+	else {
+		// --- This block only runs if a weapon is NOT equipped ---
+		const damageType = 'Bludgeoning';
+		const statModifier = getDamageModifier(damageType, characterData);
+		const statSign = statModifier >= 0 ? '+' : '';
+
+		damageString = `**Damage:** \`1d4${statSign}${statModifier}\` ${damageType} [Might Based] (Unarmed)`;
+	}
 
 	const equipmentDisplay = equipmentSlots.map(slot => {
-		const itemName = equippedMap.get(slot) || '[Empty]';
+		const item = equippedMap.get(slot);
+		const itemName = item ? item.name : '[Empty]';
 		const slotName = slot.charAt(0).toUpperCase() + slot.slice(1).replace(/(\d+)/, ' $1');
 		return `**${slotName}:** ${itemName}`;
 	});
-
+	const isAscetic = characterData.archetype_name === 'Ascetic';
 
 	const sheetEmbed = new EmbedBuilder()
 		.setColor(0x5865F2)
@@ -148,7 +210,7 @@ async function handleView(interaction) {
 			{ name: '📈 Level Progression', value: generateXpBar(xpIntoLevel, xpRequiredForNext), inline: false },
 			{ name: '❤️ Health', value: `\`${characterData.current_health} / ${characterData.max_health}\``, inline: true },
 			{ name: '💙 Mana', value: `\`${characterData.current_mana} / ${characterData.max_mana}\``, inline: true },
-			...(characterData.max_ki > 0 ? [{
+			...(isAscetic ? [{
 				name: '🔥 Ki',
 				value: `\`${characterData.current_ki} / ${characterData.max_ki}\``,
 				inline: true,
@@ -161,7 +223,8 @@ async function handleView(interaction) {
 			},
 			{
 				name: '⚔️ Combat Stats',
-				value: `**Armor Class:** ${characterData.armor_class}\n` +
+				value: `${damageString}\n` +
+						`**Armor Class:** ${characterData.armor_class}\n` +
                        `**Crit Chance:** ${Math.round(characterData.crit_chance * 100)}%\n` +
                        `**Crit Damage:** ${(Math.round(characterData.crit_damage_modifier * 100) / 100).toFixed(2)}x`,
 				inline: false,
@@ -203,7 +266,7 @@ async function handleEquip(interaction) {
 	}
 	// Verify the item exists in the user's inventory and is equippable in the intended slot.
 	const itemToEquip = db.prepare(`
-        SELECT i.name, i.effects_json FROM user_inventory ui
+        SELECT i.name, i.handedness, i.effects_json FROM user_inventory ui
         JOIN items i ON ui.item_id = i.item_id
         WHERE ui.inventory_id = ? AND ui.user_id = ? AND json_extract(i.effects_json, '$.slot') = ?
     `).get(inventoryId, userId, itemSlotType);
@@ -215,12 +278,34 @@ async function handleEquip(interaction) {
 	try {
 
 		const equipTx = db.transaction(() => {
+
+			const isTwoHanded = itemToEquip.handedness === 'two-handed';
 			// 1. Unequip any item currently in the target slot to avoid unique constraint errors.
 			db.prepare(`
                 UPDATE user_inventory
                 SET equipped_slot = NULL
                 WHERE user_id = ? AND equipped_slot = ?
             `).run(userId, intendedSlot);
+
+			if (isTwoHanded && intendedSlot === 'weapon') {
+				db.prepare(`
+                    UPDATE user_inventory
+                    SET equipped_slot = NULL
+                    WHERE user_id = ? AND equipped_slot = 'offhand'
+                `).run(userId);
+			}
+			// NEW: Prevent equipping an offhand item if a two-handed weapon is equipped.
+			else if (intendedSlot === 'offhand') {
+				const mainWeapon = db.prepare(`
+                    SELECT i.handedness FROM user_inventory ui
+                    JOIN items i ON ui.item_id = i.item_id
+                    WHERE ui.user_id = ? AND ui.equipped_slot = 'weapon'
+                `).get(userId);
+				if (mainWeapon?.handedness === 'two-handed') {
+					// This creates a controlled failure that the try-catch will handle.
+					throw new Error('Cannot equip an offhand item while a two-handed weapon is equipped.');
+				}
+			}
 
 			// 2. Equip the new item.
 			db.prepare(`
@@ -239,6 +324,9 @@ async function handleEquip(interaction) {
 	}
 	catch (error) {
 		console.error('Equip item error:', error);
+		if (error.message.includes('two-handed weapon')) {
+			return interaction.reply({ content: `❌ ${error.message}`, flags: MessageFlags.Ephemeral });
+		}
 		await interaction.reply({ content: 'An error occurred while trying to equip this item.', flags: MessageFlags.Ephemeral });
 	}
 }
@@ -443,7 +531,9 @@ module.exports = {
      * @param {import('discord.js').ModalSubmitInteraction} interaction
      */
 	async modals(interaction) {
-		const [,, action, userId] = interaction.customId.split('_');
+		const parts = interaction.customId.split('_');
+		const action = parts[2];
+		const userId = parts[parts.length - 1];
 
 		if (!userId || !action) {
 			return interaction.reply({ content: 'Invalid interaction format.', flags: MessageFlags.Ephemeral });
@@ -598,6 +688,7 @@ module.exports = {
 			await interaction.deferUpdate();
 			try {
 				const origin = db.prepare('SELECT bonus_stat_1, bonus_stat_2 FROM origins WHERE id = ?').get(session.originId);
+				const archetype = db.prepare('SELECT name FROM archetypes WHERE id = ?').get(session.archetypeId);
 
 				const createCharacterTx = db.transaction(() => {
 					// Base stats
@@ -638,6 +729,82 @@ module.exports = {
 						stat_charm: stats.charm,
 						stat_fortune: stats.fortune,
 					});
+
+					// --- GRANT STARTING EQUIPMENT ---
+
+					// 1. Define the item names for standard and archetype-specific gear
+					const standardItems = [
+						'Simple Dagger',
+						'Worn Buckler',
+						'Traveler\'s Hood',
+						'Traveler\'s Tunic',
+						'Traveler\'s Trousers',
+						'Worn Leather Boots',
+						'Simple Iron Band',
+						'Frayed Rope Amulet',
+					];
+					const archetypeItems = {
+						'Channeler': ['Channeler\'s Focus', 'Acolyte\'s Robes'],
+						'Golemancer': ['Tinkerer\'s Hammer', 'Reinforced Apron'],
+						'Justicar': ['Candor\'s Mace', 'Vow Keeper\'s Sigil'],
+						'Slayer': ['Slayer\'s Hunting Brand', 'Stalker\'s Mantle'],
+						'Shifter': ['Unstable Effigy', 'Fey-Touched Tunic'],
+						'Reaper': ['Ritualist\'s Dagger', 'Siphoning Charm'],
+						'Ascetic': ['Weighted Knuckle Wraps', 'Ring of Inner Focus'],
+						'Saboteur': ['Saboteur\'s Stiletto', 'Infiltrator\'s Charm'],
+						'Scholar': ['Tome of Beginnings', 'Amulet of Keen Insight'],
+						'Artisan': ['Artisan\'s Hammer', 'Guildsman\'s Ring'],
+						'Zealot': ['Zealot\'s Banner', 'Devotee\'s Pauldrons'],
+						'Warden': ['Warden\'s Shield', 'Enforcer\'s Cudgel'],
+					};
+
+					const itemsToGrant = [...standardItems, ...(archetypeItems[archetype.name] || [])];
+					if (itemsToGrant.length === 0) return;
+
+					// 2. Prepare a statement to get item IDs from their names
+					const getItemData = db.prepare('SELECT item_id, effects_json FROM items WHERE name = ?');
+					const insertInventoryItem = db.prepare('INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, 1)');
+					const equipItem = db.prepare('UPDATE user_inventory SET equipped_slot = ? WHERE inventory_id = ?');
+
+					let ringSlotCounter = 1;
+
+					for (const itemName of itemsToGrant) {
+						const item = getItemData.get(itemName);
+						if (item) {
+							// Always insert the item into inventory first
+							const result = insertInventoryItem.run(userId, item.item_id);
+							const newInventoryId = result.lastInsertRowid;
+
+							// If it's a standard item, try to equip it
+							if (standardItems.includes(itemName)) {
+								try {
+									const effects = JSON.parse(item.effects_json);
+									let slotToEquip = effects?.slot;
+
+									if (slotToEquip) {
+										if (slotToEquip === 'ring') {
+											if (ringSlotCounter <= 2) {
+												slotToEquip = `ring${ringSlotCounter}`;
+												ringSlotCounter++;
+											}
+											else {
+												slotToEquip = null;
+											}
+										}
+										if (slotToEquip) {
+											equipItem.run(slotToEquip, newInventoryId);
+										}
+									}
+								}
+								catch (e) {
+									console.error(`[Auto-Equip] Failed to parse effects_json for ${itemName}: ${e.message}`);
+								}
+							}
+						}
+						else {
+							console.error(`[Character Creation] Could not find item "${itemName}" to grant to new character.`);
+						}
+					}
 				});
 
 				createCharacterTx();
@@ -646,7 +813,7 @@ module.exports = {
 				const successEmbed = new EmbedBuilder()
 					.setColor(0x2ECC71)
 					.setTitle('🎉 Character Created! 🎉')
-					.setDescription(`**${session.name}** has been born! Welcome to a new world of adventure. You can view your new character sheet at any time with \`/character view\`.`);
+					.setDescription(`**${session.name}** has been born! Welcome to a new world of adventure.\n\nYour standard gear has been automatically equipped to get you started. You'll find archetype-specific items in your inventory—use \`/character equip\` to try them on!\n\nYou can view your new character sheet at any time with \`/character view\`.`);
 
 				await interaction.editReply({ embeds: [successEmbed], components: [] });
 
@@ -659,6 +826,7 @@ module.exports = {
 		}
 		else if (action === 'cancel') {
 			creationSessions.delete(userId);
+			await interaction.deferUpdate();
 			await interaction.editReply({ content: 'Character creation has been cancelled.', embeds: [], components: [] });
 		}
 	},
