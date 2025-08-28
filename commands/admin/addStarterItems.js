@@ -1,8 +1,10 @@
+// commands/admin/addStarterItems.js
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, MessageFlags } = require('discord.js');
 const db = require('../../database');
+const { recalculateStats } = require('../../utils/recalculateStats');
 
 // These lists should be an exact copy of the ones used in your character creation logic
-// to ensure consistency. I've taken them from your `character.js` file.
+// to ensure consistency.
 const standardItems = [
 	'Simple Dagger', 'Worn Buckler', 'Traveler\'s Hood', 'Traveler\'s Tunic',
 	'Traveler\'s Trousers', 'Worn Leather Boots', 'Simple Iron Band', 'Frayed Rope Amulet',
@@ -28,7 +30,7 @@ module.exports = {
 	category: 'admin',
 	data: new SlashCommandBuilder()
 		.setName('addstarteritems')
-		.setDescription('[ADMIN] Back-fills starter items for a character who was created before the system was added.')
+		.setDescription('[ADMIN] Back-fills starter items and equips the standard set for a character.')
 		.addUserOption(option =>
 			option.setName('user')
 				.setDescription('The user whose character needs their starter items.')
@@ -45,7 +47,6 @@ module.exports = {
 
 		await interaction.deferReply({ ephemeral: true });
 
-		// 1. Verify the user has a character and get their archetype
 		const characterInfo = db.prepare(`
             SELECT a.name as archetype_name
             FROM characters c
@@ -57,7 +58,6 @@ module.exports = {
 			return interaction.editReply({ content: `${targetUser.username} does not have a character.` });
 		}
 
-		// 2. Construct the full list of items they *should* have
 		const archetypeSpecificItems = archetypeItems[characterInfo.archetype_name] || [];
 		const itemsToGrant = [...standardItems, ...archetypeSpecificItems];
 
@@ -67,58 +67,98 @@ module.exports = {
 
 		try {
 			const grantedItemsList = [];
+			const equippedItemsList = [];
 
-			// 3. Use a transaction for safety. This ensures all items are added or none are.
+			// --- Grant Missing Items ---
 			const grantTx = db.transaction(() => {
-				// Prepare statements for efficiency inside the loop
 				const getItemId = db.prepare('SELECT item_id FROM items WHERE name = ?');
 				const checkIfExists = db.prepare('SELECT 1 FROM user_inventory WHERE user_id = ? AND item_id = ?');
 				const insertItem = db.prepare('INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, 1)');
 
 				for (const itemName of itemsToGrant) {
 					const item = getItemId.get(itemName);
-
 					if (!item) {
 						console.warn(`[addstarteritems] Could not find item "${itemName}" in the database. Skipping.`);
 						continue;
 					}
-
-					// Check if the user already has this specific item
 					const alreadyHasItem = checkIfExists.get(userId, item.item_id);
-
 					if (!alreadyHasItem) {
-						// If they don't have it, grant it
 						insertItem.run(userId, item.item_id);
 						grantedItemsList.push(itemName);
 					}
 				}
 			});
 
-			// Execute the transaction
 			grantTx();
 
-			// 4. Provide clear feedback to the admin
-			if (grantedItemsList.length > 0) {
-				const successEmbed = new EmbedBuilder()
-					.setColor(0x2ECC71)
-					.setTitle('✅ Items Granted Successfully')
-					.setDescription(`The following starter items have been added to ${targetUser.username}'s inventory:`)
-					.addFields({
-						name: 'Granted Items',
-						value: grantedItemsList.map(name => `• ${name}`).join('\n'),
-					})
-					.setFooter({ text: `Archetype: ${characterInfo.archetype_name}` });
+			// --- Equip Standard Items into Empty Slots ---
+			const equipTx = db.transaction(() => {
+				const userStandardItems = db.prepare(`
+                    SELECT ui.inventory_id, i.name, i.effects_json
+                    FROM user_inventory ui
+                    JOIN items i ON ui.item_id = i.item_id
+                    WHERE ui.user_id = ? AND i.name IN (${standardItems.map(() => '?').join(',')}) AND ui.equipped_slot IS NULL
+                `).all(userId, ...standardItems);
 
-				await interaction.editReply({ embeds: [successEmbed] });
+				const occupiedSlotsResult = db.prepare('SELECT equipped_slot FROM user_inventory WHERE user_id = ? AND equipped_slot IS NOT NULL').all(userId);
+				const occupiedSlots = new Set(occupiedSlotsResult.map(row => row.equipped_slot));
+				const equipStmt = db.prepare('UPDATE user_inventory SET equipped_slot = ? WHERE inventory_id = ?');
+
+				for (const item of userStandardItems) {
+					try {
+						const effects = JSON.parse(item.effects_json);
+						let slotToEquip = effects?.slot;
+
+						if (slotToEquip) {
+							if (slotToEquip === 'ring') {
+								if (!occupiedSlots.has('ring1')) slotToEquip = 'ring1';
+								else if (!occupiedSlots.has('ring2')) slotToEquip = 'ring2';
+								else slotToEquip = null;
+							}
+
+							if (slotToEquip && !occupiedSlots.has(slotToEquip)) {
+								equipStmt.run(slotToEquip, item.inventory_id);
+								occupiedSlots.add(slotToEquip);
+								equippedItemsList.push(item.name);
+							}
+						}
+					}
+					catch (e) {
+						console.error(`[addstarteritems] Failed to parse/equip ${item.name}: ${e.message}`);
+					}
+				}
+			});
+
+			equipTx();
+
+			// --- Recalculate stats and reply ---
+			if (equippedItemsList.length > 0) {
+				recalculateStats(userId);
 			}
-			else {
-				await interaction.editReply({ content: `${targetUser.username} already possessed all of their starter items. No items were added.` });
+
+			if (grantedItemsList.length === 0 && equippedItemsList.length === 0) {
+				return interaction.editReply({ content: `${targetUser.username} already possessed all of their starter items and relevant gear was equipped. No changes made.` });
 			}
+
+			const successEmbed = new EmbedBuilder()
+				.setColor(0x2ECC71)
+				.setTitle('✅ Starter Kit Processed')
+				.setDescription(`Items have been granted and/or equipped for ${targetUser.username}.`)
+				.setFooter({ text: `Archetype: ${characterInfo.archetype_name}` });
+
+			if (grantedItemsList.length > 0) {
+				successEmbed.addFields({ name: '+ New Items Granted', value: grantedItemsList.map(name => `• ${name}`).join('\n') });
+			}
+			if (equippedItemsList.length > 0) {
+				successEmbed.addFields({ name: '🛡️ Standard Items Equipped', value: equippedItemsList.map(name => `• ${name}`).join('\n') });
+			}
+
+			await interaction.editReply({ embeds: [successEmbed] });
 
 		}
 		catch (error) {
 			console.error('[addstarteritems] A database error occurred:', error);
-			await interaction.editReply({ content: 'A critical database error occurred while trying to grant items. The operation has been rolled back.' });
+			await interaction.editReply({ content: 'A critical database error occurred while trying to process items. The operation has been rolled back.' });
 		}
 	},
 };
