@@ -491,18 +491,22 @@ const setupTables = db.transaction(() => {
 
             -- === Core Identity (Mandatory) ===
             user_id TEXT PRIMARY KEY,
-            character_name TEXT NOT NULL,
             origin_id INTEGER NOT NULL,
             archetype_id INTEGER NOT NULL,
 
-            -- === Role-Playing Fields  ===
-            character_backstory TEXT NOT NULL DEFAULT '',
+            -- === Player Set Role-Playing Fields  ===
+            character_name TEXT NOT NULL,
             character_image TEXT NOT NULL DEFAULT '',
+            character_backstory TEXT NOT NULL DEFAULT '',
             character_alignment TEXT NOT NULL DEFAULT '',
+
             character_ideals TEXT NOT NULL DEFAULT '',
             character_bonds TEXT NOT NULL DEFAULT '',
             character_flaws TEXT NOT NULL DEFAULT '',
             character_traits TEXT NOT NULL DEFAULT '',
+
+            -- === Gameplay Set Role-Playing Fields  ===
+
             character_languages TEXT NOT NULL DEFAULT '',
             character_title TEXT NOT NULL DEFAULT '',
 

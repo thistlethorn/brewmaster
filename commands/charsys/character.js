@@ -1,5 +1,5 @@
 // commands/charsys/character.js
-const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, MessageFlags } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, MessageFlags, StringSelectMenuBuilder } = require('discord.js');
 const db = require('../../database');
 const { recalculateStats } = require('../../utils/recalculateStats');
 // In-memory store for character creation sessions.
@@ -107,6 +107,7 @@ function generateXpBar(currentXp, requiredXp) {
  */
 async function handleView(interaction) {
 	const targetUser = interaction.options.getUser('user') || interaction.user;
+	const isSelfView = targetUser.id === interaction.user.id;
 
 	// Fetch all character data in one go, joining with origins and archetypes.
 	const characterData = db.prepare(`
@@ -121,27 +122,17 @@ async function handleView(interaction) {
     `).get(targetUser.id);
 
 	if (!characterData) {
-		const content = targetUser.id === interaction.user.id
+		const content = isSelfView
 			? 'You have not created a character yet. Use `/character create` to begin!'
 			: `${targetUser.username} has not created a character yet.`;
 		return interaction.reply({ content, flags: MessageFlags.Ephemeral });
 	}
 	recalculateStats(targetUser.id);
 
-	// Calculate XP required for the next level.
-	// TODO: Move the max level to config.json.
 	const MAX_LEVEL = 100;
-
 	const level = Math.min(characterData.level, MAX_LEVEL);
-
-	// This is the XP the character has accumulated for their CURRENT level.
-	// It's read directly from the database because addXp.js stores it this way.
 	const xpIntoLevel = characterData.xp;
-
-	// This is the total amount of XP needed to complete the CURRENT level.
 	const xpRequiredForNext = Math.floor(100 * (level ** 1.5));
-
-	// Fetch equipped items
 
 	const equipmentSlots = ['weapon', 'offhand', 'helmet', 'chestplate', 'leggings', 'boots', 'ring1', 'ring2', 'amulet'];
 	const equippedItems = db.prepare(`
@@ -151,13 +142,11 @@ async function handleView(interaction) {
         WHERE ui.user_id = ? AND ui.equipped_slot IS NOT NULL
     `).all(targetUser.id);
 
-	// Create a map for easy lookup: { helmet: 'Iron Helm', weapon: 'Rusty Sword' }
 	const equippedMap = new Map(equippedItems.map(item => [item.equipped_slot, item]));
 
 	let damageString = '';
 	const weapon = equippedMap.get('weapon');
 	if (weapon) {
-		// --- This block only runs if a weapon IS equipped ---
 		const damageType = weapon.damage_type;
 		const statModifier = getDamageModifier(damageType, characterData);
 		const statSign = statModifier >= 0 ? '+' : '';
@@ -184,7 +173,6 @@ async function handleView(interaction) {
 		damageString = `**Damage:** \`${weapon.damage_dice}${statSign}${statModifier}\` ${damageType} [${statPulledFrom} Based]`;
 	}
 	else {
-		// --- This block only runs if a weapon is NOT equipped ---
 		const damageType = 'Bludgeoning';
 		const statModifier = getDamageModifier(damageType, characterData);
 		const statSign = statModifier >= 0 ? '+' : '';
@@ -199,6 +187,10 @@ async function handleView(interaction) {
 		return `**${slotName}:** ${itemName}`;
 	});
 	const isAscetic = characterData.archetype_name === 'Ascetic';
+
+	const unspentPoints = characterData.stat_points_unspent > 0
+		? `\n**Unspent Stat Points:** 🌟 \`${characterData.stat_points_unspent}\``
+		: '';
 
 	const sheetEmbed = new EmbedBuilder()
 		.setColor(0x5865F2)
@@ -218,7 +210,7 @@ async function handleView(interaction) {
 			{
 				name: '📊 Base Stats',
 				value: `**Might:** ${characterData.stat_might} | **Finesse:** ${characterData.stat_finesse} | **Wits:** ${characterData.stat_wits}\n` +
-                       `**Grit:** ${characterData.stat_grit} | **Charm:** ${characterData.stat_charm} | **Fortune:** ${characterData.stat_fortune}`,
+                       `**Grit:** ${characterData.stat_grit} | **Charm:** ${characterData.stat_charm} | **Fortune:** ${characterData.stat_fortune}${unspentPoints}`,
 				inline: false,
 			},
 			{
@@ -238,7 +230,23 @@ async function handleView(interaction) {
 		.setFooter({ text: 'Use /character equip to manage your gear.' })
 		.setTimestamp();
 
-	await interaction.reply({ embeds: [sheetEmbed] });
+	// --- NEW: Add edit buttons only if viewing your own character ---
+	const components = [];
+	if (isSelfView) {
+		const editRow1 = new ActionRowBuilder().addComponents(
+			new ButtonBuilder().setCustomId(`char_edit_name_${targetUser.id}`).setLabel('Edit Name').setStyle(ButtonStyle.Secondary).setEmoji('✏️'),
+			new ButtonBuilder().setCustomId(`char_edit_image_${targetUser.id}`).setLabel('Set Image').setStyle(ButtonStyle.Secondary).setEmoji('🖼️'),
+			new ButtonBuilder().setCustomId(`char_edit_alignment_${targetUser.id}`).setLabel('Set Alignment').setStyle(ButtonStyle.Secondary).setEmoji('🧭'),
+		);
+		const editRow2 = new ActionRowBuilder().addComponents(
+			new ButtonBuilder().setCustomId(`char_edit_backstory_${targetUser.id}`).setLabel('Edit Backstory').setStyle(ButtonStyle.Secondary).setEmoji('📖'),
+			new ButtonBuilder().setCustomId(`char_edit_personality_${targetUser.id}`).setLabel('Edit Personality').setStyle(ButtonStyle.Secondary).setEmoji('🎭'),
+		);
+		components.push(editRow1, editRow2);
+	}
+
+
+	await interaction.reply({ embeds: [sheetEmbed], components: components });
 }
 
 /**
@@ -248,7 +256,6 @@ async function handleView(interaction) {
 async function handleEquip(interaction) {
 	const userId = interaction.user.id;
 	const inventoryId = interaction.options.getInteger('item');
-	// The `slot` option is primarily for filtering the autocomplete, but we can use it for validation.
 	const intendedSlot = interaction.options.getString('slot');
 
 	const character = db.prepare('SELECT user_id FROM characters WHERE user_id = ?').get(userId);
@@ -264,7 +271,7 @@ async function handleEquip(interaction) {
 	if (!validItemSlotTypes.includes(itemSlotType)) {
 		return interaction.reply({ content: 'Invalid equipment slot specified.', flags: MessageFlags.Ephemeral });
 	}
-	// Verify the item exists in the user's inventory and is equippable in the intended slot.
+
 	const itemToEquip = db.prepare(`
         SELECT i.name, i.handedness, i.effects_json FROM user_inventory ui
         JOIN items i ON ui.item_id = i.item_id
@@ -278,9 +285,7 @@ async function handleEquip(interaction) {
 	try {
 
 		const equipTx = db.transaction(() => {
-
 			const isTwoHanded = itemToEquip.handedness === 'two-handed';
-			// 1. Unequip any item currently in the target slot to avoid unique constraint errors.
 			db.prepare(`
                 UPDATE user_inventory
                 SET equipped_slot = NULL
@@ -294,7 +299,6 @@ async function handleEquip(interaction) {
                     WHERE user_id = ? AND equipped_slot = 'offhand'
                 `).run(userId);
 			}
-			// NEW: Prevent equipping an offhand item if a two-handed weapon is equipped.
 			else if (intendedSlot === 'offhand') {
 				const mainWeapon = db.prepare(`
                     SELECT i.handedness FROM user_inventory ui
@@ -302,23 +306,18 @@ async function handleEquip(interaction) {
                     WHERE ui.user_id = ? AND ui.equipped_slot = 'weapon'
                 `).get(userId);
 				if (mainWeapon?.handedness === 'two-handed') {
-					// This creates a controlled failure that the try-catch will handle.
 					throw new Error('Cannot equip an offhand item while a two-handed weapon is equipped.');
 				}
 			}
 
-			// 2. Equip the new item.
 			db.prepare(`
                 UPDATE user_inventory
                 SET equipped_slot = ?
                 WHERE inventory_id = ? AND user_id = ?
             `).run(intendedSlot, inventoryId, userId);
 		});
-
 		equipTx();
-
 		recalculateStats(userId);
-
 		await interaction.reply({ content: `✅ Successfully equipped **${itemToEquip.name}**. Your stats have been updated.`, flags: MessageFlags.Ephemeral });
 
 	}
@@ -338,18 +337,14 @@ async function handleEquip(interaction) {
 async function handleUnequip(interaction) {
 	const userId = interaction.user.id;
 	const slotToUnequip = interaction.options.getString('slot');
-
 	const validEquipTargetSlots = ['weapon', 'offhand', 'helmet', 'chestplate', 'leggings', 'boots', 'ring1', 'ring2', 'amulet'];
 	if (!validEquipTargetSlots.includes(slotToUnequip)) {
 		return interaction.reply({ content: 'Invalid equipment slot specified.', flags: MessageFlags.Ephemeral });
 	}
-
 	const character = db.prepare('SELECT * FROM characters WHERE user_id = ?').get(userId);
 	if (!character) {
 		return interaction.reply({ content: 'You must create a character first with `/character create`.', flags: MessageFlags.Ephemeral });
 	}
-
-	// Find the item name *before* unequipping it for the reply message.
 	const itemInfo = db.prepare(`
         SELECT i.name FROM user_inventory ui
         JOIN items i ON ui.item_id = i.item_id
@@ -366,9 +361,7 @@ async function handleUnequip(interaction) {
             SET equipped_slot = NULL
             WHERE user_id = ? AND equipped_slot = ?
         `).run(userId, slotToUnequip);
-
 		recalculateStats(userId);
-
 		const itemName = itemInfo ? `**${itemInfo.name}**` : 'the item';
 		await interaction.reply({ content: `✅ Successfully unequipped ${itemName} from your ${slotToUnequip} slot.`, flags: MessageFlags.Ephemeral });
 	}
@@ -377,6 +370,43 @@ async function handleUnequip(interaction) {
 		await interaction.reply({ content: 'An error occurred while trying to unequip this item.', flags: MessageFlags.Ephemeral });
 	}
 }
+// --- NEW: Handler for /character spendpoints ---
+/**
+ * Handles the /character spendpoints command.
+ * @param {import('discord.js').ChatInputCommandInteraction} interaction
+ */
+async function handleSpendPoints(interaction) {
+	const userId = interaction.user.id;
+	const character = db.prepare('SELECT stat_points_unspent FROM characters WHERE user_id = ?').get(userId);
+
+	if (!character) {
+		return interaction.reply({ content: 'You must create a character first.', flags: MessageFlags.Ephemeral });
+	}
+
+	if (!character.stat_points_unspent || character.stat_points_unspent <= 0) {
+		return interaction.reply({ content: 'You have no unspent stat points to allocate.', flags: MessageFlags.Ephemeral });
+	}
+
+	const modal = new ModalBuilder()
+		.setCustomId(`char_spendpoints_${userId}`)
+		.setTitle(`Allocate Stat Points (${character.stat_points_unspent} available)`);
+
+	const stats = ['might', 'finesse', 'wits', 'grit', 'charm', 'fortune'];
+	for (const stat of stats) {
+		modal.addComponents(new ActionRowBuilder().addComponents(
+			new TextInputBuilder()
+				.setCustomId(`stat_${stat}`)
+				.setLabel(stat.charAt(0).toUpperCase() + stat.slice(1))
+				.setStyle(TextInputStyle.Short)
+				.setPlaceholder('0')
+				.setRequired(false),
+		));
+	}
+
+	await interaction.showModal(modal);
+}
+
+
 module.exports = {
 	category: 'charsys',
 	data: new SlashCommandBuilder()
@@ -427,17 +457,16 @@ module.exports = {
 						.setDescription('The equipment slot to clear.')
 						.setRequired(true)
 						.setAutocomplete(true)))
+		// --- NEW: Subcommand for spending points ---
+		.addSubcommand(subcommand =>
+			subcommand
+				.setName('spendpoints')
+				.setDescription('Allocate your unspent stat points from leveling up.'))
 		.addSubcommand(subcommand =>
 			subcommand
 				.setName('help')
 				.setDescription('Get help and information about the character system.')),
 
-	/**
-	* Autocomplete handler for /character subcommands.
-	* - equip/item: filters inventory items for the selected slot
-	* - unequip/slot: lists currently equipped slots
-	* @param {import('discord.js').AutocompleteInteraction} interaction
-	*/
 	async autocomplete(interaction) {
 		const subcommand = interaction.options.getSubcommand();
 		const focusedOption = interaction.options.getFocused(true);
@@ -445,19 +474,14 @@ module.exports = {
 
 		if (subcommand === 'equip') {
 			if (focusedOption.name === 'item') {
-				// Get the value of the *other*, already-filled-in option.
 				const slot = interaction.options.getString('slot');
-				if (!slot) {
-					// If the user hasn't chosen a slot yet, show no items.
-					return interaction.respond([]);
-				}
+				if (!slot) return interaction.respond([]);
+
 				const validSlotTypes = ['weapon', 'offhand', 'helmet', 'chestplate', 'leggings', 'boots', 'ring', 'amulet'];
 				const itemSlotType = slot.startsWith('ring') ? 'ring' : slot;
-				if (!validSlotTypes.includes(itemSlotType)) {
-					return interaction.respond([]);
-				}
+				if (!validSlotTypes.includes(itemSlotType)) return interaction.respond([]);
+
 				const focusedValue = focusedOption.value.toLowerCase();
-				// Find items in inventory that match the chosen slot.
 				const equippableItems = db.prepare(`
                     SELECT ui.inventory_id, i.name
                     FROM user_inventory ui
@@ -477,7 +501,6 @@ module.exports = {
 		}
 		else if (subcommand === 'unequip') {
 			if (focusedOption.name === 'slot') {
-
 				const equippedItems = db.prepare(`
 					SELECT ui.equipped_slot, i.name
 					FROM user_inventory ui
@@ -492,16 +515,11 @@ module.exports = {
 						value: item.equipped_slot,
 					};
 				});
-
 				await interaction.respond(equippedSlots.slice(0, 25));
 			}
 		}
 	},
 
-	/**
-	* Executes the /character command by dispatching to subcommand handlers.
-	* @param {import('discord.js').ChatInputCommandInteraction} interaction
-	*/
 	async execute(interaction) {
 		const subcommand = interaction.options.getSubcommand();
 
@@ -518,6 +536,10 @@ module.exports = {
 		case 'unequip':
 			await handleUnequip(interaction);
 			break;
+		// --- NEW: Case for spendpoints ---
+		case 'spendpoints':
+			await handleSpendPoints(interaction);
+			break;
 		case 'help':
 			await interaction.reply({ content: 'Character system help guide is under construction!', flags: MessageFlags.Ephemeral });
 			break;
@@ -526,30 +548,126 @@ module.exports = {
 		}
 	},
 
-	/**
-     * Handles modal submissions for the character creation process.
-     * @param {import('discord.js').ModalSubmitInteraction} interaction
-     */
 	async modals(interaction) {
 		const parts = interaction.customId.split('_');
+		const command = parts[1];
 		const action = parts[2];
 		const userId = parts[parts.length - 1];
-
-		if (!userId || !action) {
-			return interaction.reply({ content: 'Invalid interaction format.', flags: MessageFlags.Ephemeral });
-		}
 
 		if (interaction.user.id !== userId) {
 			return interaction.reply({ content: 'This interaction is not for you.', flags: MessageFlags.Ephemeral });
 		}
 
+		// --- NEW: Handler for the Spend Points Modal ---
+		if (command === 'spendpoints') {
+			await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+			const character = db.prepare('SELECT stat_points_unspent FROM characters WHERE user_id = ?').get(userId);
+			if (!character || character.stat_points_unspent <= 0) {
+				return interaction.editReply('You have no points to spend.');
+			}
+
+			const pointsToSpend = { might: 0, finesse: 0, wits: 0, grit: 0, charm: 0, fortune: 0 };
+			let totalSpent = 0;
+			for (const stat in pointsToSpend) {
+				const value = parseInt(interaction.fields.getTextInputValue(`stat_${stat}`), 10);
+				if (!isNaN(value) && value > 0) {
+					pointsToSpend[stat] = value;
+					totalSpent += value;
+				}
+			}
+
+			if (totalSpent <= 0) {
+				return interaction.editReply('You did not allocate any points.');
+			}
+			if (totalSpent > character.stat_points_unspent) {
+				return interaction.editReply(`You tried to spend ${totalSpent} points, but you only have ${character.stat_points_unspent} available.`);
+			}
+
+			try {
+				const spendTx = db.transaction(() => {
+					db.prepare(`
+                        UPDATE characters
+                        SET
+                            stat_might = stat_might + ?,
+                            stat_finesse = stat_finesse + ?,
+                            stat_wits = stat_wits + ?,
+                            stat_grit = stat_grit + ?,
+                            stat_charm = stat_charm + ?,
+                            stat_fortune = stat_fortune + ?,
+                            stat_points_unspent = stat_points_unspent - ?
+                        WHERE user_id = ?
+                    `).run(
+						pointsToSpend.might, pointsToSpend.finesse, pointsToSpend.wits,
+						pointsToSpend.grit, pointsToSpend.charm, pointsToSpend.fortune,
+						totalSpent, userId,
+					);
+				});
+				spendTx();
+				recalculateStats(userId);
+
+				const updatedStats = Object.entries(pointsToSpend).filter(([, val]) => val > 0).map(([key, val]) => `• **${key.charAt(0).toUpperCase() + key.slice(1)}:** +${val}`).join('\n');
+				const successEmbed = new EmbedBuilder()
+					.setColor(0x2ECC71).setTitle('✅ Stats Increased!')
+					.setDescription(`You successfully spent **${totalSpent}** stat points. Your stats have been updated.`)
+					.addFields({ name: 'Points Allocated', value: updatedStats });
+
+				await interaction.editReply({ embeds: [successEmbed] });
+			}
+			catch (error) {
+				console.error('Spend points error:', error);
+				await interaction.editReply('An error occurred while updating your stats.');
+			}
+			return;
+		}
+
+		// --- NEW: Handlers for Character Edit Modals ---
+		if (command === 'edit') {
+			try {
+				let successMessage = 'Your character has been updated!';
+				if (action === 'name') {
+					const newName = interaction.fields.getTextInputValue('char_name');
+					db.prepare('UPDATE characters SET character_name = ? WHERE user_id = ?').run(newName, userId);
+					successMessage = `Your character's name has been changed to **${newName}**.`;
+				}
+				else if (action === 'image') {
+					const imageUrl = interaction.fields.getTextInputValue('char_image');
+					const urlRegex = /\.(jpeg|jpg|gif|png)$/;
+					if (imageUrl && !urlRegex.test(imageUrl)) {
+						return interaction.reply({ content: 'Please provide a valid direct image URL (ending in .png, .jpg, .jpeg, or .gif).', flags: MessageFlags.Ephemeral });
+					}
+					db.prepare('UPDATE characters SET character_image = ? WHERE user_id = ?').run(imageUrl, userId);
+					successMessage = 'Your character\'s image has been updated.';
+				}
+				else if (action === 'backstory') {
+					const newBackstory = interaction.fields.getTextInputValue('char_backstory');
+					db.prepare('UPDATE characters SET character_backstory = ? WHERE user_id = ?').run(newBackstory, userId);
+					successMessage = 'Your character\'s backstory has been updated.';
+				}
+				else if (action === 'personality') {
+					const ideals = interaction.fields.getTextInputValue('char_ideals');
+					const bonds = interaction.fields.getTextInputValue('char_bonds');
+					const flaws = interaction.fields.getTextInputValue('char_flaws');
+					const traits = interaction.fields.getTextInputValue('char_traits');
+					db.prepare('UPDATE characters SET character_ideals = ?, character_bonds = ?, character_flaws = ?, character_traits = ? WHERE user_id = ?')
+						.run(ideals, bonds, flaws, traits, userId);
+					successMessage = 'Your character\'s personality details have been updated.';
+				}
+				await interaction.reply({ content: `✅ ${successMessage}`, flags: MessageFlags.Ephemeral });
+			}
+			catch (error) {
+				console.error(`Error updating character for user ${userId}:`, error);
+				await interaction.reply({ content: 'There was an error updating your character. Please try again.', flags: MessageFlags.Ephemeral });
+			}
+			return;
+		}
+
+
+		// Existing handler for character creation modals
 		const session = creationSessions.get(userId);
 		if (!session) {
 			return interaction.reply({ content: 'Your creation session has expired. Please start over with `/character create`.', flags: MessageFlags.Ephemeral });
 		}
-
 		session.timestamp = Date.now();
-
 		await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
 		if (action === 'name' && session.step === 'name') {
@@ -557,20 +675,15 @@ module.exports = {
 			session.name = characterName;
 			session.step = 'origin';
 
-			// --- Show Origin Selection ---
 			const origins = db.prepare('SELECT * FROM origins').all();
 			const embed = new EmbedBuilder()
 				.setColor(0x3498DB)
 				.setTitle(`Step 2: Choose an Origin for ${characterName}`)
 				.setDescription('Your Origin defines your background, granting you starting stat bonuses and a unique perk.');
-
 			const rows = createButtonRows(origins, 'char_create_origin', userId);
-
 			await interaction.editReply({ embeds: [embed], components: rows });
 		}
 		else if (action === 'rp' && session.step === 'rp') {
-			// This will be implemented in a future step.
-			// For now, we go to final confirmation.
 			session.backstory = interaction.fields.getTextInputValue('rp_backstory');
 			session.alignment = interaction.fields.getTextInputValue('rp_alignment');
 			session.ideals = interaction.fields.getTextInputValue('rp_ideals');
@@ -609,27 +722,87 @@ module.exports = {
 			await interaction.editReply({ embeds: [confirmEmbed], components: [confirmRow] });
 		}
 	},
+	// --- NEW: Select Menu handler for alignment ---
+	async menus(interaction) {
+		const parts = interaction.customId.split('_');
+		const [, command, action, userId] = parts;
+		if (interaction.user.id !== userId || command !== 'edit' || action !== 'alignment') return;
 
-	/**
-     * Handles button presses for the character creation process.
-     * @param {import('discord.js').ButtonInteraction} interaction
-     */
+		try {
+			const newAlignment = interaction.values[0];
+			db.prepare('UPDATE characters SET character_alignment = ? WHERE user_id = ?').run(newAlignment, userId);
+			await interaction.update({ content: `✅ Your character's alignment has been set to **${newAlignment}**.`, components: [], embeds: [] });
+		}
+		catch (error) {
+			console.error('Alignment update error:', error);
+			await interaction.update({ content: 'There was an error updating your alignment.', components: [], embeds: [] });
+		}
+	},
+
 	async buttons(interaction) {
 		const parts = interaction.customId.split('_');
+		const command = parts[1];
 		const action = parts[2];
 		const userId = parts[parts.length - 1];
-		const id = (action === 'origin' || action === 'archetype') ? parts[3] : undefined;
 
 		if (interaction.user.id !== userId) {
 			return interaction.reply({ content: 'This interaction is not for you.', flags: MessageFlags.Ephemeral });
 		}
 
+		// --- NEW: Handlers for Character Edit Buttons ---
+		if (command === 'edit') {
+			const character = db.prepare('SELECT * FROM characters WHERE user_id = ?').get(userId);
+			if (!character) return interaction.reply({ content: 'Could not find your character data.', flags: MessageFlags.Ephemeral });
+
+			switch (action) {
+			case 'name': {
+				const modal = new ModalBuilder().setCustomId(`char_edit_name_${userId}`).setTitle('Edit Character Name');
+				modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('char_name').setLabel('New Name').setStyle(TextInputStyle.Short).setValue(character.character_name).setRequired(true)));
+				return interaction.showModal(modal);
+			}
+			case 'image': {
+				const modal = new ModalBuilder().setCustomId(`char_edit_image_${userId}`).setTitle('Set Character Image');
+				modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('char_image').setLabel('Image URL').setStyle(TextInputStyle.Short).setValue(character.character_image || '').setPlaceholder('https://example.com/image.png').setRequired(false)));
+				return interaction.showModal(modal);
+			}
+			case 'alignment': {
+				const menu = new StringSelectMenuBuilder()
+					.setCustomId(`char_edit_alignment_${userId}`)
+					.setPlaceholder('Select your character\'s alignment')
+					.addOptions([
+						{ label: 'Lawful Good', value: 'Lawful Good' }, { label: 'Neutral Good', value: 'Neutral Good' }, { label: 'Chaotic Good', value: 'Chaotic Good' },
+						{ label: 'Lawful Neutral', value: 'Lawful Neutral' }, { label: 'True Neutral', value: 'True Neutral' }, { label: 'Chaotic Neutral', value: 'Chaotic Neutral' },
+						{ label: 'Lawful Evil', value: 'Lawful Evil' }, { label: 'Neutral Evil', value: 'Neutral Evil' }, { label: 'Chaotic Evil', value: 'Chaotic Evil' },
+						{ label: 'Unaligned', value: 'Unaligned' },
+					]);
+				return interaction.reply({ content: 'Please choose an alignment from the menu below.', components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
+			}
+			case 'backstory': {
+				const modal = new ModalBuilder().setCustomId(`char_edit_backstory_${userId}`).setTitle('Edit Character Backstory');
+				modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('char_backstory').setLabel('Your Story').setStyle(TextInputStyle.Paragraph).setValue(character.character_backstory || '').setRequired(false)));
+				return interaction.showModal(modal);
+			}
+			case 'personality': {
+				const modal = new ModalBuilder().setCustomId(`char_edit_personality_${userId}`).setTitle('Edit Personality Details');
+				modal.addComponents(
+					new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('char_ideals').setLabel('Ideals').setStyle(TextInputStyle.Paragraph).setValue(character.character_ideals || '').setRequired(false)),
+					new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('char_bonds').setLabel('Bonds').setStyle(TextInputStyle.Paragraph).setValue(character.character_bonds || '').setRequired(false)),
+					new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('char_flaws').setLabel('Flaws').setStyle(TextInputStyle.Paragraph).setValue(character.character_flaws || '').setRequired(false)),
+					new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('char_traits').setLabel('Traits').setStyle(TextInputStyle.Paragraph).setValue(character.character_traits || '').setRequired(false)),
+				);
+				return interaction.showModal(modal);
+			}
+			}
+			return;
+		}
+
+		// Existing handlers for Character Creation
 		const session = creationSessions.get(userId);
 		if (!session) {
 			return interaction.reply({ content: 'Your creation session has expired. Please start over with `/character create`.', flags: MessageFlags.Ephemeral });
 		}
-
 		session.timestamp = Date.now();
+		const id = (action === 'origin' || action === 'archetype') ? parts[3] : undefined;
 
 		if (action === 'origin' && session.step === 'origin') {
 			await interaction.deferUpdate();
@@ -643,9 +816,7 @@ module.exports = {
 				.setColor(0x1ABC9C)
 				.setTitle('Step 3: Choose an Archetype')
 				.setDescription(`You have chosen **${origin.name}**. Now, select your Archetype. This defines your class, abilities, and primary stats.`);
-
 			const rows = createButtonRows(archetypes, 'char_create_archetype', userId);
-
 			await interaction.editReply({ embeds: [embed], components: rows });
 		}
 		else if (action === 'archetype' && session.step === 'archetype') {
@@ -655,32 +826,10 @@ module.exports = {
 			const rpModal = new ModalBuilder()
 				.setCustomId(`char_create_rp_${userId}`)
 				.setTitle('Character Creation: Role-Playing Details');
-
 			rpModal.addComponents(
-				new ActionRowBuilder().addComponents(
-					new TextInputBuilder()
-						.setCustomId('rp_alignment')
-						.setLabel('Alignment (e.g., Chaotic Good)')
-						.setStyle(TextInputStyle.Short)
-						.setRequired(false)
-						.setMaxLength(50),
-				),
-				new ActionRowBuilder().addComponents(
-					new TextInputBuilder()
-						.setCustomId('rp_ideals')
-						.setLabel('What are your character\'s ideals?')
-						.setStyle(TextInputStyle.Paragraph)
-						.setRequired(false)
-						.setMaxLength(500),
-				),
-				new ActionRowBuilder().addComponents(
-					new TextInputBuilder()
-						.setCustomId('rp_backstory')
-						.setLabel('Character Backstory (Optional)')
-						.setStyle(TextInputStyle.Paragraph)
-						.setRequired(false)
-						.setMaxLength(2000),
-				),
+				new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('rp_alignment').setLabel('Alignment (e.g., Chaotic Good)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(50)),
+				new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('rp_ideals').setLabel('What are your character\'s ideals?').setStyle(TextInputStyle.Paragraph).setRequired(false).setMaxLength(500)),
+				new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('rp_backstory').setLabel('Character Backstory (Optional)').setStyle(TextInputStyle.Paragraph).setRequired(false).setMaxLength(2000)),
 			);
 			await interaction.showModal(rpModal);
 		}
@@ -691,132 +840,74 @@ module.exports = {
 				const archetype = db.prepare('SELECT name FROM archetypes WHERE id = ?').get(session.archetypeId);
 
 				const createCharacterTx = db.transaction(() => {
-					// Base stats
-					const stats = {
-						might: 5, finesse: 5, wits: 5, grit: 5, charm: 5, fortune: 5,
-					};
-					// Apply origin bonuses
+					const stats = { might: 5, finesse: 5, wits: 5, grit: 5, charm: 5, fortune: 5 };
 					const validStats = ['might', 'finesse', 'wits', 'grit', 'charm', 'fortune'];
-					if (validStats.includes(origin.bonus_stat_1)) {
-						stats[origin.bonus_stat_1]++;
-					}
-					if (validStats.includes(origin.bonus_stat_2)) {
-						stats[origin.bonus_stat_2]++;
-					}
+					if (validStats.includes(origin.bonus_stat_1)) stats[origin.bonus_stat_1]++;
+					if (validStats.includes(origin.bonus_stat_2)) stats[origin.bonus_stat_2]++;
 
 					db.prepare(`
                         INSERT INTO characters (
-                            user_id, character_name, origin_id, archetype_id,
-                            character_backstory, character_alignment, character_ideals,
-                            stat_might, stat_finesse, stat_wits, stat_grit, stat_charm, stat_fortune
+                            user_id, character_name, origin_id, archetype_id, character_backstory,
+                            character_alignment, character_ideals, stat_might, stat_finesse,
+                            stat_wits, stat_grit, stat_charm, stat_fortune
                         ) VALUES (
-                            @user_id, @character_name, @origin_id, @archetype_id,
-                            @character_backstory, @character_alignment, @character_ideals,
-                            @stat_might, @stat_finesse, @stat_wits, @stat_grit, @stat_charm, @stat_fortune
+                            @user_id, @character_name, @origin_id, @archetype_id, @character_backstory,
+                            @character_alignment, @character_ideals, @stat_might, @stat_finesse,
+                            @stat_wits, @stat_grit, @stat_charm, @stat_fortune
                         )
                     `).run({
-						user_id: userId,
-						character_name: session.name,
-						origin_id: session.originId,
-						archetype_id: session.archetypeId,
-						character_backstory: session.backstory || '',
-						character_alignment: session.alignment || '',
-						character_ideals: session.ideals || '',
-						stat_might: stats.might,
-						stat_finesse: stats.finesse,
-						stat_wits: stats.wits,
-						stat_grit: stats.grit,
-						stat_charm: stats.charm,
-						stat_fortune: stats.fortune,
+						user_id: userId, character_name: session.name, origin_id: session.originId, archetype_id: session.archetypeId,
+						character_backstory: session.backstory || '', character_alignment: session.alignment || '',
+						character_ideals: session.ideals || '', stat_might: stats.might, stat_finesse: stats.finesse,
+						stat_wits: stats.wits, stat_grit: stats.grit, stat_charm: stats.charm, stat_fortune: stats.fortune,
 					});
-
-					// --- GRANT STARTING EQUIPMENT ---
-
-					// 1. Define the item names for standard and archetype-specific gear
-					const standardItems = [
-						'Simple Dagger',
-						'Worn Buckler',
-						'Traveler\'s Hood',
-						'Traveler\'s Tunic',
-						'Traveler\'s Trousers',
-						'Worn Leather Boots',
-						'Simple Iron Band',
-						'Frayed Rope Amulet',
-					];
+					const standardItems = ['Simple Dagger', 'Worn Buckler', 'Traveler\'s Hood', 'Traveler\'s Tunic', 'Traveler\'s Trousers', 'Worn Leather Boots', 'Simple Iron Band', 'Frayed Rope Amulet'];
 					const archetypeItems = {
-						'Channeler': ['Channeler\'s Focus', 'Acolyte\'s Robes'],
-						'Golemancer': ['Tinkerer\'s Hammer', 'Reinforced Apron'],
-						'Justicar': ['Candor\'s Mace', 'Vow Keeper\'s Sigil'],
-						'Slayer': ['Slayer\'s Hunting Brand', 'Stalker\'s Mantle'],
-						'Shifter': ['Unstable Effigy', 'Fey-Touched Tunic'],
-						'Reaper': ['Ritualist\'s Dagger', 'Siphoning Charm'],
-						'Ascetic': ['Weighted Knuckle Wraps', 'Ring of Inner Focus'],
-						'Saboteur': ['Saboteur\'s Stiletto', 'Infiltrator\'s Charm'],
-						'Scholar': ['Tome of Beginnings', 'Amulet of Keen Insight'],
-						'Artisan': ['Artisan\'s Hammer', 'Guildsman\'s Ring'],
-						'Zealot': ['Zealot\'s Banner', 'Devotee\'s Pauldrons'],
-						'Warden': ['Warden\'s Shield', 'Enforcer\'s Cudgel'],
+						'Channeler': ['Channeler\'s Focus', 'Acolyte\'s Robes'], 'Golemancer': ['Tinkerer\'s Hammer', 'Reinforced Apron'], 'Justicar': ['Candor\'s Mace', 'Vow Keeper\'s Sigil'],
+						'Slayer': ['Slayer\'s Hunting Brand', 'Stalker\'s Mantle'], 'Shifter': ['Unstable Effigy', 'Fey-Touched Tunic'], 'Reaper': ['Ritualist\'s Dagger', 'Siphoning Charm'],
+						'Ascetic': ['Weighted Knuckle Wraps', 'Ring of Inner Focus'], 'Saboteur': ['Saboteur\'s Stiletto', 'Infiltrator\'s Charm'], 'Scholar': ['Tome of Beginnings', 'Amulet of Keen Insight'],
+						'Artisan': ['Artisan\'s Hammer', 'Guildsman\'s Ring'], 'Zealot': ['Zealot\'s Banner', 'Devotee\'s Pauldrons'], 'Warden': ['Warden\'s Shield', 'Enforcer\'s Cudgel'],
 					};
-
 					const itemsToGrant = [...standardItems, ...(archetypeItems[archetype.name] || [])];
 					if (itemsToGrant.length === 0) return;
 
-					// 2. Prepare a statement to get item IDs from their names
 					const getItemData = db.prepare('SELECT item_id, effects_json FROM items WHERE name = ?');
 					const insertInventoryItem = db.prepare('INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, 1)');
 					const equipItem = db.prepare('UPDATE user_inventory SET equipped_slot = ? WHERE inventory_id = ?');
-
 					let ringSlotCounter = 1;
 
 					for (const itemName of itemsToGrant) {
 						const item = getItemData.get(itemName);
 						if (item) {
-							// Always insert the item into inventory first
 							const result = insertInventoryItem.run(userId, item.item_id);
 							const newInventoryId = result.lastInsertRowid;
-
-							// If it's a standard item, try to equip it
 							if (standardItems.includes(itemName)) {
 								try {
 									const effects = JSON.parse(item.effects_json);
 									let slotToEquip = effects?.slot;
-
 									if (slotToEquip) {
 										if (slotToEquip === 'ring') {
 											if (ringSlotCounter <= 2) {
 												slotToEquip = `ring${ringSlotCounter}`;
 												ringSlotCounter++;
 											}
-											else {
-												slotToEquip = null;
-											}
+											else { slotToEquip = null; }
 										}
-										if (slotToEquip) {
-											equipItem.run(slotToEquip, newInventoryId);
-										}
+										if (slotToEquip) { equipItem.run(slotToEquip, newInventoryId); }
 									}
 								}
-								catch (e) {
-									console.error(`[Auto-Equip] Failed to parse effects_json for ${itemName}: ${e.message}`);
-								}
+								catch (e) { console.error(`[Auto-Equip] Failed to parse effects_json for ${itemName}: ${e.message}`); }
 							}
 						}
-						else {
-							console.error(`[Character Creation] Could not find item "${itemName}" to grant to new character.`);
-						}
+						else { console.error(`[Character Creation] Could not find item "${itemName}" to grant to new character.`); }
 					}
 				});
-
 				createCharacterTx();
 				creationSessions.delete(userId);
-
 				const successEmbed = new EmbedBuilder()
-					.setColor(0x2ECC71)
-					.setTitle('🎉 Character Created! 🎉')
+					.setColor(0x2ECC71).setTitle('🎉 Character Created! 🎉')
 					.setDescription(`**${session.name}** has been born! Welcome to a new world of adventure.\n\nYour standard gear has been automatically equipped to get you started. You'll find archetype-specific items in your inventory—use \`/character equip\` to try them on!\n\nYou can view your new character sheet at any time with \`/character view\`.`);
-
 				await interaction.editReply({ embeds: [successEmbed], components: [] });
-
 			}
 			catch (error) {
 				console.error('Character creation DB error:', error);
