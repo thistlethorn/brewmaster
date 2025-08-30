@@ -7,6 +7,9 @@ const { recalculateStats } = require('../../utils/recalculateStats');
 const creationSessions = new Map();
 const SESSION_TIMEOUT = 30 * 60 * 1000;
 
+// NEW: In-memory store for spend points sessions.
+const spendPointsSessions = new Map();
+
 /**
  * Calculates the correct stat modifier for an attack based on its damage type.
  * @param {string} damageType The type of damage (e.g., 'Slashing', 'Bludgeoning').
@@ -38,17 +41,24 @@ const sessionCleanupInterval = setInterval(() => {
 			creationSessions.delete(userId);
 		}
 	}
+	// NEW: Cleanup for spend points sessions
+	for (const [userId, session] of spendPointsSessions.entries()) {
+		if (now - session.timestamp > SESSION_TIMEOUT) {
+			spendPointsSessions.delete(userId);
+		}
+	}
 }, SESSION_TIMEOUT);
 
 /**
  * Clears the character creation session timer and in-memory state.
  * Call on bot shutdown to avoid dangling intervals and memory.
  */
-function charCreateSessionCleanup() {
+function charSessionCleanup() {
 	if (sessionCleanupInterval) {
 		clearInterval(sessionCleanupInterval);
 	}
 	creationSessions.clear();
+	spendPointsSessions.clear();
 }
 
 /**
@@ -370,14 +380,153 @@ async function handleUnequip(interaction) {
 		await interaction.reply({ content: 'An error occurred while trying to unequip this item.', flags: MessageFlags.Ephemeral });
 	}
 }
-// --- NEW: Handler for /character spendpoints ---
+const statProficiencies = {
+	might: {
+		emoji: '⚔️',
+		immediateBenefits: '• +UP `Bludgeoning Damage`\n• +UP `Slashing Damage` (from Might-based attacks)\n• +UP `Critical Hit DAMAGE`',
+		milestones: {
+			10: { name: 'Staggering Blows', desc: 'Your **BLUDGEONING** attacks gain a chance to daze an enemy, forcing them to miss their next turn.' },
+			15: { name: 'Heavy Handed', desc: 'Your two-handed weapons gain an additional small damage bonus.' },
+			20: { name: 'Armor Penetration', desc: 'Your physical attacks ignore a percentage of the target\'s Armor Class.' },
+			25: { name: 'Executioner', desc: 'You deal bonus damage to enemies below 20% health.' },
+			30: { name: 'Shield Breaker', desc: 'Your attacks deal ramping bonus damage to enemies with active defensive buffs.' },
+		},
+	},
+	finesse: {
+		emoji: '🏹',
+		immediateBenefits: '• +UP `Piercing Damage`\n• +UP `Slashing Damage` (if Finesse based attack)\n• +UP `Critical Hit Chance`',
+		milestones: {
+			10: { name: 'Hemorrhage', desc: 'Your **PIERCING** attacks gain a chance to inflict a Bleed status effect (damage over time).' },
+			15: { name: 'Blades Akimbo', desc: 'Grants a damage bonus when dual-wielding one-handed weapons.' },
+			20: { name: 'Precision Strikes', desc: 'Provides a bonus to your attack rolls, making you less likely to miss.' },
+			25: { name: 'Flurry of Blows', desc: 'Grants a chance for your standard attacks to strike a second time for reduced damage.' },
+			30: { name: 'Quick Reflexes', desc: 'Grants a chance to get a surprise extra attack at the start of combat.' },
+			35: { name: 'Evasion', desc: 'Grants a chance to completely dodge an incoming physical attack.' },
+			40: { name: 'Riposte', desc: 'After dodging, you have a chance to automatically counter-attack.' },
+		},
+	},
+	wits: {
+		emoji: '🧠',
+		immediateBenefits: '• +UP `Basic Arcane Damage`\n• +UP `Spell Attack Hit Chance`\n• +UP `Max Mana`',
+		milestones: {
+			10: { name: 'Spellbook', desc: 'Unlocks a basic spellbook, allowing you to cast spells in combat.' },
+			15: { name: 'Magic Resistance', desc: 'Reduces incoming damage from basic magical attacks.' },
+			20: { name: 'Identify Weakness', desc: 'In PvE, reveals enemy vulnerabilities, granting a party-wide damage bonus.' },
+			25: { name: 'Erudite', desc: 'Increases success chance for crafting higher-quality items and deciphering puzzles.' },
+			30: { name: 'Mana Regeneration', desc: 'You now recover a small amount of Mana each turn in combat.' },
+			35: { name: 'Elemental Attunement', desc: 'Attune to an element, granting resistance to it and a damage boost when using it.' },
+		},
+	},
+	grit: {
+		emoji: '💪',
+		immediateBenefits: '• +UP `Max Health`\n• +UP `Physical Damage Reduction`\n• +UP `Max Ki` (if Ascetic Archetype)',
+		milestones: {
+			10: { name: 'Tenacity', desc: 'Grants a chance to resist crowd control effects like stuns or fears.' },
+			15: { name: 'Protector\'s Aura', desc: 'In a party, you absorb a small percentage of damage directed at weaker allies.' },
+			20: { name: 'Defy Death', desc: 'When struck by a lethal blow above 50% HP, you have a chance to survive with 1 HP (has a cooldown).' },
+			25: { name: 'Unflinching', desc: 'You become immune to the "Stagger" effect from high-Might enemies.' },
+			30: { name: 'Second Wind', desc: 'Once per battle, instantly recover 25% of your max HP when you fall below 50% health.' },
+		},
+	},
+	charm: {
+		emoji: '😊',
+		immediateBenefits: '• +UP Critical Hit Chance\n• +UP Enemy Attack Weaken Chance\n• +UP Threat Level Reduction',
+		milestones: {
+			10: { name: 'Improved Vendor Prices', desc: 'Grants a discount when buying from and a bonus when selling to NPC vendors.' },
+			15: { name: 'Skilled Negotiator', desc: 'Grants a chance to receive bonus Crowns or an extra item from quest rewards.' },
+			20: { name: 'Smoothtalking Ambassador', desc: 'Successful `/guild dues` investments may be fully refunded by the impressed NPC.' },
+			25: { name: 'Charismatic Leader', desc: 'In a party, your presence grants a passive bonus to XP and Crown gain for all members.' },
+			30: { name: 'Unrelenting Persuasion', desc: 'Automatically succeed on low-difficulty NPC persuasion checks.' },
+			35: { name: 'Inspiring Revolutionist', desc: 'Unlock the ability (in PvE) to attempt to charm non-boss monsters, causing them to turn against their allies for some time.' },
+		},
+	},
+	fortune: {
+		emoji: '🍀',
+		immediateBenefits: '• Increases **Critical Hit Chance** (Major)\n• Increases **Basic Attack Dodge Chance**',
+		milestones: {
+			10: { name: 'Lucky Find', desc: 'Grants a 50% chance to find a bonus reward when claiming `/econ daily`.' },
+			15: { name: 'Resourceful', desc: 'Your basic consumables have a 25% chance to not be consumed on use.' },
+			20: { name: 'Gambler\'s Intuition', desc: 'Slightly improves your odds in all `/gamble` commands (e.g., +5% win chance).' },
+			25: { name: 'Stumble', desc: 'Enemies attacking you have a chance to "stumble," reducing their physical damage by 50%.' },
+			30: { name: 'Defensive Luck', desc: 'Grants a 50% chance to turn a critical hit against you into a normal hit (has a cooldown).' },
+			35: { name: 'Treasure Hunter', desc: 'Looted items have a 25% chance to be one rarity tier higher than normal.' },
+			40: { name: 'Miracle', desc: 'Your healing abilities and items have a 25% chance to "crit," healing for 3x the normal amount.' },
+		},
+	},
+};
 /**
- * Handles the /character spendpoints command.
+ * REFACTORED: Builds the embed for the spend points UI.
+ * @param {object} session - The in-memory session object.
+ * @returns {EmbedBuilder}
+ */
+function buildSpendPointsEmbed(session) {
+	const { initialStats, pointsToAdd, unspentPoints } = session;
+	const embed = new EmbedBuilder()
+		.setColor(0x3498DB)
+		.setTitle(`🌟 Allocate Stat Points | ${unspentPoints} Available`)
+		.setDescription('Review the benefits and upcoming milestones for each stat below. Use the buttons to assign your points.');
+
+	const statOrder = ['might', 'finesse', 'wits', 'grit', 'charm', 'fortune'];
+
+	// --- Informational Top Half ---
+	for (const stat of statOrder) {
+		const proficiency = statProficiencies[stat];
+		const currentValue = initialStats[`stat_${stat}`] + pointsToAdd[stat];
+
+		// Calculate the next milestone level
+		const nextMilestoneLevel = Math.floor(currentValue / 5) * 5 + 5;
+
+		let upcomingMilestones = '';
+		for (let i = 0; i < 3; i++) {
+			const level = nextMilestoneLevel + (i * 5);
+			const milestone = proficiency.milestones[level];
+			if (milestone) {
+				upcomingMilestones += `**${level} - ${milestone.name}:** ${milestone.desc}\n`;
+			}
+		}
+		if (!upcomingMilestones) {
+			upcomingMilestones = '*You have learned all available proficiencies for this stat!*';
+		}
+
+		const fieldValue = `*${proficiency.immediateBenefits}*\n\n**Upcoming Proficiencies:**\n${upcomingMilestones}`;
+
+		embed.addFields({
+			name: `${proficiency.emoji} ${stat.charAt(0).toUpperCase() + stat.slice(1)}`,
+			value: fieldValue,
+			inline: false,
+		});
+	}
+
+	// --- Separator ---
+	embed.addFields({ name: '\u200B', value: '--- **Your Allocation** ---' });
+
+
+	// --- Interactive Bottom Half ---
+	for (const stat of statOrder) {
+		const baseValue = initialStats[`stat_${stat}`];
+		const addedValue = pointsToAdd[stat];
+		let valueString = `**${baseValue}**`;
+		if (addedValue > 0) {
+			valueString = `${baseValue} ➔ **${baseValue + addedValue} (+${addedValue})**`;
+		}
+		embed.addFields({ name: stat.charAt(0).toUpperCase() + stat.slice(1), value: valueString, inline: true });
+	}
+
+	return embed;
+}
+
+
+/**
+ * REFACTORED: Handles the /character spendpoints command using an interactive embed.
  * @param {import('discord.js').ChatInputCommandInteraction} interaction
  */
 async function handleSpendPoints(interaction) {
 	const userId = interaction.user.id;
-	const character = db.prepare('SELECT stat_points_unspent FROM characters WHERE user_id = ?').get(userId);
+	if (spendPointsSessions.has(userId)) {
+		return interaction.reply({ content: 'You already have an active stat allocation session. Please complete or cancel it first.', flags: MessageFlags.Ephemeral });
+	}
+
+	const character = db.prepare('SELECT * FROM characters WHERE user_id = ?').get(userId);
 
 	if (!character) {
 		return interaction.reply({ content: 'You must create a character first.', flags: MessageFlags.Ephemeral });
@@ -387,23 +536,34 @@ async function handleSpendPoints(interaction) {
 		return interaction.reply({ content: 'You have no unspent stat points to allocate.', flags: MessageFlags.Ephemeral });
 	}
 
-	const modal = new ModalBuilder()
-		.setCustomId(`char_spendpoints_${userId}`)
-		.setTitle(`Allocate Stat Points (${character.stat_points_unspent} available)`);
+	const session = {
+		userId,
+		initialStats: { ...character },
+		pointsToAdd: { might: 0, finesse: 0, wits: 0, grit: 0, charm: 0, fortune: 0 },
+		unspentPoints: character.stat_points_unspent,
+		undoStack: [],
+		timestamp: Date.now(),
+	};
+	spendPointsSessions.set(userId, session);
 
-	const stats = ['might', 'finesse', 'wits', 'grit', 'charm', 'fortune'];
-	for (const stat of stats) {
-		modal.addComponents(new ActionRowBuilder().addComponents(
-			new TextInputBuilder()
-				.setCustomId(`stat_${stat}`)
-				.setLabel(stat.charAt(0).toUpperCase() + stat.slice(1))
-				.setStyle(TextInputStyle.Short)
-				.setPlaceholder('0')
-				.setRequired(false),
-		));
-	}
+	const embed = buildSpendPointsEmbed(session);
+	const row1 = new ActionRowBuilder().addComponents(
+		new ButtonBuilder().setCustomId(`char_spendpoints_add_might_${userId}`).setLabel('+1 Might').setStyle(ButtonStyle.Secondary),
+		new ButtonBuilder().setCustomId(`char_spendpoints_add_finesse_${userId}`).setLabel('+1 Finesse').setStyle(ButtonStyle.Secondary),
+		new ButtonBuilder().setCustomId(`char_spendpoints_add_wits_${userId}`).setLabel('+1 Wits').setStyle(ButtonStyle.Secondary),
+	);
+	const row2 = new ActionRowBuilder().addComponents(
+		new ButtonBuilder().setCustomId(`char_spendpoints_add_grit_${userId}`).setLabel('+1 Grit').setStyle(ButtonStyle.Secondary),
+		new ButtonBuilder().setCustomId(`char_spendpoints_add_charm_${userId}`).setLabel('+1 Charm').setStyle(ButtonStyle.Secondary),
+		new ButtonBuilder().setCustomId(`char_spendpoints_add_fortune_${userId}`).setLabel('+1 Fortune').setStyle(ButtonStyle.Secondary),
+	);
+	const row3 = new ActionRowBuilder().addComponents(
+		new ButtonBuilder().setCustomId(`char_spendpoints_undo_${userId}`).setLabel('Undo').setStyle(ButtonStyle.Primary).setEmoji('↩️'),
+		new ButtonBuilder().setCustomId(`char_spendpoints_confirm_${userId}`).setLabel('Confirm').setStyle(ButtonStyle.Success).setEmoji('✅'),
+		new ButtonBuilder().setCustomId(`char_spendpoints_cancel_${userId}`).setLabel('Cancel').setStyle(ButtonStyle.Danger).setEmoji('❌'),
+	);
 
-	await interaction.showModal(modal);
+	await interaction.reply({ embeds: [embed], components: [row1, row2, row3], flags: MessageFlags.Ephemeral });
 }
 
 
@@ -457,7 +617,6 @@ module.exports = {
 						.setDescription('The equipment slot to clear.')
 						.setRequired(true)
 						.setAutocomplete(true)))
-		// --- NEW: Subcommand for spending points ---
 		.addSubcommand(subcommand =>
 			subcommand
 				.setName('spendpoints')
@@ -536,7 +695,6 @@ module.exports = {
 		case 'unequip':
 			await handleUnequip(interaction);
 			break;
-		// --- NEW: Case for spendpoints ---
 		case 'spendpoints':
 			await handleSpendPoints(interaction);
 			break;
@@ -558,69 +716,6 @@ module.exports = {
 			return interaction.reply({ content: 'This interaction is not for you.', flags: MessageFlags.Ephemeral });
 		}
 
-		// --- NEW: Handler for the Spend Points Modal ---
-		if (command === 'spendpoints') {
-			await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-			const character = db.prepare('SELECT stat_points_unspent FROM characters WHERE user_id = ?').get(userId);
-			if (!character || character.stat_points_unspent <= 0) {
-				return interaction.editReply('You have no points to spend.');
-			}
-
-			const pointsToSpend = { might: 0, finesse: 0, wits: 0, grit: 0, charm: 0, fortune: 0 };
-			let totalSpent = 0;
-			for (const stat in pointsToSpend) {
-				const value = parseInt(interaction.fields.getTextInputValue(`stat_${stat}`), 10);
-				if (!isNaN(value) && value > 0) {
-					pointsToSpend[stat] = value;
-					totalSpent += value;
-				}
-			}
-
-			if (totalSpent <= 0) {
-				return interaction.editReply('You did not allocate any points.');
-			}
-			if (totalSpent > character.stat_points_unspent) {
-				return interaction.editReply(`You tried to spend ${totalSpent} points, but you only have ${character.stat_points_unspent} available.`);
-			}
-
-			try {
-				const spendTx = db.transaction(() => {
-					db.prepare(`
-                        UPDATE characters
-                        SET
-                            stat_might = stat_might + ?,
-                            stat_finesse = stat_finesse + ?,
-                            stat_wits = stat_wits + ?,
-                            stat_grit = stat_grit + ?,
-                            stat_charm = stat_charm + ?,
-                            stat_fortune = stat_fortune + ?,
-                            stat_points_unspent = stat_points_unspent - ?
-                        WHERE user_id = ?
-                    `).run(
-						pointsToSpend.might, pointsToSpend.finesse, pointsToSpend.wits,
-						pointsToSpend.grit, pointsToSpend.charm, pointsToSpend.fortune,
-						totalSpent, userId,
-					);
-				});
-				spendTx();
-				recalculateStats(userId);
-
-				const updatedStats = Object.entries(pointsToSpend).filter(([, val]) => val > 0).map(([key, val]) => `• **${key.charAt(0).toUpperCase() + key.slice(1)}:** +${val}`).join('\n');
-				const successEmbed = new EmbedBuilder()
-					.setColor(0x2ECC71).setTitle('✅ Stats Increased!')
-					.setDescription(`You successfully spent **${totalSpent}** stat points. Your stats have been updated.`)
-					.addFields({ name: 'Points Allocated', value: updatedStats });
-
-				await interaction.editReply({ embeds: [successEmbed] });
-			}
-			catch (error) {
-				console.error('Spend points error:', error);
-				await interaction.editReply('An error occurred while updating your stats.');
-			}
-			return;
-		}
-
-		// --- NEW: Handlers for Character Edit Modals ---
 		if (command === 'edit') {
 			try {
 				let successMessage = 'Your character has been updated!';
@@ -748,8 +843,86 @@ module.exports = {
 		if (interaction.user.id !== userId) {
 			return interaction.reply({ content: 'This interaction is not for you.', flags: MessageFlags.Ephemeral });
 		}
+		// REFACTORED: New handler for spend points buttons
+		if (command === 'spendpoints') {
+			const session = spendPointsSessions.get(userId);
+			if (!session) {
+				await interaction.update({ content: 'This stat allocation session has expired. Please start a new one.', components: [], embeds: [] });
+				return;
+			}
+			session.timestamp = Date.now();
+			const subAction = parts[3];
+			const stat = parts[4];
 
-		// --- NEW: Handlers for Character Edit Buttons ---
+			switch (subAction) {
+			case 'add':
+				if (session.unspentPoints > 0) {
+					session.unspentPoints--;
+					session.pointsToAdd[stat]++;
+					session.undoStack.push(stat);
+				}
+				break;
+			case 'undo':
+				if (session.undoStack.length > 0) {
+					const lastStat = session.undoStack.pop();
+					session.unspentPoints++;
+					session.pointsToAdd[lastStat]--;
+				}
+				break;
+			case 'confirm': {
+				const totalSpent = Object.values(session.pointsToAdd).reduce((sum, val) => sum + val, 0);
+				if (totalSpent > 0) {
+					try {
+						const spendTx = db.transaction(() => {
+							db.prepare(`
+                                UPDATE characters SET
+                                    stat_might = stat_might + ?, stat_finesse = stat_finesse + ?,
+                                    stat_wits = stat_wits + ?, stat_grit = stat_grit + ?,
+                                    stat_charm = stat_charm + ?, stat_fortune = stat_fortune + ?,
+                                    stat_points_unspent = stat_points_unspent - ?
+                                WHERE user_id = ?
+                            `).run(
+								session.pointsToAdd.might, session.pointsToAdd.finesse, session.pointsToAdd.wits,
+								session.pointsToAdd.grit, session.pointsToAdd.charm, session.pointsToAdd.fortune,
+								totalSpent, userId,
+							);
+						});
+						spendTx();
+						recalculateStats(userId);
+
+						const allocatedPoints = Object.entries(session.pointsToAdd)
+							.filter(([, val]) => val > 0)
+							.map(([key, val]) => `• **${key.charAt(0).toUpperCase() + key.slice(1)}:** +${val}`)
+							.join('\n');
+
+						const successEmbed = new EmbedBuilder()
+							.setColor(0x2ECC71).setTitle('✅ Stats Increased!')
+							.setDescription(`You successfully allocated **${totalSpent}** stat points. Your stats have been permanently updated.`)
+							.addFields({ name: 'Points Allocated', value: allocatedPoints });
+
+						await interaction.update({ embeds: [successEmbed], components: [] });
+					}
+					catch (err) {
+						console.error('Error confirming stat points:', err);
+						await interaction.update({ content: 'An error occurred while saving your stats. Please try again.', components: [], embeds: [] });
+					}
+				}
+				else {
+					await interaction.update({ content: 'Allocation cancelled. No points were spent.', components: [], embeds: [] });
+				}
+				spendPointsSessions.delete(userId);
+				return;
+			}
+			case 'cancel':
+				spendPointsSessions.delete(userId);
+				await interaction.update({ content: 'Stat point allocation has been cancelled. No changes were made.', components: [], embeds: [] });
+				return;
+			}
+			const updatedEmbed = buildSpendPointsEmbed(session);
+			await interaction.update({ embeds: [updatedEmbed] });
+			return;
+		}
+
 		if (command === 'edit') {
 			const character = db.prepare('SELECT * FROM characters WHERE user_id = ?').get(userId);
 			if (!character) return interaction.reply({ content: 'Could not find your character data.', flags: MessageFlags.Ephemeral });
@@ -955,4 +1128,4 @@ function createButtonRows(items, customIdPrefix, userId, maxRows = 5) {
 	return rows;
 }
 
-module.exports.charCreateSessionCleanup = charCreateSessionCleanup;
+module.exports.charSessionCleanup = charSessionCleanup;

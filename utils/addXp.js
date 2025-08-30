@@ -72,7 +72,7 @@ async function addXp(userId, amount, interaction) {
 					{ name: 'Stat Points Gained', value: `You gained **${pointsGained}** unspent stat points.`, inline: true },
 					{ name: 'Total Unspent Points', value: `You now have **${stat_points_unspent}** points available.`, inline: true },
 				)
-				.setFooter({ text: 'Use /character spendpoints (coming soon) to improve your stats!' });
+				.setFooter({ text: 'Use /character spendpoints to improve your stats!' });
 
 			if (interaction.deferred || interaction.replied) {
 				await interaction.followUp({ embeds: [levelUpEmbed], flags: MessageFlags.Ephemeral });

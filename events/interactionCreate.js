@@ -98,6 +98,52 @@ module.exports = {
 				return;
 			}
 
+			if (interaction.isModalSubmit() && interaction.customId.startsWith('char_')) {
+				if (characterCommand && typeof characterCommand.modals === 'function') {
+					try {
+						await characterCommand.modals(interaction);
+						return;
+					}
+					catch (error) {
+						console.error('[Error] Character modal error:', error);
+						if (!interaction.replied && !interaction.deferred) {
+							await interaction.reply({ content: 'There was an error processing your character details.', flags: MessageFlags.Ephemeral });
+						}
+					}
+				}
+				return;
+			}
+			if (interaction.isButton() && interaction.customId.startsWith('char_')) {
+				if (characterCommand && typeof characterCommand.buttons === 'function') {
+					try {
+						await characterCommand.buttons(interaction);
+						return;
+					}
+					catch (error) {
+						console.error('[Error] Character button error:', error);
+						if (!interaction.replied && !interaction.deferred) {
+							await interaction.reply({ content: 'There was an error processing your selection.', flags: MessageFlags.Ephemeral });
+						}
+					}
+				}
+				return;
+			}
+			if (interaction.isStringSelectMenu() && interaction.customId.startsWith('char_')) {
+				if (characterCommand && typeof characterCommand.menus === 'function') {
+					try {
+						await characterCommand.menus(interaction);
+						return;
+					}
+					catch (error) {
+						console.error('[Error] Character menu error:', error);
+						if (!interaction.replied && !interaction.deferred) {
+							await interaction.reply({ content: 'There was an error processing your selection.', flags: MessageFlags.Ephemeral });
+						}
+					}
+				}
+				return;
+			}
+
 			if (interaction.isModalSubmit() && interaction.customId.startsWith('trade_')) {
 				if (marketCommand && typeof marketCommand.modals === 'function') {
 					try {
@@ -159,50 +205,6 @@ module.exports = {
 					return;
 				}
 			}
-
-			if (interaction.isModalSubmit() && interaction.customId.startsWith('char_create_')) {
-				if (characterCommand && typeof characterCommand.modals === 'function') {
-					try {
-						await characterCommand.modals(interaction);
-						console.log(`[Execute] Handled Character Creation Modal for ${interaction.user.displayName}`);
-						return;
-					}
-					catch (error) {
-						console.error('[Error] Character creation modal error:', error);
-						if (!interaction.replied && !interaction.deferred) {
-							await interaction.reply({ content: 'There was an error processing your character details.', flags: MessageFlags.Ephemeral });
-						}
-						return;
-					}
-				}
-				else if (!interaction.replied && !interaction.deferred) {
-					await interaction.reply({ content: 'Character creation is currently unavailable.', flags: MessageFlags.Ephemeral });
-					return;
-				}
-			}
-
-			if (interaction.isButton() && interaction.customId.startsWith('char_create_')) {
-				if (characterCommand && typeof characterCommand.buttons === 'function') {
-					try {
-						await characterCommand.buttons(interaction);
-						console.log(`[Execute] Handled Character Creation Button for ${interaction.user.displayName}`);
-						return;
-					}
-					catch (error) {
-						console.error('[Error] Character creation button error:', error);
-						// Check if we can still reply or if we need to follow up
-						if (!interaction.replied && !interaction.deferred) {
-							await interaction.reply({ content: 'There was an error processing your selection.', flags: MessageFlags.Ephemeral });
-						}
-						return;
-					}
-				}
-				else if (!interaction.replied && !interaction.deferred) {
-					await interaction.reply({ content: 'Character creation actions are currently unavailable.', flags: MessageFlags.Ephemeral });
-					return;
-				}
-			}
-
 
 			let gameMasterCommand = null;
 			try {
