@@ -98,6 +98,90 @@ module.exports = {
 				return;
 			}
 
+			if (interaction.isButton() && interaction.customId.startsWith('captcha_verify_')) {
+				const clickedAnswer = interaction.customId.split('_')[2];
+				const messageId = interaction.message.id;
+				const userId = interaction.user.id;
+
+				const session = db.prepare('SELECT * FROM captcha_sessions WHERE message_id = ?').get(messageId);
+
+				if (!session) {
+					return interaction.update({ content: 'This verification has expired or is invalid.', components: [], embeds: [], files: [] }).catch((e) => {console.error(e);});
+				}
+
+				if (session.user_id !== userId) {
+					return interaction.reply({ content: 'This is not your verification prompt.', flags: MessageFlags.Ephemeral });
+				}
+
+				if (clickedAnswer === session.correct_answer) {
+					// SUCCESS
+					try {
+						const verifiedRole = await interaction.guild.roles.fetch(config.discord.verifiedRoleId);
+						if (verifiedRole) {
+							await interaction.member.roles.add(verifiedRole);
+						}
+
+						// Award 1,000 Crowns
+						db.prepare(`
+							INSERT INTO user_economy (user_id, crowns) VALUES (?, 1000)
+							ON CONFLICT(user_id) DO UPDATE SET crowns = crowns + 1000
+						`).run(userId);
+
+						const successEmbed = new EmbedBuilder()
+							.setColor(0x2ECC71)
+							.setTitle('✅ Verification Successful!')
+							.setDescription(`Welcome to the Westwind Tavern, ${interaction.user.displayName}! You now have access to the server. **1,000 Crowns** have been added to your account.`);
+
+						await interaction.update({ embeds: [successEmbed], components: [], files: [] });
+						db.prepare('DELETE FROM captcha_sessions WHERE message_id = ?').run(messageId);
+
+					}
+					catch (error) {
+						console.error('[CAPTCHA] Success handling error:', error);
+						await interaction.reply({ content: 'Verification succeeded, but there was an error granting your role. Please contact staff.', flags: MessageFlags.Ephemeral });
+					}
+				}
+				else {
+					// FAILURE
+					const newAttempts = session.attempts_left - 1;
+
+					if (newAttempts > 0) {
+						db.prepare('UPDATE captcha_sessions SET attempts_left = ? WHERE message_id = ?').run(newAttempts, messageId);
+						await interaction.reply({
+							content: `❌ Incorrect. You have **${newAttempts}** attempt remaining.`,
+							flags: MessageFlags.Ephemeral,
+						});
+					}
+					else {
+						// Final failure
+						try {
+							const dmEmbed = new EmbedBuilder()
+								.setColor(0xE74C3C)
+								.setTitle('Verification Failed')
+								.setDescription('You failed to solve the CAPTCHA and have been removed from the Westwind Tavern. You are welcome to try again!')
+								.addFields({ name: 'Re-join Link', value: 'https://dsc.gg/westwindtavern' });
+
+							await interaction.user.send({ embeds: [dmEmbed] }).catch((e) => {console.error(e);});
+							await interaction.member.kick('Failed CAPTCHA verification.');
+
+							const failedEmbed = new EmbedBuilder()
+								.setColor(0xE74C3C)
+								.setTitle('Verification Failed')
+								.setDescription(`${interaction.user.username} failed the verification and has been removed.`);
+
+							await interaction.update({ embeds: [failedEmbed], components: [], files: [] });
+							db.prepare('DELETE FROM captcha_sessions WHERE message_id = ?').run(messageId);
+
+						}
+						catch (error) {
+							console.error('[CAPTCHA] Final failure handling error:', error);
+							await interaction.update({ content: 'Verification failed. An error occurred while trying to remove you from the server.', components: [] });
+						}
+					}
+				}
+				return;
+			}
+
 			if (interaction.isModalSubmit() && interaction.customId.startsWith('char_')) {
 				if (characterCommand && typeof characterCommand.modals === 'function') {
 					try {

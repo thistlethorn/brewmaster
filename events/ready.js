@@ -7,12 +7,13 @@ const { resumeDailyReminders } = require('../tasks/dailyReminder');
 const { resumeTempRoleRemovals } = require('../tasks/tempRoleManager');
 const { setupIdleChatter } = require('../tasks/idleChatter');
 const { seedDatabase } = require('../utils/seedDatabase');
+const { resumePendingVerifications } = require('../tasks/captchaRequest');
 
 module.exports = {
 	name: Events.ClientReady,
 	once: true,
 	execute(client) {
-		console.log(`Ready! Logged in as ${client.user.tag}`);
+		console.log(`* [Ready.js] Logged in as ${client.user.tag}`);
 		try {
 			seedDatabase();
 			console.log('[Ready.js] Database charsys seeding process finished.');
@@ -42,6 +43,10 @@ module.exports = {
 		catch (error) {
  			console.error('[Ready.js] Failed to setup idle chatter:', error);
  		}
+		resumePendingVerifications(client);
+		console.log('[Ready.js] resumePendingVerifications is complete');
+
+		console.log('* [Ready.js] Finished!');
 
 	},
 };

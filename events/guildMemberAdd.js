@@ -1,11 +1,14 @@
 const { Events, EmbedBuilder } = require('discord.js');
 const db = require('../database');
+const { startVerification } = require('../tasks/captchaRequest');
 
 module.exports = {
 	name: Events.GuildMemberAdd,
 	async execute(member) {
 		// #welcome
 		if (member.user.bot) return;
+
+		await startVerification(member);
 		const welcomeChannelId = '1353631829453836291';
 		const welcomeChannel = member.guild.channels.cache.get(welcomeChannelId);
 

@@ -387,6 +387,17 @@ const setupTables = db.transaction(() => {
 	// "Welcome rewards system" via /events/ @ [guildMemberAdd.js]
 
 	db.prepare(`
+        CREATE TABLE IF NOT EXISTS captcha_sessions (
+            message_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            guild_id TEXT NOT NULL,
+            correct_answer TEXT NOT NULL,
+            attempts_left INTEGER DEFAULT 2,
+            expires_at TEXT NOT NULL
+        )
+    `).run();
+
+	db.prepare(`
         CREATE TABLE IF NOT EXISTS welcome_messages (
             message_id TEXT PRIMARY KEY,
             new_member_id TEXT NOT NULL,
@@ -1308,6 +1319,8 @@ const setupTables = db.transaction(() => {
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_vendor_stock_vendor ON vendor_stock(vendor_id)').run();
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_pve_progress_user ON character_pve_progress(user_id)').run();
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_node_monsters_node ON pve_node_monsters(node_id)').run();
+
+	db.prepare('CREATE INDEX IF NOT EXISTS idx_captcha_expiry ON captcha_sessions(expires_at)').run();
 
 	// All of the unique indexes
 	// NOTE: Uniqueness for quotes is GLOBAL, not per-user. The same quote/trigger cannot exist twice
