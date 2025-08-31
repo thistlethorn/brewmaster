@@ -5555,6 +5555,31 @@ module.exports = {
 			}
 		},
 	},
+	async autocomplete(interaction) {
+		if (interaction.commandName === 'guild') {
+			const subcommand = interaction.options.getSubcommand();
+			const subcommandGroup = interaction.options.getSubcommandGroup(false);
+			if (subcommand === 'join') {
+				return handleJoinAutocomplete(interaction);
+			}
+			else if (subcommand === 'info') {
+				return handleInfoAutocomplete(interaction);
+			}
+			else if (subcommand === 'raid') {
+				return handleRaidAutocomplete(interaction);
+			}
+			else if (subcommand === 'fund') {
+				return fetchAllGuildsByTagAutocomplete(interaction);
+			}
+			else if (subcommandGroup === 'diplomacy') {
+				return fetchAllGuildsByTagAutocomplete(interaction);
+			}
+			else if (subcommand === 'bounty') {
+				return fetchAllGuildsByTagAutocomplete(interaction);
+			}
+		}
+		return;
+	},
 	data: new SlashCommandBuilder()
 		.setName('guild')
 		.setDescription('Manage your guild')
@@ -5890,31 +5915,6 @@ module.exports = {
 						.setName('view')
 						.setDescription('View all of your guild\'s current diplomatic relationships.'))),
 	async execute(interaction) {
-		if (interaction.isAutocomplete()) {
-			if (interaction.commandName === 'guild') {
-				const subcommand = interaction.options.getSubcommand();
-				const subcommandGroup = interaction.options.getSubcommandGroup(false);
-				if (subcommand === 'join') {
-					return handleJoinAutocomplete(interaction);
-				}
-				else if (subcommand === 'info') {
-					return handleInfoAutocomplete(interaction);
-				}
-				else if (subcommand === 'raid') {
-					return handleRaidAutocomplete(interaction);
-				}
-				else if (subcommand === 'fund') {
-					return fetchAllGuildsByTagAutocomplete(interaction);
-				}
-				else if (subcommandGroup === 'diplomacy') {
-					return fetchAllGuildsByTagAutocomplete(interaction);
-				}
-				else if (subcommand === 'bounty') {
-					return fetchAllGuildsByTagAutocomplete(interaction);
-				}
-			}
-			return;
-		}
 
 		if (interaction.isButton()) {
 			if (interaction.customId.startsWith('raidmsg')) {

@@ -50,6 +50,18 @@ module.exports = {
 								.setRequired(true)))
 				.addSubcommand(subcommand =>
 					subcommand
+						.setName('add_all')
+						.setDescription('Give Crowns to every non-bot user on the server.')
+						.addIntegerOption(option =>
+							option.setName('amount')
+								.setDescription('Amount of Crowns to add to each user.')
+								.setRequired(true))
+						.addStringOption(option =>
+							option.setName('reason')
+								.setDescription('Reason for the server-wide payout.')
+								.setRequired(true)))
+				.addSubcommand(subcommand =>
+					subcommand
 						.setName('remove')
 						.setDescription('Remove Crowns from a user')
 						.addUserOption(option =>
@@ -101,12 +113,17 @@ module.exports = {
 			}
 		}
 		else if (subcommandGroup === 'dev') {
-			const user = interaction.options.getUser('user');
-			const amount = interaction.options.getInteger('amount');
 			if (subcommand === 'add') {
+				const user = interaction.options.getUser('user');
+				const amount = interaction.options.getInteger('amount');
 				await handleDevAdd(interaction, user, amount);
 			}
+			else if (subcommand === 'add_all') {
+				await handleDevAddAll(interaction);
+			}
 			else if (subcommand === 'remove') {
+				const user = interaction.options.getUser('user');
+				const amount = interaction.options.getInteger('amount');
 				await handleDevRemove(interaction, user, amount);
 			}
 		}
@@ -118,6 +135,56 @@ module.exports = {
 		}
 	},
 };
+
+async function handleDevAddAll(interaction) {
+	await interaction.deferReply();
+
+	const amount = interaction.options.getInteger('amount');
+	const reason = interaction.options.getString('reason');
+
+	try {
+		// 1. Fetch all members from the server to ensure we have the complete list
+		const members = await interaction.guild.members.fetch();
+		// 2. Filter out the bots
+		const realUsers = members.filter(member => !member.user.bot);
+
+		// 3. Use a highly efficient database transaction for the bulk update
+		const addCrownsTx = db.transaction((users, value) => {
+			const stmt = db.prepare(`
+                INSERT INTO user_economy (user_id, crowns)
+                VALUES (?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET crowns = crowns + ?
+            `);
+			for (const user of users) {
+				stmt.run(user.id, value, value);
+			}
+		});
+
+		addCrownsTx(realUsers, amount);
+
+		const embed = new EmbedBuilder()
+			.setColor(0x2ECC71)
+			.setTitle('✅ Server-Wide Payout Successful')
+			.setDescription(`Successfully added **👑 ${amount.toLocaleString()}** Crowns to every non-bot member.`)
+			.addFields(
+				{ name: 'Users Affected', value: realUsers.size.toLocaleString(), inline: true },
+				{ name: 'Amount Per User', value: `👑 ${amount.toLocaleString()}`, inline: true },
+				{ name: 'Reason', value: reason, inline: false },
+			);
+
+		await interaction.editReply({ embeds: [embed] });
+
+	}
+	catch (error) {
+		console.error('Server-wide payout error:', error);
+		const errorEmbed = new EmbedBuilder()
+			.setColor(0xE74C3C)
+			.setTitle('❌ Server-Wide Payout Failed')
+			.setDescription('A critical error occurred during the database transaction. No crowns were distributed.');
+		await interaction.editReply({ embeds: [errorEmbed] });
+	}
+}
+
 async function handleDevAdd(interaction, user, amount) {
 	const userId = user.id;
 	const userEcon = db.prepare('SELECT * FROM user_economy WHERE user_id = ?').get(userId);

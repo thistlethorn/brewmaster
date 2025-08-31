@@ -1,12 +1,26 @@
 const { Events, EmbedBuilder } = require('discord.js');
 const db = require('../database');
 const { startVerification } = require('../tasks/captchaRequest');
+const config = require('../config.json');
+
 
 module.exports = {
 	name: Events.GuildMemberAdd,
 	async execute(member) {
 		// #welcome
 		if (member.user.bot) return;
+
+		try {
+			// Use member.guild to access the guild, not interaction.guild
+			const unverifiedRole = await member.guild.roles.fetch(config.discord.unverifiedRoleId);
+			if (unverifiedRole) {
+				// Add the role directly to the member object
+				await member.roles.add(unverifiedRole);
+			}
+		}
+		catch (error) {
+			console.error(`[guildMemberAdd] Failed to add Unverified role to ${member.user.tag}:`, error);
+		}
 
 		await startVerification(member);
 		const welcomeChannelId = '1353631829453836291';

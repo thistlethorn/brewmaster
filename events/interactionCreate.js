@@ -70,27 +70,24 @@ module.exports = {
 			);
 
 			if (interaction.isAutocomplete()) {
+				// 1. Find the command object based on the command name the user is typing.
 				const command = interaction.client.commands.get(interaction.commandName);
-				if (!command) {
-					console.error(`No command matching ${interaction.commandName} was found.`);
-		        	if (!interaction.responded) {
-						await interaction.respond([]);
-					}
+
+				// 2. If the command doesn't exist or doesn't have an autocomplete handler, exit gracefully.
+				if (!command || typeof command.autocomplete !== 'function') {
+					console.error(`No autocomplete handler found for command "${interaction.commandName}".`);
+					// Respond with an empty array to satisfy Discord's API.
+					await interaction.respond([]);
 					return;
 				}
+
+				// 3. Delegate the autocomplete logic to the specific command's handler.
 				try {
-					if (typeof command.autocomplete === 'function') {
-						await command.autocomplete(interaction);
-						if (!interaction.responded) {
-							await interaction.respond([]);
-						}
-					}
-					else if (!interaction.responded) {
-						await interaction.respond([]);
-					}
+					await command.autocomplete(interaction);
 				}
 				catch (error) {
-					console.error(error);
+					console.error(`Error in autocomplete for command "${interaction.commandName}":`, error);
+					// If an error occurs, still respond so the interaction doesn't fail.
 					if (!interaction.responded) {
 						await interaction.respond([]);
 					}
@@ -117,8 +114,20 @@ module.exports = {
 					// SUCCESS
 					try {
 						const verifiedRole = await interaction.guild.roles.fetch(config.discord.verifiedRoleId);
+						const unverifiedRole = await interaction.guild.roles.fetch(config.discord.unverifiedRoleId);
+
 						if (verifiedRole) {
 							await interaction.member.roles.add(verifiedRole);
+						}
+						else {
+							console.warn('[CAPTCHA] Verified Role ID is invalid or role was not found.');
+						}
+
+						if (unverifiedRole) {
+							await interaction.member.roles.remove(unverifiedRole);
+						}
+						else {
+							console.warn('[CAPTCHA] UNverified Role ID is invalid or role was not found.');
 						}
 
 						// Award 1,000 Crowns
