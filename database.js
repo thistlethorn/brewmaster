@@ -547,7 +547,14 @@ const setupTables = db.transaction(() => {
             -- === Combat Stats ===
             armor_class INTEGER DEFAULT 10,
             crit_chance REAL DEFAULT 0.05 CHECK (crit_chance >= 0.0 AND crit_chance <= 1.0),
-            crit_damage_modifier REAL DEFAULT 1.5 CHECK (crit_damage_modifier >= 1.0),  
+            crit_damage_modifier REAL DEFAULT 1.5 CHECK (crit_damage_modifier >= 1.0),
+
+            -- === Combat Feats ===
+            highest_damage_dealt INTEGER DEFAULT 0,
+            largest_hit_survived INTEGER DEFAULT 0,
+            monsters_slain INTEGER DEFAULT 0,
+            critical_hits_landed INTEGER DEFAULT 0,
+            times_fallen INTEGER DEFAULT 0,
 
             -- === Nullable Fields ===
             -- NULL means no trophy is equipped
@@ -947,6 +954,7 @@ const setupTables = db.transaction(() => {
             node_id INTEGER NOT NULL,
             times_cleared INTEGER DEFAULT 0,
             last_cleared_at TEXT,
+			fastest_clear_turns INTEGER,
             PRIMARY KEY (user_id, node_id),
             FOREIGN KEY(user_id) REFERENCES characters(user_id) ON DELETE CASCADE,
             FOREIGN KEY(node_id) REFERENCES pve_nodes(node_id) ON DELETE CASCADE
@@ -1276,6 +1284,42 @@ const setupTables = db.transaction(() => {
     `).run();
     */
 
+	// MIGRATION SCRIPT for Character Sheet v2 - Adds new columns if they don't exist.
+	console.log('[DB Migration] Checking schema for Character Sheet V2 columns...');
+	try {
+		const characterColumns = new Set(db.pragma('table_info(characters)').map(c => c.name));
+		if (!characterColumns.has('highest_damage_dealt')) {
+			db.prepare('ALTER TABLE characters ADD COLUMN highest_damage_dealt INTEGER DEFAULT 0').run();
+			console.log('[DB Migration] Added column: characters.highest_damage_dealt');
+		}
+		if (!characterColumns.has('largest_hit_survived')) {
+			db.prepare('ALTER TABLE characters ADD COLUMN largest_hit_survived INTEGER DEFAULT 0').run();
+			console.log('[DB Migration] Added column: characters.largest_hit_survived');
+		}
+		if (!characterColumns.has('monsters_slain')) {
+			db.prepare('ALTER TABLE characters ADD COLUMN monsters_slain INTEGER DEFAULT 0').run();
+			console.log('[DB Migration] Added column: characters.monsters_slain');
+		}
+		if (!characterColumns.has('critical_hits_landed')) {
+			db.prepare('ALTER TABLE characters ADD COLUMN critical_hits_landed INTEGER DEFAULT 0').run();
+			console.log('[DB Migration] Added column: characters.critical_hits_landed');
+		}
+		if (!characterColumns.has('times_fallen')) {
+			db.prepare('ALTER TABLE characters ADD COLUMN times_fallen INTEGER DEFAULT 0').run();
+			console.log('[DB Migration] Added column: characters.times_fallen');
+		}
+
+		const pveProgressColumns = new Set(db.pragma('table_info(character_pve_progress)').map(c => c.name));
+		if (!pveProgressColumns.has('fastest_clear_turns')) {
+			db.prepare('ALTER TABLE character_pve_progress ADD COLUMN fastest_clear_turns INTEGER').run();
+			console.log('[DB Migration] Added column: character_pve_progress.fastest_clear_turns');
+		}
+		console.log('[DB Migration] Schema check complete.');
+	}
+	catch (error) {
+		console.error('[DB Migration] Failed to update database schema:', error);
+		throw error;
+	}
 
 	//  Dynamic configuration keypair settings
 

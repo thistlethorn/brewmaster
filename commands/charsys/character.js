@@ -10,6 +10,25 @@ const SESSION_TIMEOUT = 30 * 60 * 1000;
 // NEW: In-memory store for spend points sessions.
 const spendPointsSessions = new Map();
 
+const alignmentExplanation = `
+\`\`\`
+LAWFUL GOOD     |   TRUE GOOD      | CHAOTIC GOOD
+LAWFUL NEUTRAL  |   TRUE NEUTRAL   | CHAOTIC NEUTRAL
+LAWFUL EVIL     |   TRUE EVIL      | CHAOTIC EVIL
+\`\`\`
+**LAWFUL GOOD:** Acting for the laws, to benefit good.
+**TRUE GOOD:** Acting for good, to be as good as possible.
+**CHAOTIC GOOD:** Acting in any way, to benefit good.
+
+**LAWFUL NEUTRAL:** Acting for the laws, for no particular side.
+**TRUE NEUTRAL:** Acting for anything, for no particular side.
+**CHAOTIC NEUTRAL:** Acting in any way, for no particular side.
+
+**LAWFUL EVIL:** Acting for the laws, to benefit evil.
+**TRUE EVIL:** Acting for evil, to be as evil as possible.
+**CHAOTIC EVIL:** Acting in any way, to benefit evil.
+`;
+
 /**
  * Calculates the correct stat modifier for an attack based on its damage type.
  * @param {string} damageType The type of damage (e.g., 'Slashing', 'Bludgeoning').
@@ -119,128 +138,136 @@ async function handleView(interaction) {
 	const targetUser = interaction.options.getUser('user') || interaction.user;
 	const isSelfView = targetUser.id === interaction.user.id;
 
-	// Fetch all character data in one go, joining with origins and archetypes.
-	const characterData = db.prepare(`
-        SELECT
-            c.*,
-            o.name as origin_name,
-            a.name as archetype_name
-        FROM characters c
-        JOIN origins o ON c.origin_id = o.id
-        JOIN archetypes a ON c.archetype_id = a.id
-        WHERE c.user_id = ?
-    `).get(targetUser.id);
+	// Fetch all data in parallel
+	const [characterData, economyData, guildData, pveHistory] = await Promise.all([
+		db.prepare(`
+            SELECT c.*, o.name as origin_name, a.name as archetype_name
+            FROM characters c
+            JOIN origins o ON c.origin_id = o.id
+            JOIN archetypes a ON c.archetype_id = a.id
+            WHERE c.user_id = ?
+        `).get(targetUser.id),
+		db.prepare('SELECT crowns FROM user_economy WHERE user_id = ?').get(targetUser.id),
+		db.prepare(`
+            SELECT gmt.owner, gmt.vice_gm, gl.guild_name, gl.guild_tag, gl.guildmember_title, gl.attitude
+            FROM guildmember_tracking gmt
+            JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
+            WHERE gmt.user_id = ?
+        `).get(targetUser.id),
+		db.prepare(`
+            SELECT cpp.times_cleared, cpp.fastest_clear_turns, pn.name
+            FROM character_pve_progress cpp
+            JOIN pve_nodes pn ON cpp.node_id = pn.node_id
+            WHERE cpp.user_id = ?
+            ORDER BY cpp.last_cleared_at DESC
+            LIMIT 5
+        `).all(targetUser.id),
+	]);
 
 	if (!characterData) {
-		const content = isSelfView
-			? 'You have not created a character yet. Use `/character create` to begin!'
-			: `${targetUser.username} has not created a character yet.`;
+		const content = isSelfView ? 'You have not created a character yet. Use `/character create` to begin!' : `${targetUser.username} has not created a character yet.`;
 		return interaction.reply({ content, flags: MessageFlags.Ephemeral });
 	}
+
 	recalculateStats(targetUser.id);
+	// Re-fetch character data after recalculation for the most up-to-date stats
+	const freshCharacterData = db.prepare('SELECT * FROM characters WHERE user_id = ?').get(targetUser.id);
+	const finalCharacterData = { ...characterData, ...freshCharacterData };
 
+	// --- Build Embed ---
+	const sheetEmbed = new EmbedBuilder()
+		.setColor(0x5865F2)
+		.setTitle(`${finalCharacterData.character_name} - Level ${finalCharacterData.level} ${finalCharacterData.archetype_name}`)
+		.setAuthor({ name: targetUser.username, iconURL: targetUser.displayAvatarURL() })
+		.setThumbnail(finalCharacterData.character_image || null)
+		.setFooter({ text: `${finalCharacterData.character_title || 'Adventurer'} | ${finalCharacterData.character_alignment || 'Unaligned'}` })
+		.setTimestamp();
+
+	// --- Resource Pools & Crowns ---
+	const isAscetic = finalCharacterData.archetype_name === 'Ascetic';
+	const resourceFields = [
+		{ name: '❤️ Health', value: `\`${finalCharacterData.current_health} / ${finalCharacterData.max_health}\``, inline: true },
+		{ name: '💙 Mana', value: `\`${finalCharacterData.current_mana} / ${finalCharacterData.max_mana}\``, inline: true },
+	];
+	if (isAscetic) {
+		resourceFields.push({ name: '🔥 Ki', value: `\`${finalCharacterData.current_ki} / ${finalCharacterData.max_ki}\``, inline: true });
+	}
+	resourceFields.push({ name: '👑 Crowns', value: `\`${(economyData?.crowns || 0).toLocaleString()}\``, inline: true });
+	sheetEmbed.addFields(resourceFields);
+
+	// --- Level Progression (XP Bar) ---
 	const MAX_LEVEL = 100;
-	const level = Math.min(characterData.level, MAX_LEVEL);
-	const xpIntoLevel = characterData.xp;
+	const level = Math.min(finalCharacterData.level, MAX_LEVEL);
+	const xpIntoLevel = finalCharacterData.xp;
 	const xpRequiredForNext = Math.floor(100 * (level ** 1.5));
+	sheetEmbed.addFields({ name: '📈 Level Progression', value: generateXpBar(xpIntoLevel, xpRequiredForNext), inline: false });
 
+
+	// --- Affiliation ---
+	let affiliationString = '**Affiliation:** Guildless';
+	let roleString = '**Role:** Lone Wolf';
+	if (guildData) {
+		affiliationString = `**Affiliation:** ${guildData.guild_name} [${guildData.guild_tag}] (${guildData.attitude})`;
+		if (guildData.owner) roleString = '**Role:** Guildmaster';
+		else if (guildData.vice_gm) roleString = '**Role:** Vice-GM';
+		else roleString = `**Role:** ${guildData.guildmember_title}`;
+	}
+	sheetEmbed.addFields({ name: '📜 Character Info', value: `**Origin:** ${finalCharacterData.origin_name}\n${affiliationString}\n${roleString}`, inline: false });
+
+	// --- Base Stats ---
+	const unspentPoints = finalCharacterData.stat_points_unspent > 0 ? `\n**Unspent Stat Points:** 🌟 \`${finalCharacterData.stat_points_unspent}\`` : '';
+	sheetEmbed.addFields({
+		name: '📊 Base Stats',
+		value: `**Might:** ${finalCharacterData.stat_might} | **Finesse:** ${finalCharacterData.stat_finesse} | **Wits:** ${finalCharacterData.stat_wits}\n` +
+               `**Grit:** ${finalCharacterData.stat_grit} | **Charm:** ${finalCharacterData.stat_charm} | **Fortune:** ${finalCharacterData.stat_fortune}${unspentPoints}`,
+		inline: false,
+	});
+
+	// --- Combat Stats ---
 	const equipmentSlots = ['weapon', 'offhand', 'helmet', 'chestplate', 'leggings', 'boots', 'ring1', 'ring2', 'amulet'];
-	const equippedItems = db.prepare(`
-        SELECT i.name, i.damage_dice, i.damage_type, ui.equipped_slot
-        FROM user_inventory ui
-        JOIN items i ON ui.item_id = i.item_id
-        WHERE ui.user_id = ? AND ui.equipped_slot IS NOT NULL
-    `).all(targetUser.id);
-
+	const equippedItems = db.prepare('SELECT i.name, i.damage_dice, i.damage_type, ui.equipped_slot FROM user_inventory ui JOIN items i ON ui.item_id = i.item_id WHERE ui.user_id = ? AND ui.equipped_slot IS NOT NULL').all(targetUser.id);
 	const equippedMap = new Map(equippedItems.map(item => [item.equipped_slot, item]));
-
-	let damageString = '';
 	const weapon = equippedMap.get('weapon');
-	if (weapon) {
-		const damageType = weapon.damage_type;
-		const statModifier = getDamageModifier(damageType, characterData);
-		const statSign = statModifier >= 0 ? '+' : '';
-		let statPulledFrom = '';
+	const damageType = weapon?.damage_type || 'Bludgeoning';
+	const statModifier = getDamageModifier(damageType, finalCharacterData);
+	const statSign = statModifier >= 0 ? '+' : '';
+	const damageString = `**Damage:** \`${weapon?.damage_dice || '1d4'}${statSign}${statModifier}\` ${damageType}`;
+	sheetEmbed.addFields({
+		name: '⚔️ Combat Stats',
+		value: `${damageString}\n**Armor Class:** ${finalCharacterData.armor_class}\n` +
+               `**Crit Chance:** ${Math.round(finalCharacterData.crit_chance * 100)}% | **Crit Damage:** ${finalCharacterData.crit_damage_modifier.toFixed(2)}x`,
+		inline: false,
+	});
 
-		switch (damageType) {
-		case 'Bludgeoning':
-			statPulledFrom = 'Might';
-			break;
-		case 'Arcane':
-			statPulledFrom = 'Wits';
-			break;
-		case 'Piercing':
-			statPulledFrom = 'Finesse';
-			break;
-		case 'Slashing':
-			statPulledFrom = characterData.stat_finesse > characterData.stat_might ? 'Finesse' : 'Might';
-			break;
-		default:
-			statPulledFrom = 'Might*';
-			break;
-		}
+	// --- Combat Feats ---
+	const featsString = `**Highest Damage Dealt:** ${finalCharacterData.highest_damage_dealt}\n` +
+	                    `**Largest Hit Survived:** ${finalCharacterData.largest_hit_survived}\n` +
+	                    `**Monsters Slain:** ${finalCharacterData.monsters_slain}\n` +
+	                    `**Critical Hits Landed:** ${finalCharacterData.critical_hits_landed}\n` +
+	                    `**Times Fallen:** ${finalCharacterData.times_fallen}`;
+	sheetEmbed.addFields({ name: '🏆 Combat Feats', value: featsString, inline: false });
 
-		damageString = `**Damage:** \`${weapon.damage_dice}${statSign}${statModifier}\` ${damageType} [${statPulledFrom} Based]`;
-	}
-	else {
-		const damageType = 'Bludgeoning';
-		const statModifier = getDamageModifier(damageType, characterData);
-		const statSign = statModifier >= 0 ? '+' : '';
-
-		damageString = `**Damage:** \`1d4${statSign}${statModifier}\` ${damageType} [Might Based] (Unarmed)`;
+	// --- Dungeon History ---
+	if (pveHistory.length > 0) {
+		const historyString = pveHistory.map(entry => {
+			const clearRate = entry.times_cleared > 0 ? Math.round((db.prepare('SELECT COUNT(*) as wins FROM character_pve_progress WHERE user_id = ? AND node_id = (SELECT node_id FROM pve_nodes WHERE name = ?) AND fastest_clear_turns IS NOT NULL').get(targetUser.id, entry.name)?.wins || 0) / entry.times_cleared * 100) : 0;
+			const bestTime = entry.fastest_clear_turns ? `${entry.fastest_clear_turns} turns` : 'N/A';
+			return `- **${entry.name}:** ${entry.times_cleared} Attempts (${clearRate}% Clear) | Best: ${bestTime}`;
+		}).join('\n');
+		sheetEmbed.addFields({ name: '🗺️ Dungeon History', value: historyString, inline: false });
 	}
 
+	// --- Equipment ---
 	const equipmentDisplay = equipmentSlots.map(slot => {
 		const item = equippedMap.get(slot);
 		const itemName = item ? item.name : '[Empty]';
 		const slotName = slot.charAt(0).toUpperCase() + slot.slice(1).replace(/(\d+)/, ' $1');
 		return `**${slotName}:** ${itemName}`;
 	});
-	const isAscetic = characterData.archetype_name === 'Ascetic';
+	sheetEmbed.addFields({ name: '🛡️ Equipment', value: equipmentDisplay.join('\n'), inline: false });
 
-	const unspentPoints = characterData.stat_points_unspent > 0
-		? `\n**Unspent Stat Points:** 🌟 \`${characterData.stat_points_unspent}\``
-		: '';
 
-	const sheetEmbed = new EmbedBuilder()
-		.setColor(0x5865F2)
-		.setTitle(`${characterData.character_name} - Level ${characterData.level} ${characterData.archetype_name}`)
-		.setAuthor({ name: targetUser.username, iconURL: targetUser.displayAvatarURL() })
-		.setThumbnail(characterData.character_image || null)
-		.addFields(
-			{ name: '📜 Character Info', value: `**Origin:** ${characterData.origin_name}\n**Title:** ${characterData.character_title || 'None'}\n**Alignment:** ${characterData.character_alignment || 'Unaligned'}`, inline: false },
-			{ name: '📈 Level Progression', value: generateXpBar(xpIntoLevel, xpRequiredForNext), inline: false },
-			{ name: '❤️ Health', value: `\`${characterData.current_health} / ${characterData.max_health}\``, inline: true },
-			{ name: '💙 Mana', value: `\`${characterData.current_mana} / ${characterData.max_mana}\``, inline: true },
-			...(isAscetic ? [{
-				name: '🔥 Ki',
-				value: `\`${characterData.current_ki} / ${characterData.max_ki}\``,
-				inline: true,
-			}] : []),
-			{
-				name: '📊 Base Stats',
-				value: `**Might:** ${characterData.stat_might} | **Finesse:** ${characterData.stat_finesse} | **Wits:** ${characterData.stat_wits}\n` +
-                       `**Grit:** ${characterData.stat_grit} | **Charm:** ${characterData.stat_charm} | **Fortune:** ${characterData.stat_fortune}${unspentPoints}`,
-				inline: false,
-			},
-			{
-				name: '⚔️ Combat Stats',
-				value: `${damageString}\n` +
-						`**Armor Class:** ${characterData.armor_class}\n` +
-                       `**Crit Chance:** ${Math.round(characterData.crit_chance * 100)}%\n` +
-                       `**Crit Damage:** ${(Math.round(characterData.crit_damage_modifier * 100) / 100).toFixed(2)}x`,
-				inline: false,
-			},
-			{
-				name: '🛡️ Equipment',
-				value: equipmentDisplay.join('\n'),
-				inline: false,
-			},
-		)
-		.setFooter({ text: 'Use /character equip to manage your gear.' })
-		.setTimestamp();
-
-	// --- NEW: Add edit buttons only if viewing your own character ---
+	// --- Add edit buttons only if viewing your own character ---
 	const components = [];
 	if (isSelfView) {
 		const editRow1 = new ActionRowBuilder().addComponents(
@@ -254,7 +281,6 @@ async function handleView(interaction) {
 		);
 		components.push(editRow1, editRow2);
 	}
-
 
 	await interaction.reply({ embeds: [sheetEmbed], components: components });
 }
@@ -804,7 +830,7 @@ module.exports = {
 		}
 
 
-		// Existing handler for character creation modals
+		// Handler for character creation modals
 		const session = creationSessions.get(userId);
 		if (!session) {
 			return interaction.reply({ content: 'Your creation session has expired. Please start over with `/character create`.', flags: MessageFlags.Ephemeral });
@@ -813,71 +839,71 @@ module.exports = {
 		await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
 		if (action === 'name' && session.step === 'name') {
-			const characterName = interaction.fields.getTextInputValue('character_name');
-			session.name = characterName;
-			session.step = 'origin';
-
-			const origins = db.prepare('SELECT * FROM origins').all();
-			const embed = new EmbedBuilder()
-				.setColor(0x3498DB)
-				.setTitle(`Step 2: Choose an Origin for ${characterName}`)
-				.setDescription('Your Origin defines your background, granting you starting stat bonuses and a unique perk.');
-			const rows = createButtonRows(origins, 'char_create_origin', userId);
-			await interaction.editReply({ embeds: [embed], components: rows });
+			session.name = interaction.fields.getTextInputValue('character_name');
+			session.userId = userId;
+			await showOriginSelection({ update: interaction.editReply.bind(interaction) }, session);
 		}
 		else if (action === 'rp' && session.step === 'rp') {
 			session.backstory = interaction.fields.getTextInputValue('rp_backstory');
-			session.alignment = interaction.fields.getTextInputValue('rp_alignment');
 			session.ideals = interaction.fields.getTextInputValue('rp_ideals');
-			session.step = 'confirm';
+			session.step = 'alignment';
 
-			const origin = db.prepare('SELECT * FROM origins WHERE id = ?').get(session.originId);
-			const archetype = db.prepare('SELECT * FROM archetypes WHERE id = ?').get(session.archetypeId);
+			const alignmentEmbed = new EmbedBuilder()
+				.setColor(0x9B59B6)
+				.setTitle('Step 4: Choose an Alignment')
+				.setDescription(alignmentExplanation);
 
-			if (!origin || !archetype) {
-				creationSessions.delete(userId);
-				return interaction.editReply({ content: 'Your creation data is invalid or has expired. Please restart with `/character create`.', components: [], embeds: [] });
-			}
-
-			const confirmEmbed = new EmbedBuilder()
-				.setColor(0xFEE75C)
-				.setTitle(`Final Confirmation for ${session.name}`)
-				.setDescription('Please review your choices. This is your last chance to turn back. Press "Confirm & Create" to bring your character to life!')
-				.addFields(
-					{ name: 'Character Name', value: session.name, inline: false },
-					{ name: 'Chosen Origin', value: `**${origin.name}** (+1 ${origin.bonus_stat_1}, +1 ${origin.bonus_stat_2})`, inline: true },
-					{ name: 'Chosen Archetype', value: `**${archetype.name}**`, inline: true },
-					{ name: 'Alignment', value: session.alignment || '*Not provided.*', inline: false },
-					{ name: 'Backstory', value: session.backstory ? session.backstory.substring(0, 1020) : '*Not provided.*', inline: false },
+			const menu = new StringSelectMenuBuilder()
+				.setCustomId(`char_create_alignment_${userId}`)
+				.setPlaceholder('Select your character\'s alignment')
+				.addOptions(
+					// UPDATED OPTIONS
+					{ label: 'Lawful Good', value: 'Lawful Good' },
+					{ label: 'True Good', value: 'True Good' },
+					{ label: 'Chaotic Good', value: 'Chaotic Good' },
+					{ label: 'Lawful Neutral', value: 'Lawful Neutral' },
+					{ label: 'True Neutral', value: 'True Neutral' },
+					{ label: 'Chaotic Neutral', value: 'Chaotic Neutral' },
+					{ label: 'Lawful Evil', value: 'Lawful Evil' },
+					{ label: 'True Evil', value: 'True Evil' },
+					{ label: 'Chaotic Evil', value: 'Chaotic Evil' },
 				);
 
-			const confirmRow = new ActionRowBuilder().addComponents(
-				new ButtonBuilder()
-					.setCustomId(`char_create_confirm_final_${userId}`)
-					.setLabel('Confirm & Create')
-					.setStyle(ButtonStyle.Success),
-				new ButtonBuilder()
-					.setCustomId(`char_create_cancel_${userId}`)
-					.setLabel('Cancel')
-					.setStyle(ButtonStyle.Danger),
-			);
-			await interaction.editReply({ embeds: [confirmEmbed], components: [confirmRow] });
+			const row = new ActionRowBuilder().addComponents(menu);
+			await interaction.editReply({ embeds: [alignmentEmbed], components: [row] });
 		}
 	},
-	// --- NEW: Select Menu handler for alignment ---
+
 	async menus(interaction) {
 		const parts = interaction.customId.split('_');
 		const [, command, action, userId] = parts;
-		if (interaction.user.id !== userId || command !== 'edit' || action !== 'alignment') return;
 
-		try {
-			const newAlignment = interaction.values[0];
-			db.prepare('UPDATE characters SET character_alignment = ? WHERE user_id = ?').run(newAlignment, userId);
-			await interaction.update({ content: `✅ Your character's alignment has been set to **${newAlignment}**.`, components: [], embeds: [] });
+		if (interaction.user.id !== userId) return;
+
+		// Handler for editing alignment on an existing character
+		if (command === 'edit' && action === 'alignment') {
+			try {
+				const newAlignment = interaction.values[0];
+				db.prepare('UPDATE characters SET character_alignment = ? WHERE user_id = ?').run(newAlignment, userId);
+				await interaction.update({ content: `✅ Your character's alignment has been set to **${newAlignment}**.`, components: [], embeds: [] });
+			}
+			catch (error) {
+				console.error('Alignment update error:', error);
+				await interaction.update({ content: 'There was an error updating your alignment.', components: [], embeds: [] });
+			}
+			return;
 		}
-		catch (error) {
-			console.error('Alignment update error:', error);
-			await interaction.update({ content: 'There was an error updating your alignment.', components: [], embeds: [] });
+
+		// Handler for selecting alignment during character creation
+		if (command === 'create' && action === 'alignment') {
+			const session = creationSessions.get(userId);
+			if (!session || session.step !== 'alignment') {
+				return interaction.update({ content: 'Your creation session is out of sync. Please start over.', components: [], embeds: [] });
+			}
+
+			session.alignment = interaction.values[0];
+			session.step = 'confirm';
+			await showFinalConfirmation(interaction, session);
 		}
 	},
 
@@ -885,6 +911,7 @@ module.exports = {
 		const parts = interaction.customId.split('_');
 		const command = parts[1];
 		const action = parts[2];
+		const subject = parts[3];
 		const userId = parts[parts.length - 1];
 
 		if (interaction.user.id !== userId) {
@@ -999,16 +1026,26 @@ module.exports = {
 				return interaction.showModal(modal);
 			}
 			case 'alignment': {
+				const alignmentEmbed = new EmbedBuilder()
+					.setColor(0x9B59B6)
+					.setTitle('Character Alignment Editor')
+					.setDescription(alignmentExplanation);
 				const menu = new StringSelectMenuBuilder()
 					.setCustomId(`char_edit_alignment_${userId}`)
 					.setPlaceholder('Select your character\'s alignment')
-					.addOptions([
-						{ label: 'Lawful Good', value: 'Lawful Good' }, { label: 'Neutral Good', value: 'Neutral Good' }, { label: 'Chaotic Good', value: 'Chaotic Good' },
-						{ label: 'Lawful Neutral', value: 'Lawful Neutral' }, { label: 'True Neutral', value: 'True Neutral' }, { label: 'Chaotic Neutral', value: 'Chaotic Neutral' },
-						{ label: 'Lawful Evil', value: 'Lawful Evil' }, { label: 'Neutral Evil', value: 'Neutral Evil' }, { label: 'Chaotic Evil', value: 'Chaotic Evil' },
-						{ label: 'Unaligned', value: 'Unaligned' },
-					]);
-				return interaction.reply({ content: 'Please choose an alignment from the menu below.', components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
+					.addOptions(
+						// UPDATED OPTIONS
+						{ label: 'Lawful Good', value: 'Lawful Good' },
+						{ label: 'True Good', value: 'True Good' },
+						{ label: 'Chaotic Good', value: 'Chaotic Good' },
+						{ label: 'Lawful Neutral', value: 'Lawful Neutral' },
+						{ label: 'True Neutral', value: 'True Neutral' },
+						{ label: 'Chaotic Neutral', value: 'Chaotic Neutral' },
+						{ label: 'Lawful Evil', value: 'Lawful Evil' },
+						{ label: 'True Evil', value: 'True Evil' },
+						{ label: 'Chaotic Evil', value: 'Chaotic Evil' },
+					);
+				return interaction.reply({ embeds: [alignmentEmbed], components: [new ActionRowBuilder().addComponents(menu)], flags: MessageFlags.Ephemeral });
 			}
 			case 'backstory': {
 				const modal = new ModalBuilder().setCustomId(`char_edit_backstory_${userId}`).setTitle('Edit Character Backstory');
@@ -1035,127 +1072,134 @@ module.exports = {
 			return interaction.reply({ content: 'Your creation session has expired. Please start over with `/character create`.', flags: MessageFlags.Ephemeral });
 		}
 		session.timestamp = Date.now();
-		const id = (action === 'origin' || action === 'archetype') ? parts[3] : undefined;
 
-		if (action === 'origin' && session.step === 'origin') {
-			await interaction.deferUpdate();
-			session.originId = id;
-			session.step = 'archetype';
+		if (command === 'create') {
+			// --- Origin Flow ---
+			if (action === 'select' && subject === 'origin') {
+				const originId = parts[4];
+				await showOriginInfo(interaction, session, originId);
+			}
+			else if (action === 'back' && subject === 'origin') {
+				await showOriginSelection(interaction, session);
+			}
+			else if (action === 'confirm' && subject === 'origin') {
+				session.originId = session.tempOriginId;
+				delete session.tempOriginId;
+				await showArchetypeSelection(interaction, session);
+			}
+			// --- Archetype Flow ---
+			else if (action === 'select' && subject === 'archetype') {
+				const archetypeId = parts[4];
+				await showArchetypeInfo(interaction, session, archetypeId);
+			}
+			else if (action === 'back' && subject === 'archetype') {
+				await showArchetypeSelection(interaction, session);
+			}
+			else if (action === 'confirm' && subject === 'archetype') {
+				session.archetypeId = session.tempArchetypeId;
+				delete session.tempArchetypeId;
+				session.step = 'rp';
 
-			const origin = db.prepare('SELECT * FROM origins WHERE id = ?').get(id);
-			const archetypes = db.prepare('SELECT * FROM archetypes').all();
+				const rpModal = new ModalBuilder()
+					.setCustomId(`char_create_rp_${userId}`)
+					.setTitle('Character Creation: Role-Playing Details (Optional)');
+				rpModal.addComponents(
+					new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('rp_ideals').setLabel('What are your character\'s ideals?').setStyle(TextInputStyle.Paragraph).setRequired(false).setMaxLength(500)),
+					new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('rp_backstory').setLabel('Character Backstory').setStyle(TextInputStyle.Paragraph).setRequired(false).setMaxLength(2000)),
+				);
+				await interaction.showModal(rpModal);
+			}
+			// --- Final Actions ---
+			else if (action === 'confirm' && subject === 'final') {
+				await interaction.deferUpdate();
+				try {
+					const origin = db.prepare('SELECT bonus_stat_1, bonus_stat_2 FROM origins WHERE id = ?').get(session.originId);
+					const archetype = db.prepare('SELECT name FROM archetypes WHERE id = ?').get(session.archetypeId);
 
-			const embed = new EmbedBuilder()
-				.setColor(0x1ABC9C)
-				.setTitle('Step 3: Choose an Archetype')
-				.setDescription(`You have chosen **${origin.name}**. Now, select your Archetype. This defines your class, abilities, and primary stats.`);
-			const rows = createButtonRows(archetypes, 'char_create_archetype', userId);
-			await interaction.editReply({ embeds: [embed], components: rows });
-		}
-		else if (action === 'archetype' && session.step === 'archetype') {
-			session.archetypeId = id;
-			session.step = 'rp';
+					const createCharacterTx = db.transaction(() => {
+						const stats = { might: 5, finesse: 5, wits: 5, grit: 5, charm: 5, fortune: 5 };
+						const validStats = ['might', 'finesse', 'wits', 'grit', 'charm', 'fortune'];
+						if (validStats.includes(origin.bonus_stat_1)) stats[origin.bonus_stat_1]++;
+						if (validStats.includes(origin.bonus_stat_2)) stats[origin.bonus_stat_2]++;
 
-			const rpModal = new ModalBuilder()
-				.setCustomId(`char_create_rp_${userId}`)
-				.setTitle('Character Creation: Role-Playing Details');
-			rpModal.addComponents(
-				new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('rp_alignment').setLabel('Alignment (e.g., Chaotic Good)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(50)),
-				new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('rp_ideals').setLabel('What are your character\'s ideals?').setStyle(TextInputStyle.Paragraph).setRequired(false).setMaxLength(500)),
-				new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('rp_backstory').setLabel('Character Backstory (Optional)').setStyle(TextInputStyle.Paragraph).setRequired(false).setMaxLength(2000)),
-			);
-			await interaction.showModal(rpModal);
-		}
-		else if (action === 'confirm' && session.step === 'confirm') {
-			await interaction.deferUpdate();
-			try {
-				const origin = db.prepare('SELECT bonus_stat_1, bonus_stat_2 FROM origins WHERE id = ?').get(session.originId);
-				const archetype = db.prepare('SELECT name FROM archetypes WHERE id = ?').get(session.archetypeId);
+						db.prepare(`
+							INSERT INTO characters (
+								user_id, character_name, origin_id, archetype_id, character_backstory,
+								character_alignment, character_ideals, stat_might, stat_finesse,
+								stat_wits, stat_grit, stat_charm, stat_fortune
+							) VALUES (
+								@user_id, @character_name, @origin_id, @archetype_id, @character_backstory,
+								@character_alignment, @character_ideals, @stat_might, @stat_finesse,
+								@stat_wits, @stat_grit, @stat_charm, @stat_fortune
+							)
+						`).run({
+							user_id: userId, character_name: session.name, origin_id: session.originId, archetype_id: session.archetypeId,
+							character_backstory: session.backstory || '', character_alignment: session.alignment || 'Unaligned',
+							character_ideals: session.ideals || '', stat_might: stats.might, stat_finesse: stats.finesse,
+							stat_wits: stats.wits, stat_grit: stats.grit, stat_charm: stats.charm, stat_fortune: stats.fortune,
+						});
+						const standardItems = ['Simple Dagger', 'Worn Buckler', 'Traveler\'s Hood', 'Traveler\'s Tunic', 'Traveler\'s Trousers', 'Worn Leather Boots', 'Simple Iron Band', 'Frayed Rope Amulet'];
+						const archetypeItems = {
+							'Channeler': ['Channeler\'s Focus', 'Acolyte\'s Robes'], 'Golemancer': ['Tinkerer\'s Hammer', 'Reinforced Apron'], 'Justicar': ['Candor\'s Mace', 'Vow Keeper\'s Sigil'],
+							'Slayer': ['Slayer\'s Hunting Brand', 'Stalker\'s Mantle'], 'Shifter': ['Unstable Effigy', 'Fey-Touched Tunic'], 'Reaper': ['Ritualist\'s Dagger', 'Siphoning Charm'],
+							'Ascetic': ['Weighted Knuckle Wraps', 'Ring of Inner Focus'], 'Saboteur': ['Saboteur\'s Stiletto', 'Infiltrator\'s Charm'], 'Scholar': ['Tome of Beginnings', 'Amulet of Keen Insight'],
+							'Artisan': ['Artisan\'s Hammer', 'Guildsman\'s Ring'], 'Zealot': ['Zealot\'s Banner', 'Devotee\'s Pauldrons'], 'Warden': ['Warden\'s Shield', 'Enforcer\'s Cudgel'],
+						};
+						const itemsToGrant = [...standardItems, ...(archetypeItems[archetype.name] || [])];
+						if (itemsToGrant.length === 0) return;
 
-				const createCharacterTx = db.transaction(() => {
-					const stats = { might: 5, finesse: 5, wits: 5, grit: 5, charm: 5, fortune: 5 };
-					const validStats = ['might', 'finesse', 'wits', 'grit', 'charm', 'fortune'];
-					if (validStats.includes(origin.bonus_stat_1)) stats[origin.bonus_stat_1]++;
-					if (validStats.includes(origin.bonus_stat_2)) stats[origin.bonus_stat_2]++;
+						const getItemData = db.prepare('SELECT item_id, effects_json FROM items WHERE name = ?');
+						const insertInventoryItem = db.prepare('INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, 1)');
+						const equipItem = db.prepare('UPDATE user_inventory SET equipped_slot = ? WHERE inventory_id = ?');
+						let ringSlotCounter = 1;
 
-					db.prepare(`
-                        INSERT INTO characters (
-                            user_id, character_name, origin_id, archetype_id, character_backstory,
-                            character_alignment, character_ideals, stat_might, stat_finesse,
-                            stat_wits, stat_grit, stat_charm, stat_fortune
-                        ) VALUES (
-                            @user_id, @character_name, @origin_id, @archetype_id, @character_backstory,
-                            @character_alignment, @character_ideals, @stat_might, @stat_finesse,
-                            @stat_wits, @stat_grit, @stat_charm, @stat_fortune
-                        )
-                    `).run({
-						user_id: userId, character_name: session.name, origin_id: session.originId, archetype_id: session.archetypeId,
-						character_backstory: session.backstory || '', character_alignment: session.alignment || '',
-						character_ideals: session.ideals || '', stat_might: stats.might, stat_finesse: stats.finesse,
-						stat_wits: stats.wits, stat_grit: stats.grit, stat_charm: stats.charm, stat_fortune: stats.fortune,
-					});
-					const standardItems = ['Simple Dagger', 'Worn Buckler', 'Traveler\'s Hood', 'Traveler\'s Tunic', 'Traveler\'s Trousers', 'Worn Leather Boots', 'Simple Iron Band', 'Frayed Rope Amulet'];
-					const archetypeItems = {
-						'Channeler': ['Channeler\'s Focus', 'Acolyte\'s Robes'], 'Golemancer': ['Tinkerer\'s Hammer', 'Reinforced Apron'], 'Justicar': ['Candor\'s Mace', 'Vow Keeper\'s Sigil'],
-						'Slayer': ['Slayer\'s Hunting Brand', 'Stalker\'s Mantle'], 'Shifter': ['Unstable Effigy', 'Fey-Touched Tunic'], 'Reaper': ['Ritualist\'s Dagger', 'Siphoning Charm'],
-						'Ascetic': ['Weighted Knuckle Wraps', 'Ring of Inner Focus'], 'Saboteur': ['Saboteur\'s Stiletto', 'Infiltrator\'s Charm'], 'Scholar': ['Tome of Beginnings', 'Amulet of Keen Insight'],
-						'Artisan': ['Artisan\'s Hammer', 'Guildsman\'s Ring'], 'Zealot': ['Zealot\'s Banner', 'Devotee\'s Pauldrons'], 'Warden': ['Warden\'s Shield', 'Enforcer\'s Cudgel'],
-					};
-					const itemsToGrant = [...standardItems, ...(archetypeItems[archetype.name] || [])];
-					if (itemsToGrant.length === 0) return;
-
-					const getItemData = db.prepare('SELECT item_id, effects_json FROM items WHERE name = ?');
-					const insertInventoryItem = db.prepare('INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, 1)');
-					const equipItem = db.prepare('UPDATE user_inventory SET equipped_slot = ? WHERE inventory_id = ?');
-					let ringSlotCounter = 1;
-
-					for (const itemName of itemsToGrant) {
-						const item = getItemData.get(itemName);
-						if (item) {
-							const result = insertInventoryItem.run(userId, item.item_id);
-							const newInventoryId = result.lastInsertRowid;
-							if (standardItems.includes(itemName)) {
-								try {
-									const effects = JSON.parse(item.effects_json);
-									let slotToEquip = effects?.slot;
-									if (slotToEquip) {
-										if (slotToEquip === 'ring') {
-											if (ringSlotCounter <= 2) {
-												slotToEquip = `ring${ringSlotCounter}`;
-												ringSlotCounter++;
+						for (const itemName of itemsToGrant) {
+							const item = getItemData.get(itemName);
+							if (item) {
+								const result = insertInventoryItem.run(userId, item.item_id);
+								const newInventoryId = result.lastInsertRowid;
+								if (standardItems.includes(itemName)) {
+									try {
+										const effects = JSON.parse(item.effects_json);
+										let slotToEquip = effects?.slot;
+										if (slotToEquip) {
+											if (slotToEquip === 'ring') {
+												if (ringSlotCounter <= 2) {
+													slotToEquip = `ring${ringSlotCounter}`;
+													ringSlotCounter++;
+												}
+												else { slotToEquip = null; }
 											}
-											else { slotToEquip = null; }
+											if (slotToEquip) { equipItem.run(slotToEquip, newInventoryId); }
 										}
-										if (slotToEquip) { equipItem.run(slotToEquip, newInventoryId); }
 									}
+									catch (e) { console.error(`[Auto-Equip] Failed to parse effects_json for ${itemName}: ${e.message}`); }
 								}
-								catch (e) { console.error(`[Auto-Equip] Failed to parse effects_json for ${itemName}: ${e.message}`); }
 							}
+							else { console.error(`[Character Creation] Could not find item "${itemName}" to grant to new character.`); }
 						}
-						else { console.error(`[Character Creation] Could not find item "${itemName}" to grant to new character.`); }
-					}
-				});
-				createCharacterTx();
-				creationSessions.delete(userId);
-				const successEmbed = new EmbedBuilder()
-					.setColor(0x2ECC71).setTitle('🎉 Character Created! 🎉')
-					.setDescription(`**${session.name}** has been born! Welcome to a new world of adventure.\n\nYour standard gear has been automatically equipped to get you started. You'll find archetype-specific items in your inventory—use \`/character equip\` to try them on!\n\nYou can view your new character sheet at any time with \`/character view\`.`);
-				await interaction.editReply({ embeds: [successEmbed], components: [] });
+					});
+					createCharacterTx();
+					creationSessions.delete(userId);
+					const successEmbed = new EmbedBuilder()
+						.setColor(0x2ECC71).setTitle('🎉 Character Created! 🎉')
+						.setDescription(`**${session.name}** has been born! Welcome to a new world of adventure.\n\nYour standard gear has been automatically equipped to get you started. You'll find archetype-specific items in your inventory—use \`/character equip\` to try them on!\n\nYou can view your new character sheet at any time with \`/character view\`.`);
+					await interaction.editReply({ embeds: [successEmbed], components: [] });
+				}
+				catch (error) {
+					console.error('Character creation DB error:', error);
+					await interaction.editReply({ content: 'A critical error occurred while saving your character. Please try again later.', components: [], embeds: [] });
+					creationSessions.delete(userId);
+				}
 			}
-			catch (error) {
-				console.error('Character creation DB error:', error);
-				await interaction.editReply({ content: 'A critical error occurred while saving your character. Please try again later.', components: [], embeds: [] });
+			else if (action === 'cancel') {
 				creationSessions.delete(userId);
+				await interaction.deferUpdate();
+				await interaction.editReply({ content: 'Character creation has been cancelled.', embeds: [], components: [] });
 			}
-		}
-		else if (action === 'cancel') {
-			creationSessions.delete(userId);
-			await interaction.deferUpdate();
-			await interaction.editReply({ content: 'Character creation has been cancelled.', embeds: [], components: [] });
 		}
 	},
 };
-
 
 /**
 * Builds up to maxRows of 5-button rows for selection UIs.
@@ -1187,5 +1231,123 @@ function createButtonRows(items, customIdPrefix, userId, maxRows = 5) {
 	}
 	return rows;
 }
+/**
+ * Displays the list of all available Origins for selection.
+ * @param {import('discord.js').Interaction} interaction The interaction object.
+ * @param {object} session The user's creation session object.
+ */
+async function showOriginSelection(interaction, session) {
+	session.step = 'origin';
+	const origins = db.prepare('SELECT * FROM origins ORDER BY name ASC').all();
+	const embed = new EmbedBuilder()
+		.setColor(0x3498DB)
+		.setTitle(`Step 2: Choose an Origin for ${session.name}`)
+		.setDescription('Your Origin defines your background, granting you starting stat bonuses and a unique perk. **Click a button to learn more about it.**');
 
+	const rows = createButtonRows(origins, 'char_create_select_origin', session.userId);
+	await interaction.update({ embeds: [embed], components: rows });
+}
+
+/**
+ * Displays detailed information about a single, selected Origin.
+ * @param {import('discord.js').Interaction} interaction The interaction object.
+ * @param {object} session The user's creation session object.
+ * @param {string} originId The ID of the origin to display.
+ */
+async function showOriginInfo(interaction, session, originId) {
+	session.step = 'origin_info';
+	session.tempOriginId = originId;
+	const origin = db.prepare('SELECT * FROM origins WHERE id = ?').get(originId);
+
+	const embed = new EmbedBuilder()
+		.setColor(0x1ABC9C)
+		.setTitle(`Origin: ${origin.name}`)
+		.setDescription(origin.description)
+		.addFields(
+			{ name: 'Stat Bonuses', value: `\`+1 ${origin.bonus_stat_1}\` & \`+1 ${origin.bonus_stat_2}\``, inline: false },
+			{ name: `Perk: ${origin.base_perk_name}`, value: origin.base_perk_description, inline: false },
+		);
+
+	const actionRow = new ActionRowBuilder().addComponents(
+		new ButtonBuilder().setCustomId(`char_create_confirm_origin_${session.userId}`).setLabel('Confirm Origin').setStyle(ButtonStyle.Success),
+		new ButtonBuilder().setCustomId(`char_create_back_origin_${session.userId}`).setLabel('Go Back').setStyle(ButtonStyle.Secondary),
+	);
+
+	await interaction.update({ embeds: [embed], components: [actionRow] });
+}
+
+/**
+ * Displays the list of all available Archetypes for selection.
+ * @param {import('discord.js').Interaction} interaction The interaction object.
+ * @param {object} session The user's creation session object.
+ */
+async function showArchetypeSelection(interaction, session) {
+	session.step = 'archetype';
+	const archetypes = db.prepare('SELECT * FROM archetypes ORDER BY name ASC').all();
+	const embed = new EmbedBuilder()
+		.setColor(0x3498DB)
+		.setTitle('Step 3: Choose an Archetype')
+		.setDescription('Your Archetype is your class, defining your primary stats and future abilities. **Click a button to learn more about it.**');
+
+	const rows = createButtonRows(archetypes, 'char_create_select_archetype', session.userId);
+	await interaction.update({ embeds: [embed], components: rows });
+}
+
+/**
+ * Displays detailed information about a single, selected Archetype.
+ * @param {import('discord.js').Interaction} interaction The interaction object.
+ * @param {object} session The user's creation session object.
+ * @param {string} archetypeId The ID of the archetype to display.
+ */
+async function showArchetypeInfo(interaction, session, archetypeId) {
+	session.step = 'archetype_info';
+	session.tempArchetypeId = archetypeId;
+	const archetype = db.prepare('SELECT * FROM archetypes WHERE id = ?').get(archetypeId);
+
+	const embed = new EmbedBuilder()
+		.setColor(0x1ABC9C)
+		.setTitle(`Archetype: ${archetype.name}`)
+		.setDescription(archetype.description)
+		.addFields({ name: 'Primary Stats', value: `\`${archetype.primary_stat_1}\` & \`${archetype.primary_stat_2}\``, inline: false });
+
+	const actionRow = new ActionRowBuilder().addComponents(
+		new ButtonBuilder().setCustomId(`char_create_confirm_archetype_${session.userId}`).setLabel('Confirm Archetype').setStyle(ButtonStyle.Success),
+		new ButtonBuilder().setCustomId(`char_create_back_archetype_${session.userId}`).setLabel('Go Back').setStyle(ButtonStyle.Secondary),
+	);
+
+	await interaction.update({ embeds: [embed], components: [actionRow] });
+}
+
+/**
+ * Displays the final character confirmation screen before creation.
+ * @param {import('discord.js').Interaction} interaction The interaction object.
+ * @param {object} session The user's creation session object.
+ */
+async function showFinalConfirmation(interaction, session) {
+	const origin = db.prepare('SELECT * FROM origins WHERE id = ?').get(session.originId);
+	const archetype = db.prepare('SELECT * FROM archetypes WHERE id = ?').get(session.archetypeId);
+
+	if (!origin || !archetype) {
+		creationSessions.delete(session.userId);
+		return interaction.update({ content: 'Your creation data is invalid or has expired. Please restart with `/character create`.', components: [], embeds: [] });
+	}
+
+	const confirmEmbed = new EmbedBuilder()
+		.setColor(0xFEE75C)
+		.setTitle(`Final Confirmation for ${session.name}`)
+		.setDescription('Please review your choices. This is your last chance to turn back. Press "Confirm & Create" to bring your character to life!')
+		.addFields(
+			{ name: 'Character Name', value: session.name, inline: false },
+			{ name: 'Chosen Origin', value: `**${origin.name}** (+1 ${origin.bonus_stat_1}, +1 ${origin.bonus_stat_2})`, inline: true },
+			{ name: 'Chosen Archetype', value: `**${archetype.name}**`, inline: true },
+			{ name: 'Alignment', value: session.alignment || '*Not provided.*', inline: false },
+			{ name: 'Backstory', value: session.backstory ? session.backstory.substring(0, 1020) : '*Not provided.*', inline: false },
+		);
+
+	const confirmRow = new ActionRowBuilder().addComponents(
+		new ButtonBuilder().setCustomId(`char_create_confirm_final_${session.userId}`).setLabel('Confirm & Create').setStyle(ButtonStyle.Success),
+		new ButtonBuilder().setCustomId(`char_create_cancel_${session.userId}`).setLabel('Cancel').setStyle(ButtonStyle.Danger),
+	);
+	await interaction.update({ embeds: [confirmEmbed], components: [confirmRow] });
+}
 module.exports.charSessionCleanup = charSessionCleanup;

@@ -151,12 +151,21 @@ async function handleDevAddAll(interaction) {
 		// 3. Use a highly efficient database transaction for the bulk update
 		const addCrownsTx = db.transaction((users, value) => {
 			const stmt = db.prepare(`
-                INSERT INTO user_economy (user_id, crowns)
-                VALUES (?, ?)
-                ON CONFLICT(user_id) DO UPDATE SET crowns = crowns + ?
-            `);
-			for (const user of users) {
-				stmt.run(user.id, value, value);
+				INSERT INTO user_economy (user_id, crowns)
+				VALUES (?, ?)
+				ON CONFLICT(user_id) DO UPDATE SET crowns = crowns + ?
+			`);
+
+			for (const [, user] of users) {
+				// Run the statement and get the info object back
+				const info = stmt.run(user.id, value, value);
+
+				// Check the 'changes' property on the returned info object
+				if (info.changes === 0) {
+					// If nothing changed, something is fundamentally wrong.
+					// Throwing an error here automatically rolls back the entire transaction.
+					throw new Error(`Database operation failed for user ${user.id}. Rolling back.`);
+				}
 			}
 		});
 

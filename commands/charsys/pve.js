@@ -59,120 +59,71 @@ function buildCombatEmbed(combatState, user) {
  * @param {object} combatState The final state of the combat encounter.
  */
 async function handleVictory(interaction, combatState) {
-	const { userId, nodeData, thread } = combatState;
-	const victoryEmbed = new EmbedBuilder()
-		.setColor(0x2ECC71)
-		.setTitle(`🎉 Victory at ${nodeData.name}! 🎉`)
-		.setDescription('You have emerged victorious from battle!');
-
-	// 1. Grant Rewards (XP & Crowns)
-	const progress = db.prepare('SELECT times_cleared FROM character_pve_progress WHERE user_id = ? AND node_id = ?').get(userId, nodeData.node_id);
-	const isFirstClear = !progress || progress.times_cleared === 0;
-	const rewardJson = isFirstClear ? nodeData.first_completion_reward_json : nodeData.repeatable_reward_json;
-	let rewards = {};
-	if (rewardJson) {
-		try {
-			rewards = JSON.parse(rewardJson);
-		}
-		catch (error) {
-			console.error(`Failed to parse reward JSON for node ${nodeData.node_id}:`, error);
-			rewards = {};
-		}
-	}
-	rewards.xp = Number(rewards.xp) || 0;
-	rewards.crowns = Number(rewards.crowns) || 0;
-
-	const rewardText = [];
-
-	const lootedItems = [];
+	const { userId, nodeData, thread, turn, critsThisFight } = combatState;
+	// Final DB updates in a transaction
 	try {
-		// XP (async)
-		if (rewards.xp > 0) {
-			try {
-				await addXp(userId, rewards.xp, interaction);
-				rewardText.push(`**${rewards.xp}** XP`);
-			}
-			catch (err) {
-				console.error('Failed to grant XP:', err);
-				victoryEmbed.addFields({ name: 'XP Grant Failed', value: 'XP could not be awarded due to an internal error.' });
-			}
-		}
-		// Crowns (sync)
-		if (rewards.crowns > 0) {
-			rewardText.push(`**${rewards.crowns}** Crowns`);
-		}
-		if (rewardText.length > 0) {
-			victoryEmbed.addFields({ name: 'Rewards Gained', value: rewardText.join('\n') });
-		}
-		// Loot
-		const lootTransaction = db.transaction(() => {
-			for (const monster of combatState.monsters) {
-				if (!monster.loot_table_id) continue;
-				const entries = db.prepare(`
-          SELECT lte.*, i.name AS item_name, i.is_stackable AS is_stackable
-          FROM loot_table_entries lte
-          JOIN items i ON lte.item_id = i.item_id
-          WHERE lte.loot_table_id = ?
-        `).all(monster.loot_table_id);
-				for (const entry of entries) {
-					if (Math.random() < entry.drop_chance) {
-						const quantity = Math.floor(Math.random() * (entry.max_quantity - entry.min_quantity + 1)) + entry.min_quantity;
-						if (entry.is_stackable === 1) {
-							const existing = db.prepare('SELECT inventory_id, quantity FROM user_inventory WHERE user_id = ? AND item_id = ? AND equipped_slot IS NULL')
-								.get(userId, entry.item_id);
-							if (existing) {
-								db.prepare('UPDATE user_inventory SET quantity = quantity + ? WHERE inventory_id = ?').run(quantity, existing.inventory_id);
-							}
-							else {
-								db.prepare('INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, ?)').run(userId, entry.item_id, quantity);
-							}
-						}
-						else {
-							const stmt = db.prepare('INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, 1)');
-							for (let n = 0; n < quantity; n++) {
-								stmt.run(userId, entry.item_id);
-							}
-						}
-						lootedItems.push(`• ${entry.item_name} x${quantity}`);
-					}
-				}
-			}
+		const victoryTransaction = db.transaction(() => {
+			// Update core character stats
+			db.prepare(`
+                UPDATE characters
+                SET
+                    character_status = 'IDLE',
+                    monsters_slain = monsters_slain + ?,
+                    critical_hits_landed = critical_hits_landed + ?
+                WHERE user_id = ?
+            `).run(combatState.monsters.length, critsThisFight, userId);
+
+			// Update progress and check for fastest clear
+			const progress = db.prepare('SELECT fastest_clear_turns FROM character_pve_progress WHERE user_id = ? AND node_id = ?').get(userId, nodeData.node_id);
+			const newBestTime = !progress || !progress.fastest_clear_turns || turn < progress.fastest_clear_turns;
+			db.prepare(`
+                INSERT INTO character_pve_progress (user_id, node_id, times_cleared, last_cleared_at, fastest_clear_turns)
+                VALUES (?, ?, 1, ?, ?)
+                ON CONFLICT(user_id, node_id) DO UPDATE SET
+                    times_cleared = times_cleared + 1,
+                    last_cleared_at = excluded.last_cleared_at,
+                    fastest_clear_turns = CASE
+                        WHEN excluded.fastest_clear_turns < character_pve_progress.fastest_clear_turns OR character_pve_progress.fastest_clear_turns IS NULL
+                        THEN excluded.fastest_clear_turns
+                        ELSE character_pve_progress.fastest_clear_turns
+                    END
+            `).run(userId, nodeData.node_id, new Date().toISOString(), turn);
+
+			return { newBestTime };
 		});
-		lootTransaction();
+
+		const { newBestTime } = victoryTransaction();
+
+		// Now handle rewards and embed creation
+		const isFirstClear = !db.prepare('SELECT 1 FROM character_pve_progress WHERE user_id = ? AND node_id = ? AND times_cleared > 1').get(userId, nodeData.node_id);
+		const rewardJson = isFirstClear ? nodeData.first_completion_reward_json : nodeData.repeatable_reward_json;
+		let rewards = { xp: 0, crowns: 0 };
+		if (rewardJson) rewards = JSON.parse(rewardJson);
+
+		db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(rewards.crowns || 0, userId);
+		if (rewards.xp > 0) await addXp(userId, rewards.xp, interaction);
+
+		const victoryEmbed = new EmbedBuilder()
+			.setColor(0x2ECC71)
+			.setTitle(`🎉 Victory at ${nodeData.name}! 🎉`)
+			.setDescription(`You emerged victorious in **${turn}** turns!`);
+		if (newBestTime) {
+			victoryEmbed.setFooter({ text: '⭐ New Personal Best Time!' });
+		}
+
+		victoryEmbed.addFields({ name: 'Rewards', value: `\`${rewards.xp || 0}\` XP\n\`${rewards.crowns || 0}\` Crowns`, inline: true });
+
+		await thread.send({ embeds: [victoryEmbed] });
+		await thread.setLocked(true).catch((e) => {console.error(e);});
+		await thread.setArchived(true).catch((e) => {console.error(e);});
+
 	}
 	catch (error) {
-		console.error('Victory processing failed:', error);
-		victoryEmbed.addFields({ name: '⚠️ Warning', value: 'Some rewards could not be processed. Please contact an admin.' });
+		console.error('Victory processing error:', error);
+		await thread.send({ content: 'A critical error occurred while processing your victory rewards. Please contact an admin.' });
 	}
 	finally {
-		// 3. Cleanup (always)
-		db.transaction(() => {
-			db.prepare(`
-					INSERT INTO user_economy (user_id, crowns)
-					VALUES (?, ?)
-					ON CONFLICT(user_id) DO UPDATE SET crowns = user_economy.crowns + excluded.crowns
-				`).run(userId, rewards.crowns);
-			db.prepare('UPDATE characters SET character_status = \'IDLE\' WHERE user_id = ? AND character_status IN (\'IN_COMBAT\', \'VICTORY_PENDING\')').run(userId);
-			db.prepare(`
-        INSERT INTO character_pve_progress (user_id, node_id, times_cleared, last_cleared_at)
-        VALUES (?, ?, 1, ?)
-        ON CONFLICT(user_id, node_id) DO UPDATE
-          SET times_cleared = times_cleared + 1,
-              last_cleared_at = excluded.last_cleared_at
-      `).run(userId, nodeData.node_id, new Date().toISOString());
-		})();
 		activeCombats.delete(thread.id);
-		if (lootedItems.length > 0) {
-			victoryEmbed.addFields({ name: 'Loot Acquired', value: lootedItems.join('\n') });
-		}
-		try {
-			await thread.send({ embeds: [victoryEmbed] });
-			await thread.setLocked(true);
-			await thread.setArchived(true);
-		}
-		catch (error) {
-			console.error('Failed to cleanup thread after victory:', error);
-		}
 	}
 }
 
@@ -189,13 +140,17 @@ async function handleDefeat(interaction, combatState) {
 		.setDescription('You have fallen in battle. You awaken back at the Tavern, having lost your way.');
 
 	// Cleanup
-	db.prepare('UPDATE characters SET character_status = \'IDLE\' WHERE user_id = ?').run(userId);
+	db.transaction(() => {
+		db.prepare('UPDATE characters SET character_status = \'IDLE\' WHERE user_id = ?').run(userId);
+		db.prepare('UPDATE characters SET times_fallen = times_fallen + 1 WHERE user_id = ?').run(userId);
+	})();
+
 	activeCombats.delete(thread.id);
 
 	try {
 		await thread.send({ embeds: [defeatEmbed] });
-		await thread.setLocked(true);
-		await thread.setArchived(true);
+		await thread.setLocked(true).catch((e) => {console.error(e);});
+		await thread.setArchived(true).catch((e) => {console.error(e);});
 	}
 	catch (error) {
 		console.error('Failed to cleanup thread after defeat:', error);
@@ -311,6 +266,8 @@ async function handleEngage(interaction) {
 			monsters,
 			combatLog: ['The battle begins!'],
 			startTime: Date.now(),
+			turn: 1,
+			critsThisFight: 0,
 		};
 		activeCombats.set(thread.id, combatState);
 
@@ -485,79 +442,69 @@ module.exports.buttons = async (interaction) => {
 	if (action === 'attack') {
 		const character = combatState.character;
 		const monster = combatState.monsters[targetIndex];
-
 		if (monster.current_health <= 0) return;
 
+		// --- Player's Turn ---
 		const weapon = db.prepare(`
-            SELECT i.damage_dice, i.damage_type
+            SELECT i.damage_dice, i.damage_type, i.crit_damage_modifier
             FROM user_inventory ui
             JOIN items i ON ui.item_id = i.item_id
             WHERE ui.user_id = ? AND ui.equipped_slot = 'weapon'
         `).get(character.user_id);
 
-
-		// 2. Determine damage type and roll dice
 		const damageType = weapon ? weapon.damage_type : 'Bludgeoning';
 		const diceRoll = rollDice(weapon ? weapon.damage_dice : '1d4');
-
-		// 3. Get the correct stat modifier using our new helper function
 		const statModifier = getDamageModifier(damageType, character);
+		let playerDamage = Math.max(1, diceRoll + statModifier);
 
-		// 4. Total damage is the dice roll + modifier, with a minimum of 1
-		const playerDamage = Math.max(1, diceRoll + statModifier);
+		// Check for critical hit
+		const isCrit = Math.random() < character.crit_chance;
+		if (isCrit) {
+			playerDamage = Math.floor(playerDamage * character.crit_damage_modifier);
+			combatState.critsThisFight++;
+			combatState.combatLog.push(`> 💥 CRITICAL HIT! You attack **${monster.name} #${targetIndex + 1}** for **${playerDamage}** damage.`);
+		}
+		else {
+			combatState.combatLog.push(`> You attack **${monster.name} #${targetIndex + 1}** for **${playerDamage}** damage.`);
+		}
 
 		monster.current_health = Math.max(0, monster.current_health - playerDamage);
-
-		combatState.combatLog.push(`> You attack **${monster.name} #${targetIndex + 1}** for **${playerDamage}** damage.`);
 		if (monster.current_health === 0) {
 			combatState.combatLog.push(`> **${monster.name} #${targetIndex + 1}** has been defeated!`);
 		}
 
-		// Check for victory
-		const allMonstersDefeated = combatState.monsters.every(m => m.current_health <= 0);
-		if (allMonstersDefeated) {
-			// Immediately mark the victory in the database to prevent loss
-			let updated = 0;
-			try {
-				updated = db.transaction(() => {
-					const res = db.prepare(
-						'UPDATE characters SET character_status = \'VICTORY_PENDING\' WHERE user_id = ? AND character_status = \'IN_COMBAT\'',
-					).run(combatState.userId);
-					return res.changes || 0;
-				})();
-			}
-			catch (error) {
-				console.error('Failed to update character status to VICTORY_PENDING:', error);
-			}
-			if (updated === 1) {
-				return handleVictory(interaction, combatState);
-			}
-			// Someone else already resolved victory; just no-op the UI update.
-			return;
-		}
-
-		// Monsters' turn
+		// --- Monsters' Turn ---
+		let totalDamageTakenThisTurn = 0;
 		combatState.monsters.forEach((m, i) => {
 			if (m.current_health > 0) {
 				const monsterDamage = Math.max(1, m.base_damage);
 				character.current_health = Math.max(0, character.current_health - monsterDamage);
+				totalDamageTakenThisTurn += monsterDamage;
 				combatState.combatLog.push(`> **${m.name} #${i + 1}** attacks you for **${monsterDamage}** damage.`);
 			}
 		});
 
-		// Check for defeat
+		// --- End of Turn: Update Stats & Check State ---
+		db.transaction(() => {
+			db.prepare('UPDATE characters SET highest_damage_dealt = MAX(highest_damage_dealt, ?) WHERE user_id = ?').run(playerDamage, character.user_id);
+			if (totalDamageTakenThisTurn > 0) {
+				db.prepare('UPDATE characters SET largest_hit_survived = MAX(largest_hit_survived, ?) WHERE user_id = ?').run(totalDamageTakenThisTurn, character.user_id);
+			}
+		})();
+
+		const allMonstersDefeated = combatState.monsters.every(m => m.current_health <= 0);
+		if (allMonstersDefeated) {
+			return handleVictory(interaction, combatState);
+		}
+
 		if (character.current_health === 0) {
 			return handleDefeat(interaction, combatState);
 		}
 
-		// Update UI
-		 const updatedEmbed = buildCombatEmbed(combatState, interaction.user);
-		if (interaction.message) {
-			await interaction.message.edit({ embeds: [updatedEmbed] });
-		}
-		else {
-			await interaction.editReply({ embeds: [updatedEmbed] });
-		}
+		// If combat continues, increment turn and update UI
+		combatState.turn++;
+		const updatedEmbed = buildCombatEmbed(combatState, interaction.user);
+		await interaction.message.edit({ embeds: [updatedEmbed] });
 	}
 };
 module.exports.cleanup = () => {
