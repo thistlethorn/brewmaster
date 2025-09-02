@@ -155,7 +155,7 @@ async function handleView(interaction) {
             WHERE gmt.user_id = ?
         `).get(targetUser.id),
 		db.prepare(`
-            SELECT cpp.times_cleared, cpp.fastest_clear_turns, pn.name
+            SELECT cpp.times_cleared, cpp.attempts, cpp.fastest_clear_turns, pn.name
             FROM character_pve_progress cpp
             JOIN pve_nodes pn ON cpp.node_id = pn.node_id
             WHERE cpp.user_id = ?
@@ -250,9 +250,9 @@ async function handleView(interaction) {
 	// --- Dungeon History ---
 	if (pveHistory.length > 0) {
 		const historyString = pveHistory.map(entry => {
-			const clearRate = entry.times_cleared > 0 ? Math.round((db.prepare('SELECT COUNT(*) as wins FROM character_pve_progress WHERE user_id = ? AND node_id = (SELECT node_id FROM pve_nodes WHERE name = ?) AND fastest_clear_turns IS NOT NULL').get(targetUser.id, entry.name)?.wins || 0) / entry.times_cleared * 100) : 0;
+			const clearRate = entry.attempts > 0 ? Math.round((entry.times_cleared / entry.attempts) * 100) : 0;
 			const bestTime = entry.fastest_clear_turns ? `${entry.fastest_clear_turns} turns` : 'N/A';
-			return `- **${entry.name}:** ${entry.times_cleared} Attempts (${clearRate}% Clear) | Best: ${bestTime}`;
+			return `- **${entry.name}:** ${entry.attempts} Attempts (${clearRate}% Clear) | Best: ${bestTime}`;
 		}).join('\n');
 		sheetEmbed.addFields({ name: '🗺️ Dungeon History', value: historyString, inline: false });
 	}

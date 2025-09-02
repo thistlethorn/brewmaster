@@ -955,6 +955,7 @@ const setupTables = db.transaction(() => {
             times_cleared INTEGER DEFAULT 0,
             last_cleared_at TEXT,
 			fastest_clear_turns INTEGER,
+            attempts INTEGER DEFAULT 0,
             PRIMARY KEY (user_id, node_id),
             FOREIGN KEY(user_id) REFERENCES characters(user_id) ON DELETE CASCADE,
             FOREIGN KEY(node_id) REFERENCES pve_nodes(node_id) ON DELETE CASCADE
@@ -1313,6 +1314,14 @@ const setupTables = db.transaction(() => {
 		if (!pveProgressColumns.has('fastest_clear_turns')) {
 			db.prepare('ALTER TABLE character_pve_progress ADD COLUMN fastest_clear_turns INTEGER').run();
 			console.log('[DB Migration] Added column: character_pve_progress.fastest_clear_turns');
+		}
+		// NEW MIGRATION LOGIC
+		if (!pveProgressColumns.has('attempts')) {
+			db.prepare('ALTER TABLE character_pve_progress ADD COLUMN attempts INTEGER DEFAULT 0').run();
+			console.log('[DB Migration] Added column: character_pve_progress.attempts');
+			// Retroactively set attempts equal to clears for old data to ensure 100% clear rate.
+			db.prepare('UPDATE character_pve_progress SET attempts = times_cleared').run();
+			console.log('[DB Migration] Ported old clear counts to new attempt counts.');
 		}
 		console.log('[DB Migration] Schema check complete.');
 	}

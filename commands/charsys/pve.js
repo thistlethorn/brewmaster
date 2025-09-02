@@ -77,9 +77,10 @@ async function handleVictory(interaction, combatState) {
 			const progress = db.prepare('SELECT fastest_clear_turns FROM character_pve_progress WHERE user_id = ? AND node_id = ?').get(userId, nodeData.node_id);
 			const newBestTime = !progress || !progress.fastest_clear_turns || turn < progress.fastest_clear_turns;
 			db.prepare(`
-                INSERT INTO character_pve_progress (user_id, node_id, times_cleared, last_cleared_at, fastest_clear_turns)
-                VALUES (?, ?, 1, ?, ?)
+                INSERT INTO character_pve_progress (user_id, node_id, attempts, times_cleared, last_cleared_at, fastest_clear_turns)
+                VALUES (?, ?, 1, 1, ?, ?)
                 ON CONFLICT(user_id, node_id) DO UPDATE SET
+                    attempts = attempts + 1,
                     times_cleared = times_cleared + 1,
                     last_cleared_at = excluded.last_cleared_at,
                     fastest_clear_turns = CASE
@@ -100,7 +101,7 @@ async function handleVictory(interaction, combatState) {
 		let rewards = { xp: 0, crowns: 0 };
 		if (rewardJson) rewards = JSON.parse(rewardJson);
 
-		db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(rewards.crowns || 0, userId);
+		db.prepare('INSERT INTO user_economy (user_id, crowns) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET crowns = crowns + excluded.crowns').run(userId, rewards.crowns || 0);
 		if (rewards.xp > 0) await addXp(userId, rewards.xp, interaction);
 
 		const victoryEmbed = new EmbedBuilder()
@@ -139,10 +140,16 @@ async function handleDefeat(interaction, combatState) {
 		.setTitle(`Defeated at ${nodeData.name}...`)
 		.setDescription('You have fallen in battle. You awaken back at the Tavern, having lost your way.');
 
-	// Cleanup
+	// Cleanup and log the failed attempt
 	db.transaction(() => {
-		db.prepare('UPDATE characters SET character_status = \'IDLE\' WHERE user_id = ?').run(userId);
-		db.prepare('UPDATE characters SET times_fallen = times_fallen + 1 WHERE user_id = ?').run(userId);
+		db.prepare('UPDATE characters SET character_status = \'IDLE\', times_fallen = times_fallen + 1 WHERE user_id = ?').run(userId);
+		// Log the attempt without a clear
+		db.prepare(`
+            INSERT INTO character_pve_progress (user_id, node_id, attempts, times_cleared)
+            VALUES (?, ?, 1, 0)
+            ON CONFLICT(user_id, node_id) DO UPDATE SET
+                attempts = attempts + 1
+        `).run(userId, nodeData.node_id);
 	})();
 
 	activeCombats.delete(thread.id);
@@ -232,7 +239,7 @@ async function handleEngage(interaction) {
 			reason: `PvE combat instance for ${interaction.user.tag}`,
 		});
 
-		// Set character status to 'IN_COMBAT'
+		// Set character status to 'IN_COMBAT' - NO attempt logging here anymore.
 		db.prepare('UPDATE characters SET character_status = ? WHERE user_id = ?').run('IN_COMBAT', userId);
 
 		await thread.members.add(userId);
@@ -426,14 +433,39 @@ module.exports.buttons = async (interaction) => {
 	// eslint-disable-next-line no-unused-vars
 	const [_, action, threadId, targetIndexStr] = interaction.customId.split('_');
 	const targetIndex = Number.parseInt(targetIndexStr, 10);
+	const combatState = activeCombats.get(threadId);
+	if (!combatState || combatState.userId !== interaction.user.id) {
+		// This instance is invalid or expired. Let's clean up.
+		try {
+			const updateResult = db.prepare(`
+                UPDATE characters
+                SET character_status = 'IDLE'
+                WHERE user_id = ? AND character_status = 'IN_COMBAT'
+            `).run(interaction.user.id);
+
+			if (updateResult.changes > 0) {
+				console.log(`[PVE Cleanup] Reset stuck 'IN_COMBAT' status for user ${interaction.user.id}.`);
+			}
+
+			// Clean up the thread to prevent further confusion.
+			if (interaction.channel.isThread()) {
+				await interaction.channel.setLocked(true).catch((e) => {console.error(e);});
+				await interaction.channel.setArchived(true).catch((e) => {console.error(e);});
+			}
+		}
+		catch (dbError) {
+			console.error('[PVE Cleanup] Database error during self-heal:', dbError);
+		}
+
+		return interaction.reply({
+			content: 'This combat instance has expired or is invalid. Your status has been reset, so you can now start a new adventure with `/pve engage`.',
+			flags: MessageFlags.Ephemeral,
+		});
+	}
 	if (!Number.isInteger(targetIndex)) {
 		return interaction.reply({ content: 'Invalid target.', flags: MessageFlags.Ephemeral });
 	}
 
-	const combatState = activeCombats.get(threadId);
-	if (!combatState || combatState.userId !== interaction.user.id) {
-		return interaction.reply({ content: 'This is not your combat instance or it has expired.', flags: MessageFlags.Ephemeral });
-	}
 	if (targetIndex < 0 || targetIndex >= combatState.monsters.length) {
 		return interaction.reply({ content: 'That target is no longer valid.', flags: MessageFlags.Ephemeral });
 	}
@@ -446,26 +478,40 @@ module.exports.buttons = async (interaction) => {
 
 		// --- Player's Turn ---
 		const weapon = db.prepare(`
-            SELECT i.damage_dice, i.damage_type, i.crit_damage_modifier
+            SELECT i.damage_dice, i.damage_type
             FROM user_inventory ui
             JOIN items i ON ui.item_id = i.item_id
             WHERE ui.user_id = ? AND ui.equipped_slot = 'weapon'
         `).get(character.user_id);
 
-		const damageType = weapon ? weapon.damage_type : 'Bludgeoning';
-		const diceRoll = rollDice(weapon ? weapon.damage_dice : '1d4');
+		let damageType;
+		let diceRoll;
+		let qtyDice;
+		let diceSides;
+
+		if (weapon && weapon.damage_dice) {
+			damageType = weapon.damage_type;
+			diceRoll = rollDice(weapon.damage_dice);
+			[qtyDice, diceSides] = weapon.damage_dice.split('d').map(Number);
+		}
+		else {
+			damageType = 'Bludgeoning';
+			diceRoll = rollDice('1d4');
+			[qtyDice, diceSides] = [1, 4];
+		}
+
 		const statModifier = getDamageModifier(damageType, character);
 		let playerDamage = Math.max(1, diceRoll + statModifier);
 
 		// Check for critical hit
 		const isCrit = Math.random() < character.crit_chance;
 		if (isCrit) {
-			playerDamage = Math.floor(playerDamage * character.crit_damage_modifier);
+			playerDamage = Math.max(1, Math.round(((qtyDice * diceSides) + statModifier) * character.crit_damage_modifier));
 			combatState.critsThisFight++;
-			combatState.combatLog.push(`> 💥 CRITICAL HIT! You attack **${monster.name} #${targetIndex + 1}** for **${playerDamage}** damage.`);
+			combatState.combatLog.push(`🗡️💥 **CRITICAL HIT!** You attack **${monster.name} #${targetIndex + 1}** for **${playerDamage}** damage (${qtyDice * diceSides} + ${statModifier} * ${character.crit_damage_modifier}).`);
 		}
 		else {
-			combatState.combatLog.push(`> You attack **${monster.name} #${targetIndex + 1}** for **${playerDamage}** damage.`);
+			combatState.combatLog.push(`🗡️ You attack **${monster.name} #${targetIndex + 1}** for **${playerDamage}** damage (${qtyDice}d${diceSides} + ${statModifier}).`);
 		}
 
 		monster.current_health = Math.max(0, monster.current_health - playerDamage);
