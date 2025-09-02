@@ -42,9 +42,17 @@ const pveItems = [
 	{ name: 'Spider Silk', description: 'A bundle of strong, sticky spider silk.', item_type: 'MATERIAL', is_stackable: 1, is_tradeable: 1, crown_value: 5 },
 	{ name: 'Venom Gland', description: 'A gland filled with a weak, but usable, poison.', item_type: 'MATERIAL', is_stackable: 1, is_tradeable: 1, crown_value: 8 },
 	{ name: 'Bone Fragments', description: 'Shards of animated bone.', item_type: 'MATERIAL', is_stackable: 1, is_tradeable: 1, crown_value: 2 },
+	{ name: 'Stolen Locket', description: 'A small, tarnished silver locket. It\'s empty inside.', item_type: 'MATERIAL', is_stackable: 1, is_tradeable: 1, crown_value: 12 },
+	{ name: 'Wolf Fang', description: 'A sharp, curved fang from a large wolf.', item_type: 'MATERIAL', is_stackable: 1, is_tradeable: 1, crown_value: 10 },
+	{ name: 'Orc Tusk', description: 'A rugged, yellowed tusk from an orc.', item_type: 'MATERIAL', is_stackable: 1, is_tradeable: 1, crown_value: 15 },
+	{ name: 'Large Bone', description: 'A massive, heavy bone, likely from something huge.', item_type: 'MATERIAL', is_stackable: 1, is_tradeable: 1, crown_value: 18 },
+	{ name: 'Hag\'s Eye', description: 'A glassy, unsettling eyeball from a swamp hag.', item_type: 'MATERIAL', is_stackable: 1, is_tradeable: 1, crown_value: 25 },
 	// Weapons
 	{ name: 'Crude Dagger', description: 'A poorly made goblin shiv.', item_type: 'WEAPON', rarity: 'COMMON', is_stackable: 0, is_tradeable: 1, crown_value: 10, damage_dice: '1d4', damage_type: 'Piercing', handedness: 'one-handed', effects_json: '{"slot": "weapon", "stats": {"crit_chance": 0.01}}' },
 	{ name: 'Rusty Shortsword', description: 'A standard shortsword, degraded by time and undeath.', item_type: 'WEAPON', rarity: 'COMMON', is_stackable: 0, is_tradeable: 1, crown_value: 15, damage_dice: '1d6', damage_type: 'Slashing', handedness: 'one-handed', effects_json: '{"slot": "weapon"}' },
+	{ name: 'Ogre\'s Club', description: 'A crudely fashioned but brutally effective large club.', item_type: 'WEAPON', rarity: 'UNCOMMON', is_stackable: 0, is_tradeable: 1, crown_value: 80, damage_dice: '1d10', damage_type: 'Bludgeoning', handedness: 'two-handed', effects_json: '{"slot": "weapon", "base_stats": {"might": 1}}' },
+	// Armor
+	{ name: 'Crude Iron Helm', description: 'A dented and poorly fitting helmet of orcish make.', item_type: 'ARMOR', rarity: 'COMMON', is_stackable: 0, is_tradeable: 1, crown_value: 40, effects_json: '{"slot": "helmet", "ac_bonus": 1}' },
 ];
 
 const lootTables = [
@@ -55,6 +63,11 @@ const lootTables = [
 	{ id: 2, name: 'Goblin Pouch', description: 'The meager contents of a goblin\'s satchel.' },
 	{ id: 3, name: 'Spider Sac', description: 'Harvestable materials from a forest spider.' },
 	{ id: 4, name: 'Bone Pile', description: 'The remains of a skeletal creature.' },
+	{ id: 5, name: 'Bandit\'s Belongings', description: 'Whatever a highwayman had on them.' },
+	{ id: 6, name: 'Dire Wolf Carcass', description: 'Useful parts from a slain dire wolf.' },
+	{ id: 7, name: 'Orcish War-Sack', description: 'A sack of brutish and violent treasures.' },
+	{ id: 8, name: 'Ogre\'s Loincloth', description: 'Surprisingly spacious and full of junk.' },
+	{ id: 9, name: 'Hag\'s Concoctions', description: 'The strange and mystical contents of a hag\'s pouch.' },
 ];
 
 const lootTableEntries = [
@@ -70,6 +83,19 @@ const lootTableEntries = [
 	// Bone Pile (Table 4)
 	{ loot_table_id: 4, item_name: 'Bone Fragments', drop_chance: 0.80, min_quantity: 2, max_quantity: 5 },
 	{ loot_table_id: 4, item_name: 'Rusty Shortsword', drop_chance: 0.10, min_quantity: 1, max_quantity: 1 },
+	// Bandit's Belongings (Table 5)
+	{ loot_table_id: 5, item_name: 'Stolen Locket', drop_chance: 0.20, min_quantity: 1, max_quantity: 1 },
+	// Dire Wolf Carcass (Table 6)
+	{ loot_table_id: 6, item_name: 'Wolf Fang', drop_chance: 0.70, min_quantity: 1, max_quantity: 2 },
+	{ loot_table_id: 6, item_name: 'Thick Pelt', drop_chance: 0.40, min_quantity: 1, max_quantity: 1 },
+	// Orcish War-Sack (Table 7)
+	{ loot_table_id: 7, item_name: 'Orc Tusk', drop_chance: 0.60, min_quantity: 1, max_quantity: 1 },
+	{ loot_table_id: 7, item_name: 'Crude Iron Helm', drop_chance: 0.10, min_quantity: 1, max_quantity: 1 },
+	// Ogre's Loincloth (Table 8)
+	{ loot_table_id: 8, item_name: 'Large Bone', drop_chance: 0.50, min_quantity: 1, max_quantity: 2 },
+	{ loot_table_id: 8, item_name: 'Ogre\'s Club', drop_chance: 0.08, min_quantity: 1, max_quantity: 1 },
+	// Hag's Concoctions (Table 9)
+	{ loot_table_id: 9, item_name: 'Hag\'s Eye', drop_chance: 0.30, min_quantity: 1, max_quantity: 1 },
 ];
 
 const monsters = [
@@ -77,12 +103,22 @@ const monsters = [
 	{ name: 'Goblin Grunt', monster_race: 'Goblinoid', level: 1, max_health: 12, armor_class: 12, base_damage: 3, xp_reward: 10, loot_table_id: 2 },
 	{ name: 'Forest Spider', monster_race: 'Beast', level: 2, max_health: 15, armor_class: 13, base_damage: 4, xp_reward: 15, loot_table_id: 3 },
 	{ name: 'Skeleton Warrior', monster_race: 'Undead', level: 2, max_health: 18, armor_class: 14, base_damage: 5, xp_reward: 20, loot_table_id: 4 },
+	{ name: 'Bandit Thug', monster_race: 'Humanoid', level: 2, max_health: 16, armor_class: 13, base_damage: 4, xp_reward: 18, loot_table_id: 5 },
+	{ name: 'Dire Wolf', monster_race: 'Beast', level: 2, max_health: 20, armor_class: 14, base_damage: 6, xp_reward: 25, loot_table_id: 6 },
+	{ name: 'Orc Berserker', monster_race: 'Orc', level: 3, max_health: 25, armor_class: 13, base_damage: 7, xp_reward: 35, loot_table_id: 7 },
+	{ name: 'Ogre Brute', monster_race: 'Giant', level: 3, max_health: 40, armor_class: 12, base_damage: 8, xp_reward: 45, loot_table_id: 8 },
+	{ name: 'Swamp Hag', monster_race: 'Fey', level: 3, max_health: 30, armor_class: 15, base_damage: 5, xp_reward: 50, loot_table_id: 9 },
 ];
 
 const pveNodes = [
 	{ name: 'Tavern Cellar', description: 'Rats have infested the tavern\'s cellar!', required_level: 1, monster_composition_json: '[{"name": "Giant Rat", "count": 2}]', first_completion_reward_json: '{"xp": 20, "crowns": 50}', repeatable_reward_json: '{"xp": 5, "crowns": 10}' },
 	{ name: 'Whispering Woods Outskirts', description: 'Goblins and other creatures lurk at the edge of the forest.', required_level: 1, monster_composition_json: '[{"name": "Goblin Grunt", "count": 2}, {"name": "Forest Spider", "count": 1}]', first_completion_reward_json: '{"xp": 50, "crowns": 100}', repeatable_reward_json: '{"xp": 15, "crowns": 25}' },
+	{ name: 'Bandit Hideout', description: 'A group of bandits have made a camp near the main road.', required_level: 2, monster_composition_json: '[{"name": "Bandit Thug", "count": 3}]', first_completion_reward_json: '{"xp": 70, "crowns": 120}', repeatable_reward_json: '{"xp": 20, "crowns": 35}' },
 	{ name: 'Forgotten Crypt Entrance', description: 'The restless dead guard the entrance to an ancient tomb.', required_level: 2, monster_composition_json: '[{"name": "Skeleton Warrior", "count": 3}]', first_completion_reward_json: '{"xp": 80, "crowns": 150}', repeatable_reward_json: '{"xp": 25, "crowns": 40}' },
+	{ name: 'Dire Wolf Den', description: 'A pair of vicious dire wolves have claimed this cave.', required_level: 2, monster_composition_json: '[{"name": "Dire Wolf", "count": 2}]', first_completion_reward_json: '{"xp": 90, "crowns": 160}', repeatable_reward_json: '{"xp": 30, "crowns": 45}' },
+	{ name: 'Orc Warcamp', description: 'A small but aggressive encampment of orcs and their goblin minions.', required_level: 3, monster_composition_json: '[{"name": "Orc Berserker", "count": 2}, {"name": "Goblin Grunt", "count": 2}]', first_completion_reward_json: '{"xp": 120, "crowns": 200}', repeatable_reward_json: '{"xp": 40, "crowns": 60}' },
+	{ name: 'Ogre\'s Cave', description: 'A lumbering ogre has taken up residence in this cave, along with its orcish friend.', required_level: 3, monster_composition_json: '[{"name": "Ogre Brute", "count": 1}, {"name": "Orc Berserker", "count": 1}]', first_completion_reward_json: '{"xp": 150, "crowns": 250}', repeatable_reward_json: '{"xp": 50, "crowns": 75}' },
+	{ name: 'Murky Swamp', description: 'A foul hag and her spider pets infest this murky bog.', required_level: 3, monster_composition_json: '[{"name": "Swamp Hag", "count": 1}, {"name": "Forest Spider", "count": 3}]', first_completion_reward_json: '{"xp": 180, "crowns": 300}', repeatable_reward_json: '{"xp": 60, "crowns": 90}' },
 ];
 const standardStartingKitData = [
 	{ name: 'Simple Dagger', description: 'A small, utilitarian blade. More a tool than a dedicated weapon.', item_type: 'WEAPON', rarity: 'STARTER', is_stackable: 0, is_tradeable: 0, crown_value: 5, damage_dice: '1d4', damage_type: 'Piercing', handedness: 'one-handed', effects_json: '{"slot": "weapon"}' },

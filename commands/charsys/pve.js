@@ -135,10 +135,22 @@ async function handleVictory(interaction, combatState) {
  */
 async function handleDefeat(interaction, combatState) {
 	const { userId, nodeData, thread } = combatState;
+	let consolationXp = 0;
+	if (nodeData.repeatable_reward_json) {
+		try {
+			const rewards = JSON.parse(nodeData.repeatable_reward_json);
+			if (rewards.xp) {
+				consolationXp = Math.floor(rewards.xp * 0.25);
+			}
+		}
+		catch (e) {
+			console.error('Failed to parse repeatable rewards for consolation XP:', e);
+		}
+	}
 	const defeatEmbed = new EmbedBuilder()
 		.setColor(0x992D22)
 		.setTitle(`Defeated at ${nodeData.name}...`)
-		.setDescription('You have fallen in battle. You awaken back at the Tavern, having lost your way.');
+		.setDescription(`You have fallen in battle. You awaken back at the Tavern, having lost your way.\n\nYou earned **${consolationXp} XP** for the attempt.`);
 
 	// Cleanup and log the failed attempt
 	db.transaction(() => {
@@ -151,6 +163,9 @@ async function handleDefeat(interaction, combatState) {
                 attempts = attempts + 1
         `).run(userId, nodeData.node_id);
 	})();
+	if (consolationXp > 0) {
+		await addXp(userId, consolationXp, interaction);
+	}
 
 	activeCombats.delete(thread.id);
 
@@ -523,7 +538,8 @@ module.exports.buttons = async (interaction) => {
 		let totalDamageTakenThisTurn = 0;
 		combatState.monsters.forEach((m, i) => {
 			if (m.current_health > 0) {
-				const monsterDamage = Math.max(1, m.base_damage);
+				const monsterDamageRoll = Math.floor(Math.random() * (m.base_damage * 2)) + 1;
+				const monsterDamage = Math.max(1, monsterDamageRoll);
 				character.current_health = Math.max(0, character.current_health - monsterDamage);
 				totalDamageTakenThisTurn += monsterDamage;
 				combatState.combatLog.push(`> **${m.name} #${i + 1}** attacks you for **${monsterDamage}** damage.`);
