@@ -33,8 +33,9 @@ const cleanupIntervalId = setInterval(() => {
 function buildCombatEmbed(combatState, user) {
 	const embed = new EmbedBuilder()
 		.setColor(0xC0392B)
-		.setTitle(`⚔️ Combat: ${combatState.nodeData.name} ⚔️`)
-		.setAuthor({ name: user.username, iconURL: user.displayAvatarURL() });
+		.setTitle(`⚔️ Combat: ${combatState.nodeData.name} - Turn ${combatState.turn} ⚔️`)
+		.setAuthor({ name: user.username, iconURL: user.displayAvatarURL() })
+		.setFooter({ text: 'Your turn to act!' });
 
 	const playerStatus = `❤️ **HP:** \`${combatState.character.current_health} / ${combatState.character.max_health}\`\n` +
 	                     `💙 **Mana:** \`${combatState.character.current_mana} / ${combatState.character.max_mana}\``;
@@ -47,7 +48,8 @@ function buildCombatEmbed(combatState, user) {
 	embed.addFields({ name: 'Enemies', value: monsterStatus, inline: false });
 
 	if (combatState.combatLog.length > 0) {
-		embed.addFields({ name: 'Combat Log', value: combatState.combatLog.slice(-5).join('\n'), inline: false });
+		// Increased the slice to show more of the log
+		embed.addFields({ name: '📜 Combat Log', value: combatState.combatLog.slice(-10).join('\n'), inline: false });
 	}
 
 	return embed;
@@ -491,6 +493,8 @@ module.exports.buttons = async (interaction) => {
 		const monster = combatState.monsters[targetIndex];
 		if (monster.current_health <= 0) return;
 
+
+		combatState.combatLog.push(`> ~ **Turn** \`${combatState.turn}\` ~`);
 		// --- Player's Turn ---
 		const weapon = db.prepare(`
             SELECT i.damage_dice, i.damage_type
@@ -542,7 +546,8 @@ module.exports.buttons = async (interaction) => {
 				const monsterDamage = Math.max(1, monsterDamageRoll);
 				character.current_health = Math.max(0, character.current_health - monsterDamage);
 				totalDamageTakenThisTurn += monsterDamage;
-				combatState.combatLog.push(`> **${m.name} #${i + 1}** attacks you for **${monsterDamage}** damage.`);
+				// Added monster emoji to the log
+				combatState.combatLog.push(`> 👹 **${m.name} #${i + 1}** attacks you for **${monsterDamage}** damage.`);
 			}
 		});
 
@@ -566,7 +571,39 @@ module.exports.buttons = async (interaction) => {
 		// If combat continues, increment turn and update UI
 		combatState.turn++;
 		const updatedEmbed = buildCombatEmbed(combatState, interaction.user);
-		await interaction.message.edit({ embeds: [updatedEmbed] });
+
+		// Rebuild action rows with updated button states
+		const updatedActionRows = [];
+		const MAX_ROWS = 5;
+		const MAX_PER_ROW = 5;
+		let currentRow = new ActionRowBuilder();
+		let rowCount = 0;
+		let btnInRow = 0;
+
+		for (let index = 0; index < combatState.monsters.length && rowCount < MAX_ROWS; index++) {
+			const m = combatState.monsters[index];
+			if (btnInRow === MAX_PER_ROW) {
+				updatedActionRows.push(currentRow);
+				currentRow = new ActionRowBuilder();
+				btnInRow = 0;
+				rowCount++;
+				if (rowCount === MAX_ROWS) break;
+			}
+
+			const isDefeated = m.current_health <= 0;
+			currentRow.addComponents(
+				new ButtonBuilder()
+					.setCustomId(`pve_attack_${threadId}_${index}`)
+					.setLabel(isDefeated ? `💀 ${m.name} #${index + 1}` : `Attack ${m.name} #${index + 1}`)
+					.setStyle(isDefeated ? ButtonStyle.Secondary : ButtonStyle.Danger)
+					.setDisabled(isDefeated),
+			);
+			btnInRow++;
+		}
+		if (btnInRow > 0 && rowCount < MAX_ROWS) updatedActionRows.push(currentRow);
+
+
+		await interaction.message.edit({ embeds: [updatedEmbed], components: updatedActionRows });
 	}
 };
 module.exports.cleanup = () => {

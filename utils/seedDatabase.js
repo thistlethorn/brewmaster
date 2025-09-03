@@ -1,8 +1,6 @@
 // utils/seedDatabase.js
 const db = require('../database');
 
-// --- Data arrays (originsData, archetypesData, etc.) remain unchanged ---
-// ... (all data arrays from the original file are assumed to be here) ...
 
 const originsData = [
 	{ name: 'City Guard', description: 'A watchful protector of the urban expanse.', bonus_stat_1: 'might', bonus_stat_2: 'grit', base_perk_name: 'Watchful Lookout', base_perk_description: 'You get pinged in a specific channel for "thief" events, allowing you to be there first.' },
@@ -44,6 +42,7 @@ const pveItems = [
 	{ name: 'Bone Fragments', description: 'Shards of animated bone.', item_type: 'MATERIAL', is_stackable: 1, is_tradeable: 1, crown_value: 2 },
 	{ name: 'Stolen Locket', description: 'A small, tarnished silver locket. It\'s empty inside.', item_type: 'MATERIAL', is_stackable: 1, is_tradeable: 1, crown_value: 12 },
 	{ name: 'Wolf Fang', description: 'A sharp, curved fang from a large wolf.', item_type: 'MATERIAL', is_stackable: 1, is_tradeable: 1, crown_value: 10 },
+	{ name: 'Thick Pelt', description: 'A durable and warm pelt from a large beast.', item_type: 'MATERIAL', is_stackable: 1, is_tradeable: 1, crown_value: 14 },
 	{ name: 'Orc Tusk', description: 'A rugged, yellowed tusk from an orc.', item_type: 'MATERIAL', is_stackable: 1, is_tradeable: 1, crown_value: 15 },
 	{ name: 'Large Bone', description: 'A massive, heavy bone, likely from something huge.', item_type: 'MATERIAL', is_stackable: 1, is_tradeable: 1, crown_value: 18 },
 	{ name: 'Hag\'s Eye', description: 'A glassy, unsettling eyeball from a swamp hag.', item_type: 'MATERIAL', is_stackable: 1, is_tradeable: 1, crown_value: 25 },
