@@ -31,21 +31,49 @@ const archetypesData = [
 	{ name: 'Zealot', description: 'A charismatic and inspiring internal motivator.', primary_stat_1: 'charm', primary_stat_2: 'grit' },
 	{ name: 'Warden', description: 'An active defensive bastion who protects their guild through heroic intervention.', primary_stat_1: 'grit', primary_stat_2: 'might' },
 ];
+const vendorsData = [
+	{ name: 'Rowan the Blacksmith', description: 'A sturdy blacksmith with a keen eye for quality arms and armor.', charm_requirement: 10 },
+	{ name: 'Sable the Hunter', description: 'A rugged hunter who values trophies from dangerous beasts above all else.', charm_requirement: 12 },
+	{ name: 'Pip the Alchemist', description: 'An eccentric but brilliant alchemist, always bubbling with new ideas.', charm_requirement: 15 },
+	{ name: 'Greg the Oddball', description: 'The familiar, weary dealer also runs a side business in strange and wonderful trinkets.', charm_requirement: 20 },
+];
+
+const vendorStockData = [
+	// Rowan (Blacksmith) - Buys smithing materials and common gear
+	{ vendor_name: 'Rowan the Blacksmith', item_name: 'Rat Pelt', sell_price: 1 },
+	{ vendor_name: 'Rowan the Blacksmith', item_name: 'Bone Fragments', sell_price: 1 },
+	{ vendor_name: 'Rowan the Blacksmith', item_name: 'Wolf Fang', sell_price: 5 },
+	{ vendor_name: 'Rowan the Blacksmith', item_name: 'Orc Tusk', sell_price: 7 },
+	{ vendor_name: 'Rowan the Blacksmith', item_name: 'Large Bone', sell_price: 9 },
+	{ vendor_name: 'Rowan the Blacksmith', item_name: 'Crude Dagger', sell_price: 5, buy_price: 20 },
+	{ vendor_name: 'Rowan the Blacksmith', item_name: 'Rusty Shortsword', sell_price: 7, buy_price: 30 },
+	{ vendor_name: 'Rowan the Blacksmith', item_name: 'Crude Iron Helm', sell_price: 20 },
+
+	// Pip (Alchemist) - Buys alchemy materials
+	{ vendor_name: 'Pip the Alchemist', item_name: 'Rat Tail', sell_price: 1 },
+	{ vendor_name: 'Pip the Alchemist', item_name: 'Spider Silk', sell_price: 2 },
+	{ vendor_name: 'Pip the Alchemist', item_name: 'Venom Gland', sell_price: 4 },
+	{ vendor_name: 'Pip the Alchemist', item_name: 'Hag\'s Eye', sell_price: 12 },
+
+	// Sable (Hunter) - Buys trophies
+	{ vendor_name: 'Sable the Hunter', item_name: 'Goblin Ear', sell_price: 2 },
+	{ vendor_name: 'Sable the Hunter', item_name: 'Thick Pelt', sell_price: 7 },
+];
 
 const pveItems = [
 	// Materials
-	{ name: 'Rat Pelt', description: 'A rough patch of fur from a giant rat.', item_type: 'MATERIAL', is_stackable: 1, is_tradeable: 1, crown_value: 2 },
-	{ name: 'Rat Tail', description: 'A surprisingly tough and wiry rat tail.', item_type: 'MATERIAL', is_stackable: 1, is_tradeable: 1, crown_value: 1 },
-	{ name: 'Goblin Ear', description: 'A grisly trophy taken from a goblin.', item_type: 'MATERIAL', is_stackable: 1, is_tradeable: 1, crown_value: 3 },
-	{ name: 'Spider Silk', description: 'A bundle of strong, sticky spider silk.', item_type: 'MATERIAL', is_stackable: 1, is_tradeable: 1, crown_value: 5 },
-	{ name: 'Venom Gland', description: 'A gland filled with a weak, but usable, poison.', item_type: 'MATERIAL', is_stackable: 1, is_tradeable: 1, crown_value: 8 },
-	{ name: 'Bone Fragments', description: 'Shards of animated bone.', item_type: 'MATERIAL', is_stackable: 1, is_tradeable: 1, crown_value: 2 },
-	{ name: 'Stolen Locket', description: 'A small, tarnished silver locket. It\'s empty inside.', item_type: 'MATERIAL', is_stackable: 1, is_tradeable: 1, crown_value: 12 },
-	{ name: 'Wolf Fang', description: 'A sharp, curved fang from a large wolf.', item_type: 'MATERIAL', is_stackable: 1, is_tradeable: 1, crown_value: 10 },
-	{ name: 'Thick Pelt', description: 'A durable and warm pelt from a large beast.', item_type: 'MATERIAL', is_stackable: 1, is_tradeable: 1, crown_value: 14 },
-	{ name: 'Orc Tusk', description: 'A rugged, yellowed tusk from an orc.', item_type: 'MATERIAL', is_stackable: 1, is_tradeable: 1, crown_value: 15 },
-	{ name: 'Large Bone', description: 'A massive, heavy bone, likely from something huge.', item_type: 'MATERIAL', is_stackable: 1, is_tradeable: 1, crown_value: 18 },
-	{ name: 'Hag\'s Eye', description: 'A glassy, unsettling eyeball from a swamp hag.', item_type: 'MATERIAL', is_stackable: 1, is_tradeable: 1, crown_value: 25 },
+	{ name: 'Rat Pelt', description: 'A rough patch of fur from a giant rat.', item_type: 'MATERIAL', item_subtype: 'SMITHING', is_stackable: 1, is_tradeable: 1, crown_value: 2 },
+	{ name: 'Rat Tail', description: 'A surprisingly tough and wiry rat tail.', item_type: 'MATERIAL', item_subtype: 'ALCHEMY', is_stackable: 1, is_tradeable: 1, crown_value: 1 },
+	{ name: 'Goblin Ear', description: 'A grisly trophy taken from a goblin.', item_type: 'MATERIAL', item_subtype: 'TROPHY', is_stackable: 1, is_tradeable: 1, crown_value: 3 },
+	{ name: 'Spider Silk', description: 'A bundle of strong, sticky spider silk.', item_type: 'MATERIAL', item_subtype: 'ALCHEMY', is_stackable: 1, is_tradeable: 1, crown_value: 5 },
+	{ name: 'Venom Gland', description: 'A gland filled with a weak, but usable, poison.', item_type: 'MATERIAL', item_subtype: 'ALCHEMY', is_stackable: 1, is_tradeable: 1, crown_value: 8 },
+	{ name: 'Bone Fragments', description: 'Shards of animated bone.', item_type: 'MATERIAL', item_subtype: 'SMITHING', is_stackable: 1, is_tradeable: 1, crown_value: 2 },
+	{ name: 'Stolen Locket', description: 'A small, tarnished silver locket. It\'s empty inside.', item_type: 'MATERIAL', item_subtype: 'MISC', is_stackable: 1, is_tradeable: 1, crown_value: 12 },
+	{ name: 'Wolf Fang', description: 'A sharp, curved fang from a large wolf.', item_type: 'MATERIAL', item_subtype: 'SMITHING', is_stackable: 1, is_tradeable: 1, crown_value: 10 },
+	{ name: 'Thick Pelt', description: 'A durable and warm pelt from a large beast.', item_type: 'MATERIAL', item_subtype: 'TROPHY', is_stackable: 1, is_tradeable: 1, crown_value: 14 },
+	{ name: 'Orc Tusk', description: 'A rugged, yellowed tusk from an orc.', item_type: 'MATERIAL', item_subtype: 'SMITHING', is_stackable: 1, is_tradeable: 1, crown_value: 15 },
+	{ name: 'Large Bone', description: 'A massive, heavy bone, likely from something huge.', item_type: 'MATERIAL', item_subtype: 'SMITHING', is_stackable: 1, is_tradeable: 1, crown_value: 18 },
+	{ name: 'Hag\'s Eye', description: 'A glassy, unsettling eyeball from a swamp hag.', item_type: 'MATERIAL', item_subtype: 'ALCHEMY', is_stackable: 1, is_tradeable: 1, crown_value: 25 },
 	// Weapons
 	{ name: 'Crude Dagger', description: 'A poorly made goblin shiv.', item_type: 'WEAPON', rarity: 'COMMON', is_stackable: 0, is_tradeable: 1, crown_value: 10, damage_dice: '1d4', damage_type: 'Piercing', handedness: 'one-handed', effects_json: '{"slot": "weapon", "stats": {"crit_chance": 0.01}}' },
 	{ name: 'Rusty Shortsword', description: 'A standard shortsword, degraded by time and undeath.', item_type: 'WEAPON', rarity: 'COMMON', is_stackable: 0, is_tradeable: 1, crown_value: 15, damage_dice: '1d6', damage_type: 'Slashing', handedness: 'one-handed', effects_json: '{"slot": "weapon"}' },
@@ -191,139 +219,120 @@ const startingEquipmentData = [
  */
 function seedPveData() {
 	db.transaction(() => {
-		// Prepare all statements once for efficiency.
-		const selectItem = db.prepare('SELECT 1 FROM items WHERE name = ?');
-		const insertItem = db.prepare('INSERT INTO items (name, description, item_type, rarity, is_stackable, is_tradeable, crown_value, damage_dice, damage_type, handedness, effects_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
-		const selectLootTable = db.prepare('SELECT 1 FROM loot_tables WHERE name = ?');
-		const insertLootTable = db.prepare('INSERT INTO loot_tables (name, description) VALUES (?, ?)');
-		const selectLootEntry = db.prepare('SELECT 1 FROM loot_table_entries WHERE loot_table_id = ? AND item_id = ?');
-		const insertLootEntry = db.prepare('INSERT INTO loot_table_entries (loot_table_id, item_id, drop_chance, min_quantity, max_quantity) VALUES (?, ?, ?, ?, ?)');
-		const selectMonster = db.prepare('SELECT 1 FROM monsters WHERE name = ?');
-		const insertMonster = db.prepare('INSERT INTO monsters (name, monster_race, level, max_health, armor_class, base_damage, xp_reward, loot_table_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-		const selectPveNode = db.prepare('SELECT 1 FROM pve_nodes WHERE name = ?');
-		const insertPveNode = db.prepare('INSERT INTO pve_nodes (name, description, required_level, first_completion_reward_json, repeatable_reward_json) VALUES (?, ?, ?, ?, ?)');
-		const selectPveNodeMonster = db.prepare('SELECT 1 FROM pve_node_monsters WHERE node_id = ? AND monster_id = ?');
-		const insertPveNodeMonster = db.prepare('INSERT INTO pve_node_monsters (node_id, monster_id, count) VALUES (?, ?, ?)');
+		// Prepare all UPSERT statements once for efficiency.
+		const upsertItem = db.prepare(`
+            INSERT INTO items (name, description, item_type, item_subtype, rarity, is_stackable, is_tradeable, crown_value, damage_dice, damage_type, handedness, effects_json)
+            VALUES (@name, @description, @item_type, @item_subtype, @rarity, @is_stackable, @is_tradeable, @crown_value, @damage_dice, @damage_type, @handedness, @effects_json)
+            ON CONFLICT(name) DO UPDATE SET
+                description = excluded.description,
+                item_type = excluded.item_type,
+                item_subtype = excluded.item_subtype,
+                rarity = excluded.rarity,
+                crown_value = excluded.crown_value,
+                damage_dice = excluded.damage_dice,
+                damage_type = excluded.damage_type,
+                handedness = excluded.handedness,
+                effects_json = excluded.effects_json
+        `);
+
+		const upsertLootTable = db.prepare(`
+            INSERT INTO loot_tables (name, description) VALUES (@name, @description)
+            ON CONFLICT(name) DO UPDATE SET description = excluded.description
+        `);
+
+		const upsertVendor = db.prepare(`
+            INSERT INTO npc_vendors (name, description, charm_requirement) VALUES (@name, @description, @charm_requirement)
+            ON CONFLICT(name) DO UPDATE SET description = excluded.description, charm_requirement = excluded.charm_requirement
+        `);
+
+		const upsertMonster = db.prepare(`
+            INSERT INTO monsters (name, monster_race, level, max_health, armor_class, base_damage, xp_reward, loot_table_id)
+            VALUES (@name, @monster_race, @level, @max_health, @armor_class, @base_damage, @xp_reward, @loot_table_id)
+            ON CONFLICT(name) DO UPDATE SET
+                monster_race = excluded.monster_race,
+                level = excluded.level,
+                max_health = excluded.max_health,
+                armor_class = excluded.armor_class,
+                base_damage = excluded.base_damage,
+                xp_reward = excluded.xp_reward,
+                loot_table_id = excluded.loot_table_id
+        `);
+
+		const upsertPveNode = db.prepare(`
+            INSERT INTO pve_nodes (name, description, required_level, first_completion_reward_json, repeatable_reward_json)
+            VALUES (@name, @description, @required_level, @first_completion_reward_json, @repeatable_reward_json)
+            ON CONFLICT(name) DO UPDATE SET
+                description = excluded.description,
+                required_level = excluded.required_level,
+                first_completion_reward_json = excluded.first_completion_reward_json,
+                repeatable_reward_json = excluded.repeatable_reward_json
+        `);
+
+		// Junction tables still need simple INSERT IGNORE logic
+		const insertLootEntry = db.prepare('INSERT OR IGNORE INTO loot_table_entries (loot_table_id, item_id, drop_chance, min_quantity, max_quantity) VALUES (?, ?, ?, ?, ?)');
+		const insertVendorStock = db.prepare('INSERT OR IGNORE INTO vendor_stock (vendor_id, item_id, buy_price, sell_price) VALUES (?, ?, ?, ?)');
+		const insertPveNodeMonster = db.prepare('INSERT OR IGNORE INTO pve_node_monsters (node_id, monster_id, count) VALUES (?, ?, ?)');
+
 
 		const allItems = [...pveItems, ...startingEquipmentData, ...standardStartingKitData];
 
-		// 1. Seed Items (No dependencies)
-		console.log('[DB Seeding] Seeding PvE items...');
-		let itemsAdded = 0;
+		// 1. Seed Items, Loot Tables, Vendors
+		console.log('[DB Seeding] Upserting items, loot tables, and vendors...');
 		for (const item of allItems) {
-			if (!selectItem.get(item.name)) {
-				insertItem.run(item.name, item.description, item.item_type, item.rarity || 'COMMON', item.is_stackable, item.is_tradeable, item.crown_value, item.damage_dice || null, item.damage_type || null, item.handedness || null, item.effects_json || null);
-				itemsAdded++;
-			}
+			upsertItem.run({
+				name: item.name, description: item.description, item_type: item.item_type, item_subtype: item.item_subtype || null,
+				rarity: item.rarity || 'COMMON', is_stackable: item.is_stackable, is_tradeable: item.is_tradeable,
+				crown_value: item.crown_value, damage_dice: item.damage_dice || null, damage_type: item.damage_type || null,
+				handedness: item.handedness || null, effects_json: item.effects_json || null,
+			});
 		}
-		console.log(`[DB Seeding] ${itemsAdded} new PvE items added.`);
-
-		// 2. Seed Loot Tables (No dependencies)
-		console.log('[DB Seeding] Seeding Loot Tables...');
-		let tablesAdded = 0;
 		for (const table of lootTables) {
-			if (!selectLootTable.get(table.name)) {
-				insertLootTable.run(table.name, table.description);
-				tablesAdded++;
-			}
+			upsertLootTable.run(table);
 		}
-		console.log(`[DB Seeding] ${tablesAdded} new loot tables added.`);
+		for (const vendor of vendorsData) {
+			upsertVendor.run(vendor);
+		}
 
-		// 3. Resolve IDs for Foreign Key relationships
-		// This is crucial for idempotency and correctness.
+		// 2. Resolve IDs for Foreign Key relationships
 		const itemIds = new Map(db.prepare('SELECT item_id, name FROM items').all().map(i => [i.name, i.item_id]));
 		const lootTableIds = new Map(db.prepare('SELECT loot_table_id, name FROM loot_tables').all().map(lt => [lt.name, lt.loot_table_id]));
-		// This map associates the temporary, hardcoded ID from the data array with the *actual* database ID.
-		const localLootTableIdToDbId = new Map();
-		for (const lt of lootTables) {
-			const dbId = lootTableIds.get(lt.name);
-			if (!dbId) {
-				throw new Error(`[DB Seeding] Failed to resolve database ID for loot table: ${lt.name}`);
-			}
-			localLootTableIdToDbId.set(lt.id, dbId);
-		}
+		const vendorIds = new Map(db.prepare('SELECT vendor_id, name FROM npc_vendors').all().map(v => [v.name, v.vendor_id]));
+		const localLootTableIdToDbId = new Map(lootTables.map(lt => [lt.id, lootTableIds.get(lt.name)]));
 
-
-		// 4. Seed Loot Table Entries (Depends on Items and Loot Tables)
-		console.log('[DB Seeding] Seeding Loot Table Entries...');
-		let entriesAdded = 0;
-		for (const entry of lootTableEntries) {
-			const realTableId = localLootTableIdToDbId.get(entry.loot_table_id);
-			const realItemId = itemIds.get(entry.item_name);
-
-			if (!realTableId || !realItemId) {
-				console.error(`[DB Seeding] ERROR: Could not resolve foreign key for loot entry: ${entry.item_name}. Skipping.`);
-				continue;
-			}
-			if (!selectLootEntry.get(realTableId, realItemId)) {
-				insertLootEntry.run(realTableId, realItemId, entry.drop_chance, entry.min_quantity, entry.max_quantity);
-				entriesAdded++;
-			}
-		}
-		console.log(`[DB Seeding] ${entriesAdded} new loot table entries added.`);
-
-		// 5. Seed Monsters (Depends on Loot Tables)
-		console.log('[DB Seeding] Seeding Monsters...');
-		let monstersAdded = 0;
+		// 3. Seed Monsters (depends on loot tables)
+		console.log('[DB Seeding] Upserting monsters...');
 		for (const monster of monsters) {
-			const realLootTableId = localLootTableIdToDbId.get(monster.loot_table_id);
-			if (!realLootTableId) {
-				console.error(`[DB Seeding] ERROR: Could not resolve loot table for monster: ${monster.name}. Skipping.`);
-				continue;
-			}
-			if (!selectMonster.get(monster.name)) {
-				insertMonster.run(monster.name, monster.monster_race, monster.level, monster.max_health, monster.armor_class, monster.base_damage, monster.xp_reward, realLootTableId);
-				monstersAdded++;
-			}
+			upsertMonster.run({
+				...monster,
+				loot_table_id: localLootTableIdToDbId.get(monster.loot_table_id),
+			});
 		}
-		console.log(`[DB Seeding] ${monstersAdded} new monsters added.`);
 
-		// 6. Seed PvE Nodes (No dependencies)
-		console.log('[DB Seeding] Seeding PvE Nodes...');
-		let nodesAdded = 0;
+		// 4. Seed PvE Nodes (no dependencies)
+		console.log('[DB Seeding] Upserting PvE nodes...');
 		for (const node of pveNodes) {
-			if (!selectPveNode.get(node.name)) {
-				insertPveNode.run(node.name, node.description, node.required_level, node.first_completion_reward_json, node.repeatable_reward_json);
-				nodesAdded++;
-			}
+			upsertPveNode.run(node);
 		}
-		console.log(`[DB Seeding] ${nodesAdded} new PvE nodes added.`);
 
-		// 7. Resolve more IDs and seed the final junction table
+		// 5. Resolve final IDs
 		const monsterIds = new Map(db.prepare('SELECT monster_id, name FROM monsters').all().map(m => [m.name, m.monster_id]));
 		const nodeIds = new Map(db.prepare('SELECT node_id, name FROM pve_nodes').all().map(n => [n.name, n.node_id]));
 
-		// 8. Seed PvE Node Monsters (Depends on PvE Nodes and Monsters)
-		console.log('[DB Seeding] Seeding PvE Node monster compositions...');
-		let compositionsAdded = 0;
+		// 6. Seed Junction Tables (Vendor Stock, Loot Entries, Node Monsters)
+		console.log('[DB Seeding] Seeding junction tables (stock, loot entries, etc.)...');
+		for (const stock of vendorStockData) {
+			insertVendorStock.run(vendorIds.get(stock.vendor_name), itemIds.get(stock.item_name), stock.buy_price || null, stock.sell_price || null);
+		}
+		for (const entry of lootTableEntries) {
+			insertLootEntry.run(localLootTableIdToDbId.get(entry.loot_table_id), itemIds.get(entry.item_name), entry.drop_chance, entry.min_quantity, entry.max_quantity);
+		}
 		for (const nodeSeed of pveNodes) {
-			const realNodeId = nodeIds.get(nodeSeed.name);
-			if (!realNodeId) {
-				console.error(`[DB Seeding] ERROR: Could not resolve node ID for composition: ${nodeSeed.name}. Skipping.`);
-				continue;
-			}
-			let monsterComp;
-			try {
-				monsterComp = JSON.parse(nodeSeed.monster_composition_json);
-			}
-			catch (error) {
-				console.error(`[DB Seeding] ERROR: Invalid JSON in monster_composition_json for node: ${nodeSeed.name}. Skipping.`, error);
-				continue;
-			}
+			const monsterComp = JSON.parse(nodeSeed.monster_composition_json);
 			for (const comp of monsterComp) {
-				const realMonsterId = monsterIds.get(comp.name);
-				if (!realMonsterId) {
-					console.error(`[DB Seeding] ERROR: Could not resolve monster ID for composition: ${comp.name}. Skipping.`);
-					continue;
-				}
-				if (!selectPveNodeMonster.get(realNodeId, realMonsterId)) {
-					insertPveNodeMonster.run(realNodeId, realMonsterId, comp.count);
-					compositionsAdded++;
-				}
+				insertPveNodeMonster.run(nodeIds.get(nodeSeed.name), monsterIds.get(comp.name), comp.count);
 			}
 		}
-		console.log(`[DB Seeding] ${compositionsAdded} new monster compositions added.`);
-
+		console.log('[DB Seeding] All PvE and Shop data successfully seeded.');
 	})();
 }
 

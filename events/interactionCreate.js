@@ -25,6 +25,7 @@ module.exports = {
 		const characterCommand = interaction.client.commands.get('character');
 		const inventoryCommand = interaction.client.commands.get('inventory');
 		const marketCommand = interaction.client.commands.get('market');
+		const shopCommand = interaction.client.commands.get('shop');
 
 		try {
 			const subcommand = interaction.options?.getSubcommand(false) || null;
@@ -90,6 +91,52 @@ module.exports = {
 					// If an error occurs, still respond so the interaction doesn't fail.
 					if (!interaction.responded) {
 						await interaction.respond([]);
+					}
+				}
+				return;
+			}
+
+			if (interaction.isModalSubmit() && interaction.customId.startsWith('shop_')) {
+				if (shopCommand && typeof shopCommand.modals === 'function') {
+					try {
+						await shopCommand.modals(interaction);
+						return;
+					}
+					catch (error) {
+						console.error('[Error] Shop modal error:', error);
+						if (!interaction.replied && !interaction.deferred) {
+							await interaction.reply({ content: 'There was an error processing your shop action.', flags: MessageFlags.Ephemeral });
+						}
+					}
+				}
+				return;
+			}
+			if (interaction.isButton() && interaction.customId.startsWith('shop_')) {
+				if (shopCommand && typeof shopCommand.buttons === 'function') {
+					try {
+						await shopCommand.buttons(interaction);
+						return;
+					}
+					catch (error) {
+						console.error('[Error] Shop button error:', error);
+						if (!interaction.replied && !interaction.deferred) {
+							await interaction.reply({ content: 'There was an error processing your shop action.', flags: MessageFlags.Ephemeral });
+						}
+					}
+				}
+				return;
+			}
+			if (interaction.isStringSelectMenu() && interaction.customId.startsWith('shop_')) {
+				if (shopCommand && typeof shopCommand.menus === 'function') {
+					try {
+						await shopCommand.menus(interaction);
+						return;
+					}
+					catch (error) {
+						console.error('[Error] Shop menu error:', error);
+						if (!interaction.replied && !interaction.deferred) {
+							await interaction.reply({ content: 'There was an error processing your shop action.', flags: MessageFlags.Ephemeral });
+						}
 					}
 				}
 				return;

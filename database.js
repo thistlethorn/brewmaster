@@ -641,6 +641,12 @@ const setupTables = db.transaction(() => {
         )
     `).run();
 
+
+	db.prepare(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_items_name_unique
+        ON items(name);
+    `).run();
+
 	db.prepare(`
         CREATE TABLE IF NOT EXISTS user_inventory (
 
@@ -937,6 +943,11 @@ const setupTables = db.transaction(() => {
     `).run();
 
 	db.prepare(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_pve_nodes_name_unique
+        ON pve_nodes(name);
+    `).run();
+
+	db.prepare(`
         CREATE TABLE IF NOT EXISTS pve_node_monsters (
             node_id INTEGER NOT NULL,
             monster_id INTEGER NOT NULL,
@@ -999,9 +1010,11 @@ const setupTables = db.transaction(() => {
 
             -- "Greg the Gambler", "Bertha the Blacksmith"
             name TEXT NOT NULL UNIQUE,
+            description TEXT,
 
             -- The channel ID where this vendor "lives"
-            location_channel_id TEXT
+            location_channel_id TEXT,
+            charm_requirement INTEGER DEFAULT 10
         )
     `).run();
 
@@ -1027,6 +1040,18 @@ const setupTables = db.transaction(() => {
         )
     `).run();
 
+	db.prepare(`
+        CREATE TABLE IF NOT EXISTS character_npc_interactions (
+            user_id TEXT NOT NULL,
+            vendor_id INTEGER NOT NULL,
+            rapport INTEGER DEFAULT 0,
+            discount_modifier REAL DEFAULT 1.0 NOT NULL,
+            discount_expires_at TEXT,
+            PRIMARY KEY (user_id, vendor_id),
+            FOREIGN KEY(user_id) REFERENCES characters(user_id) ON DELETE CASCADE,
+            FOREIGN KEY(vendor_id) REFERENCES npc_vendors(vendor_id) ON DELETE CASCADE
+        )
+    `).run();
 
 	db.prepare(`
         CREATE TABLE IF NOT EXISTS spells (
@@ -1286,6 +1311,21 @@ const setupTables = db.transaction(() => {
     */
 
 	// MIGRATION SCRIPT for Character Sheet v2 - Adds new columns if they don't exist.
+
+	console.log('[DB Migration] Checking schema for Item Subtypes...');
+	try {
+		const itemColumns = new Set(db.pragma('table_info(items)').map(c => c.name));
+		if (!itemColumns.has('item_subtype')) {
+			db.prepare('ALTER TABLE items ADD COLUMN item_subtype TEXT').run();
+			console.log('[DB Migration] Added column: items.item_subtype');
+		}
+		console.log('[DB Migration] Item Subtype schema check complete.');
+	}
+	catch (error) {
+		console.error('[DB Migration] Failed to update items schema for subtypes:', error);
+		throw error;
+	}
+
 	console.log('[DB Migration] Checking schema for Character Sheet V2 columns...');
 	try {
 		const characterColumns = new Set(db.pragma('table_info(characters)').map(c => c.name));
@@ -1324,6 +1364,17 @@ const setupTables = db.transaction(() => {
 			console.log('[DB Migration] Ported old clear counts to new attempt counts.');
 		}
 		console.log('[DB Migration] Schema check complete.');
+
+		const npcVendorsColumns = new Set(db.pragma('table_info(npc_vendors)').map(c => c.name));
+		if (!npcVendorsColumns.has('description')) {
+			db.prepare('ALTER TABLE npc_vendors ADD COLUMN description TEXT').run();
+			console.log('[DB Migration] Added column: npc_vendors.description');
+		}
+		if (!npcVendorsColumns.has('charm_requirement')) {
+			db.prepare('ALTER TABLE npc_vendors ADD COLUMN charm_requirement INTEGER DEFAULT 10').run();
+			console.log('[DB Migration] Added column: npc_vendors.charm_requirement');
+		}
+
 	}
 	catch (error) {
 		console.error('[DB Migration] Failed to update database schema:', error);
@@ -1370,10 +1421,13 @@ const setupTables = db.transaction(() => {
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_inv_user_item ON user_inventory(user_id, item_id)').run();
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_trade_items_session ON trade_session_items(session_id)').run();
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_vendor_stock_vendor ON vendor_stock(vendor_id)').run();
+	db.prepare('CREATE INDEX IF NOT EXISTS idx_npc_interactions_user ON character_npc_interactions(user_id, vendor_id)').run();
+
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_pve_progress_user ON character_pve_progress(user_id)').run();
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_node_monsters_node ON pve_node_monsters(node_id)').run();
 
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_captcha_expiry ON captcha_sessions(expires_at)').run();
+
 
 	// All of the unique indexes
 	// NOTE: Uniqueness for quotes is GLOBAL, not per-user. The same quote/trigger cannot exist twice
@@ -1456,23 +1510,8 @@ const setupTables = db.transaction(() => {
 	`).run();
 
 });
-/*
-const dropTables = db.transaction(() => {
-	// ONE TIME MIGRATION SCRIPT - WILL REMOVE THIS SECTION ONCE THE NEW STARTER ITEMS ARE IMPLEMENTED!!!! DO NOT FORGET!!!!!!
 
-	console.log('[MIGRATION] Dropping item-related tables for a clean seed...');
-	db.exec('DROP TABLE IF EXISTS items;');
-	db.exec('DROP TABLE IF EXISTS user_inventory;');
-	db.exec('DROP TABLE IF EXISTS loot_table_entries;');
-	console.log('[MIGRATION] Tables dropped successfully.');
-});
 
-db.pragma('foreign_keys = OFF');
-console.log('[MIGRATION] FKEYS: OFF');
-dropTables();
-db.pragma('foreign_keys = ON');
-console.log('[MIGRATION] FKEYS: ON');
-*/
 setupTables();
 
 module.exports = db;
