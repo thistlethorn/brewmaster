@@ -1,15 +1,14 @@
-const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, MessageFlags } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, MessageFlags, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const db = require('../../database');
 
 const activeShopSessions = new Map();
 const SHOP_SESSION_TIMEOUT = 15 * 60 * 1000;
 
-// This function remains the same.
+// This function remains the same
 setInterval(() => {
 	const now = Date.now();
 	for (const [userId, session] of activeShopSessions.entries()) {
 		if (now - session.timestamp > SHOP_SESSION_TIMEOUT) {
-			console.log(`[Shop] Deleting expired shop session for User ID: ${userId}`);
 			activeShopSessions.delete(userId);
 		}
 	}
@@ -52,6 +51,51 @@ function buildShopUI(vendor, character, interactionData) {
 	return { embeds: [embed], components: [row] };
 }
 
+/**
+ * Builds the UI for selling a specific item.
+ * @param {object} vendor The vendor data.
+ * @param {object} item The item data (with name, description, etc.).
+ * @param {number} availableQuantity The quantity the user can sell.
+ * @param {number} price The price per item.
+ * @returns {{embeds: EmbedBuilder[], components: ActionRowBuilder[]}}
+ */
+function buildSellConfirmationUI(vendor, item, availableQuantity, price) {
+	const embed = new EmbedBuilder()
+		.setColor(0xF1C40F)
+		.setTitle(`Sell: ${item.name}`)
+		.setDescription(item.description || 'An item of curious origin.')
+		.addFields(
+			{ name: '💰 Price Per Item', value: `${price} Crowns`, inline: true },
+			{ name: '📦 You Have', value: `**${availableQuantity}** available to sell`, inline: true },
+		);
+
+	const row1 = new ActionRowBuilder().addComponents(
+		new ButtonBuilder()
+			.setCustomId(`shop_sellone_${vendor.vendor_id}_${item.item_id}`)
+			.setLabel('Sell 1')
+			.setStyle(ButtonStyle.Success)
+			.setDisabled(availableQuantity < 1),
+		new ButtonBuilder()
+			.setCustomId(`shop_sellten_${vendor.vendor_id}_${item.item_id}`)
+			.setLabel('Sell 10')
+			.setStyle(ButtonStyle.Success)
+			.setDisabled(availableQuantity < 10),
+		new ButtonBuilder()
+			.setCustomId(`shop_sellcustom_${vendor.vendor_id}_${item.item_id}`)
+			.setLabel('Sell Custom Amount...')
+			.setStyle(ButtonStyle.Primary)
+			.setDisabled(availableQuantity < 1),
+	);
+
+	const row2 = new ActionRowBuilder().addComponents(
+		new ButtonBuilder()
+			.setCustomId(`shop_sellback_${vendor.vendor_id}_${vendor.user_id}`)
+			.setLabel('Back to Item List')
+			.setStyle(ButtonStyle.Secondary),
+	);
+
+	return { embeds: [embed], components: [row1, row2] };
+}
 
 module.exports = {
 	category: 'charsys',
@@ -61,28 +105,16 @@ module.exports = {
 
 	async execute(interaction) {
 		const userId = interaction.user.id;
-		console.log(`[Shop] /shop command initiated by User ID: ${userId}`);
-
 		const character = db.prepare('SELECT user_id FROM characters WHERE user_id = ?').get(userId);
 		if (!character) {
-			console.log(`[Shop] User ${userId} attempted to use /shop without a character.`);
 			return interaction.reply({ content: 'You must create a character with `/character create` before you can visit the shops.', flags: MessageFlags.Ephemeral });
 		}
 		if (activeShopSessions.has(userId)) {
-			console.log(`[Shop] User ${userId} tried to open a new shop session while one was already active.`);
 			return interaction.reply({ content: 'You are already in an active shop session. Please close it before starting a new one.', flags: MessageFlags.Ephemeral });
 		}
 		activeShopSessions.set(userId, { timestamp: Date.now() });
-		console.log(`[Shop] Active session created for User ID: ${userId}`);
 
 		const vendors = db.prepare('SELECT vendor_id, name, description FROM npc_vendors ORDER BY name ASC').all();
-
-		if (!vendors || vendors.length === 0) {
-			console.error('[Shop] CRITICAL: No vendors found in the database during /shop execute.');
-			// Clean up session
-			activeShopSessions.delete(userId);
-			return interaction.reply({ content: 'There are no vendors to visit at this time. Please check back later.', flags: MessageFlags.Ephemeral });
-		}
 
 		const embed = new EmbedBuilder()
 			.setColor(0xA9A9A9)
@@ -106,137 +138,275 @@ module.exports = {
 
 		const row = new ActionRowBuilder().addComponents(menu);
 		await interaction.reply({ embeds: [embed], components: [row], flags: MessageFlags.Ephemeral });
-		console.log(`[Shop] Presented vendor selection menu to User ID: ${userId}`);
 	},
 
 	async menus(interaction) {
-		// Acknowledge the interaction immediately to prevent timeout.
 		await interaction.deferUpdate();
-
-		const [,, action, userId] = interaction.customId.split('_');
-		console.log(`[Shop Menu] Received menu interaction '${action}' for User ID: ${userId} from actual user ${interaction.user.id}`);
-
-		if (interaction.user.id !== userId) {
-			console.warn(`[Shop Menu] User mismatch. Requester: ${interaction.user.id}, Expected: ${userId}.`);
-			return interaction.editReply({ content: 'This is not for you.', flags: MessageFlags.Ephemeral });
-		}
+		const [,, action, ...rest] = interaction.customId.split('_');
+		const userId = interaction.user.id;
 
 		try {
+			// Initial vendor selection
 			if (action === 'select') {
-				const vendorId = interaction.values[0];
-				console.log(`[Shop Menu] User ${userId} selected Vendor ID: ${vendorId}`);
+				const expectedUserId = rest[0];
+				if (userId !== expectedUserId) return interaction.editReply({ content: 'This is not for you.' });
 
+				const vendorId = interaction.values[0];
 				const vendor = db.prepare('SELECT * FROM npc_vendors WHERE vendor_id = ?').get(vendorId);
 				const character = db.prepare('SELECT * FROM characters WHERE user_id = ?').get(userId);
 
-				if (!vendor) {
-					console.error(`[Shop Menu] FAILED TO FIND VENDOR. Vendor ID '${vendorId}' not in database.`);
-					return interaction.editReply({ content: 'Error: The selected vendor could not be found. They may have packed up and left.', components: [] });
-				}
-				if (!character) {
-					console.error(`[Shop Menu] FAILED TO FIND CHARACTER. User ID '${userId}' not in database.`);
-					return interaction.editReply({ content: 'Error: Could not find your character data.', components: [] });
+				if (!vendor || !character) {
+					return interaction.editReply({ content: 'An error occurred. Please try again.', components: [] });
 				}
 
-				// Ensure an interaction record exists
-				db.prepare(`
-					INSERT INTO character_npc_interactions (user_id, vendor_id)
-					VALUES (?, ?) ON CONFLICT DO NOTHING
-				`).run(userId, vendorId);
+				db.prepare('INSERT INTO character_npc_interactions (user_id, vendor_id) VALUES (?, ?) ON CONFLICT DO NOTHING').run(userId, vendorId);
 				const interactionData = db.prepare('SELECT * FROM character_npc_interactions WHERE user_id = ? AND vendor_id = ?').get(userId, vendorId);
-				if (!interactionData) {
-					console.error(`[Shop Menu] FAILED TO GET/CREATE interaction data for User ${userId} and Vendor ${vendorId}.`);
-					return interaction.editReply({ content: 'An error occurred while trying to access your history with this vendor.', components: [] });
-				}
-
 
 				const ui = buildShopUI(vendor, character, interactionData);
 				await interaction.editReply({ embeds: ui.embeds, components: ui.components });
-				console.log(`[Shop Menu] Successfully displayed shop UI for ${vendor.name} to User ${userId}`);
+			}
+			// Item selection from the sell dropdown
+			else if (action === 'sellitem') {
+				const [vendorId, expectedUserId] = rest;
+				if (userId !== expectedUserId) return interaction.editReply({ content: 'This is not for you.' });
+
+				const itemId = interaction.values[0];
+				const vendor = db.prepare('SELECT * FROM npc_vendors WHERE vendor_id = ?').get(vendorId);
+				// Tack on the user ID for the back button builder
+				vendor.user_id = userId;
+
+				// Get full item details and the specific price from this vendor
+				const itemToSell = db.prepare(`
+					SELECT i.*, vs.sell_price
+					FROM items i
+					JOIN vendor_stock vs ON i.item_id = vs.item_id
+					WHERE i.item_id = ? AND vs.vendor_id = ?
+				`).get(itemId, vendorId);
+
+				if (!itemToSell) {
+					return interaction.editReply({ content: 'This item cannot be sold here or no longer exists.', components: [] });
+				}
+
+				const availableQuantity = db.prepare('SELECT COUNT(*) as count FROM user_inventory WHERE user_id = ? AND item_id = ? AND equipped_slot IS NULL').get(userId, itemId).count;
+				const interactionData = db.prepare('SELECT discount_modifier FROM character_npc_interactions WHERE user_id = ? AND vendor_id = ?').get(userId, vendorId);
+				const modifier = interactionData?.discount_modifier || 1.0;
+				const finalSellPrice = Math.floor(itemToSell.sell_price * modifier);
+
+				const ui = buildSellConfirmationUI(vendor, itemToSell, availableQuantity, finalSellPrice);
+				await interaction.editReply({ content: '', embeds: ui.embeds, components: ui.components });
 			}
 		}
 		catch (error) {
 			console.error(`[Shop Menu] A critical error occurred during menu processing for user ${userId}:`, error);
-			if (interaction.deferred || interaction.replied) {
-				await interaction.editReply({ content: 'A critical error occurred. Please try again later.', embeds:[], components: [] });
+			await interaction.editReply({ content: 'A critical server error occurred.', components: [], embeds: [] });
+		}
+	},
+
+	async modals(interaction) {
+		await interaction.deferUpdate();
+		const [,, action, vendorId, itemId] = interaction.customId.split('_');
+		const userId = interaction.user.id;
+
+		try {
+			if (action === 'customamount') {
+				const amountToSell = parseInt(interaction.fields.getTextInputValue('sell_custom_input'), 10);
+
+				if (isNaN(amountToSell) || amountToSell <= 0) {
+					return interaction.editReply({ content: 'Invalid amount entered.', embeds:[], components: [] });
+				}
+
+				// Re-run all checks before processing the sale
+				const vendor = db.prepare('SELECT * FROM npc_vendors WHERE vendor_id = ?').get(vendorId);
+				vendor.user_id = userId;
+				const item = db.prepare('SELECT * FROM items WHERE item_id = ?').get(itemId);
+				const availableQuantity = db.prepare('SELECT COUNT(*) as count FROM user_inventory WHERE user_id = ? AND item_id = ? AND equipped_slot IS NULL').get(userId, itemId).count;
+
+				if (amountToSell > availableQuantity) {
+					return interaction.editReply({ content: `You only have ${availableQuantity} to sell.`, embeds: [], components: [] });
+				}
+
+				const interactionData = db.prepare('SELECT discount_modifier FROM character_npc_interactions WHERE user_id = ? AND vendor_id = ?').get(userId, vendorId);
+				const modifier = interactionData?.discount_modifier || 1.0;
+				const sellPrice = db.prepare('SELECT sell_price FROM vendor_stock WHERE vendor_id = ? AND item_id = ?').get(vendorId, itemId).sell_price;
+				const finalSinglePrice = Math.floor(sellPrice * modifier);
+				const totalCrowns = finalSinglePrice * amountToSell;
+
+				// Transaction to ensure atomicity
+				const sellTransaction = db.transaction(() => {
+					// Get the inventory_ids of the items to remove
+					const itemsToRemove = db.prepare('SELECT inventory_id FROM user_inventory WHERE user_id = ? AND item_id = ? AND equipped_slot IS NULL LIMIT ?').all(userId, itemId, amountToSell);
+					const ids = itemsToRemove.map(i => i.inventory_id);
+
+					if (ids.length < amountToSell) {
+						throw new Error('Not enough items found to delete, something went wrong.');
+					}
+
+					// Delete the items
+					db.prepare(`DELETE FROM user_inventory WHERE inventory_id IN (${ids.map(() => '?').join(',')})`).run(...ids);
+
+					// Add crowns
+					db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(totalCrowns, userId);
+				});
+
+				sellTransaction();
+
+				const newQuantity = availableQuantity - amountToSell;
+				const ui = buildSellConfirmationUI(vendor, item, newQuantity, finalSinglePrice);
+				await interaction.editReply({
+					content: `✅ You sold **${amountToSell}x ${item.name}** for **${totalCrowns}** Crowns.`,
+					embeds: ui.embeds,
+					components: ui.components,
+				});
 			}
+		}
+		catch (error) {
+			console.error(`[Shop Modal] A critical error occurred for user ${userId}:`, error);
+			await interaction.editReply({ content: 'A critical server error occurred during the sale.', components: [], embeds: [] });
 		}
 	},
 
 	async buttons(interaction) {
-		await interaction.deferUpdate();
-
 		const parts = interaction.customId.split('_');
+		// shop
 		const command = parts[0];
 		const action = parts[1];
 		const vendorId = parts[2];
-		const userId = parts[3];
+		const userId = interaction.user.id;
+		// Will exist for sellone, sellten, etc.
 
-		console.log(`[Shop Button] Received button press '${action}' for User ID: ${userId} (Vendor: ${vendorId}) from actual user ${interaction.user.id}`);
+		const itemId = parts[3];
+		// For buttons on the main page, the user ID is the last part
+		const mainPageUserId = parts[3];
 
-		// Prevent weird shenanigains from cropping up
 		if (command !== 'shop') return;
 
-		if (interaction.user.id !== userId) {
-			console.warn(`[Shop Button] User mismatch. Requester: ${interaction.user.id}, Expected: ${userId}.`);
-			return interaction.editReply({ content: 'This is not for you.', flags: MessageFlags.Ephemeral });
+		// Defer immediately
+		await interaction.deferUpdate();
+
+		// Check user ID for main page buttons
+		if (['buy', 'sell', 'talk', 'leave', 'back'].includes(action)) {
+			if (userId !== mainPageUserId) {
+				return interaction.editReply({ content: 'This is not for you.' });
+			}
 		}
 
 		try {
-			// Refresh session timer
 			activeShopSessions.set(userId, { timestamp: Date.now() });
 
 			const vendor = db.prepare('SELECT * FROM npc_vendors WHERE vendor_id = ?').get(vendorId);
+			if (!vendor) return interaction.editReply({ content: 'Error: This vendor seems to have vanished.', components: [] });
+			// Add for button builder consistency
+
+			vendor.user_id = userId;
 			const character = db.prepare('SELECT * FROM characters WHERE user_id = ?').get(userId);
+			if (!character) return interaction.editReply({ content: 'Error: Could not find your character data.', components: [] });
 
-			if (!vendor) {
-				console.error(`[Shop Button] FAILED TO FIND VENDOR. Vendor ID '${vendorId}' not in database for action '${action}'.`);
-				return interaction.editReply({ content: 'Error: The vendor could not be found.', components: [] });
-			}
-			if (!character) {
-				console.error(`[Shop Button] FAILED TO FIND CHARACTER. User ID '${userId}' not in database for action '${action}'.`);
-				return interaction.editReply({ content: 'Error: Could not find your character data.', components: [] });
-			}
-
-			// Centralized data for building UIs
 			const getFreshUI = () => {
 				const interactionData = db.prepare('SELECT * FROM character_npc_interactions WHERE user_id = ? AND vendor_id = ?').get(userId, vendorId);
-				if (!interactionData) {
-					console.error(`[Shop Button] CRITICAL: Failed to get fresh interaction data in getFreshUI for user ${userId} and vendor ${vendorId}.`);
-					// Return a dummy object to prevent a crash, the calling function should handle the error reply.
-					return { embeds: [new EmbedBuilder().setTitle('Error').setDescription('Could not load interaction data.')], components: [] };
-				}
 				return buildShopUI(vendor, character, interactionData);
 			};
 
+			// --- NEW SELL ACTIONS ---
+			if (action.startsWith('sell') && ['sellone', 'sellten', 'sellcustom', 'sellback'].includes(action)) {
+				if (action === 'sellback') {
+					// This action is identical to pressing the original 'sell' button
+					// Fall through to the main 'sell' case
+				}
+				else {
+					// This is a transaction (sellone, sellten, sellcustom)
+					const amountToSell = action === 'sellone' ? 1 : 10;
 
+					const item = db.prepare('SELECT * FROM items WHERE item_id = ?').get(itemId);
+					if (!item) return interaction.editReply({ content: 'That item could not be found.', components: [] });
+
+					if (action === 'sellcustom') {
+						const availableQuantity = db.prepare('SELECT COUNT(*) as count FROM user_inventory WHERE user_id = ? AND item_id = ? AND equipped_slot IS NULL').get(userId, itemId).count;
+						const modal = new ModalBuilder()
+							.setCustomId(`shop_modal_customamount_${vendorId}_${itemId}`)
+							.setTitle(`Sell ${item.name}`);
+						const amountInput = new TextInputBuilder()
+							.setCustomId('sell_custom_input')
+							.setLabel(`How many? (You have ${availableQuantity})`)
+							.setStyle(TextInputStyle.Short)
+							.setPlaceholder(`1-${availableQuantity}`)
+							.setRequired(true);
+						modal.addComponents(new ActionRowBuilder().addComponents(amountInput));
+						return await interaction.showModal(modal);
+					}
+
+					// --- All logic for selling a fixed amount (1 or 10) ---
+					const interactionData = db.prepare('SELECT discount_modifier FROM character_npc_interactions WHERE user_id = ? AND vendor_id = ?').get(userId, vendorId);
+					const modifier = interactionData?.discount_modifier || 1.0;
+					const sellPrice = db.prepare('SELECT sell_price FROM vendor_stock WHERE vendor_id = ? AND item_id = ?').get(vendorId, itemId).sell_price;
+					const finalSinglePrice = Math.floor(sellPrice * modifier);
+					const totalCrowns = finalSinglePrice * amountToSell;
+
+					const sellTransaction = db.transaction(() => {
+						const itemsToRemove = db.prepare('SELECT inventory_id FROM user_inventory WHERE user_id = ? AND item_id = ? AND equipped_slot IS NULL LIMIT ?').all(userId, itemId, amountToSell);
+						if (itemsToRemove.length < amountToSell) {
+							throw new Error('INSUFFICIENT_ITEMS');
+						}
+						const ids = itemsToRemove.map(i => i.inventory_id);
+						db.prepare(`DELETE FROM user_inventory WHERE inventory_id IN (${ids.map(() => '?').join(',')})`).run(...ids);
+						db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(totalCrowns, userId);
+					});
+
+					try {
+						sellTransaction();
+						const newQuantity = db.prepare('SELECT COUNT(*) as count FROM user_inventory WHERE user_id = ? AND item_id = ? AND equipped_slot IS NULL').get(userId, itemId).count;
+						const ui = buildSellConfirmationUI(vendor, item, newQuantity, finalSinglePrice);
+						await interaction.editReply({
+							content: `✅ You sold **${amountToSell}x ${item.name}** for **${totalCrowns}** Crowns.`,
+							embeds: ui.embeds,
+							components: ui.components,
+						});
+					}
+					catch (e) {
+						if (e.message === 'INSUFFICIENT_ITEMS') {
+							const currentQty = db.prepare('SELECT COUNT(*) as count FROM user_inventory WHERE user_id = ? AND item_id = ? AND equipped_slot IS NULL').get(userId, itemId).count;
+							const ui = buildSellConfirmationUI(vendor, item, currentQty, finalSinglePrice);
+							await interaction.editReply({
+								content: '❌ You don\'t have enough of that item to sell.',
+								embeds: ui.embeds, components: ui.components,
+							});
+						}
+						else {
+							// Rethrow other errors
+							throw e;
+						}
+					}
+					return;
+				}
+			}
+
+
+			// --- ORIGINAL BUTTON ACTIONS ---
 			switch (action) {
 			case 'leave': {
-				console.log(`[Shop Button] User ${userId} is leaving the shop.`);
 				activeShopSessions.delete(userId);
-				await interaction.deleteReply().catch(e => console.error(`[Shop Button] Failed to delete reply for user ${userId}, it might have already been dismissed:`, e));
+				await interaction.deleteReply().catch((e) => {console.error(e);});
 				break;
 			}
 			case 'back': {
-				console.log(`[Shop Button] User ${userId} clicked 'back'. Rebuilding main shop UI.`);
 				const ui = getFreshUI();
-				await interaction.editReply({ ...ui, content: '', embeds: ui.embeds, components: ui.components });
+				await interaction.editReply({ ...ui, content: '', components: ui.components });
 				break;
 			}
-			case 'sell': {
-				console.log(`[Shop Button] User ${userId} wants to sell items.`);
+			// This is the main sell button and the 'sellback' button
+			case 'sell':
+			case 'sellback': {
+				// --- THIS IS THE NEW AGGREGATION QUERY ---
 				const sellableItems = db.prepare(`
-					SELECT ui.inventory_id, i.name, vs.sell_price
-					FROM user_inventory ui
-					JOIN items i ON ui.item_id = i.item_id
-					JOIN vendor_stock vs ON i.item_id = vs.item_id AND vs.vendor_id = ?
-					WHERE ui.user_id = ? AND vs.sell_price IS NOT NULL AND ui.equipped_slot IS NULL
-				`).all(vendorId, userId);
+						SELECT i.item_id, i.name, vs.sell_price, COUNT(ui.inventory_id) as quantity
+						FROM user_inventory ui
+						JOIN items i ON ui.item_id = i.item_id
+						JOIN vendor_stock vs ON i.item_id = vs.item_id AND vs.vendor_id = ?
+						WHERE ui.user_id = ? AND vs.sell_price IS NOT NULL AND ui.equipped_slot IS NULL
+						GROUP BY i.item_id, i.name, vs.sell_price
+						ORDER BY i.name ASC
+					`).all(vendorId, userId);
 
 				if (sellableItems.length === 0) {
-					console.log(`[Shop Button] User ${userId} has no items to sell to vendor ${vendorId}.`);
-					// Use editReply here since we deferred. We can't use .reply on a button interaction that's been deferred.
-					// We'll send a temporary message and then revert to the main UI.
 					const ui = getFreshUI();
 					await interaction.editReply({ content: `You have no unequipped items that ${vendor.name} is interested in.`, ...ui });
 					return;
@@ -247,19 +417,21 @@ module.exports = {
 				const finalSellPrice = (price) => Math.floor(price * modifier);
 
 				const menu = new StringSelectMenuBuilder()
-					.setCustomId(`shop_sellitem_${vendorId}_${userId}`)
+					.setCustomId(`shop_menu_sellitem_${vendorId}_${userId}`)
 					.setPlaceholder('Select an item to sell...')
 					.addOptions(sellableItems.slice(0, 25).map(item => ({
-						label: `${item.name} (Sell for: ${finalSellPrice(item.sell_price)} Crowns)`,
-						value: item.inventory_id.toString(),
+						label: `${item.name} (x${item.quantity})`,
+						description: `Sell for ${finalSellPrice(item.sell_price)} Crowns each`,
+						value: item.item_id.toString(),
 					})));
-				const backButton = new ButtonBuilder().setCustomId(`shop_back_${vendorId}_${userId}`).setLabel('Back').setStyle(ButtonStyle.Secondary);
-				await interaction.editReply({ content: 'What would you like to sell?', embeds: [], components: [new ActionRowBuilder().addComponents(menu), new ActionRowBuilder().addComponents(backButton)] });
-				console.log(`[Shop Button] Displayed sell menu to user ${userId}.`);
+
+				const backButton = new ButtonBuilder().setCustomId(`shop_back_${vendorId}_${userId}`).setLabel('Back to Main Menu').setStyle(ButtonStyle.Secondary);
+				const embed = new EmbedBuilder().setColor(0x5865F2).setTitle(`Selling Items to ${vendor.name}`).setDescription('Select an item from the dropdown list below to begin selling.');
+
+				await interaction.editReply({ content: '', embeds: [embed], components: [new ActionRowBuilder().addComponents(menu), new ActionRowBuilder().addComponents(backButton)] });
 				break;
 			}
 			case 'talk': {
-				console.log(`[Shop Button] User ${userId} wants to talk.`);
 				const interactionData = db.prepare('SELECT * FROM character_npc_interactions WHERE user_id = ? AND vendor_id = ?').get(userId, vendorId);
 				const hasActiveEffect = interactionData.discount_modifier !== 1.0 && new Date(interactionData.discount_expires_at) > new Date();
 
@@ -286,7 +458,6 @@ module.exports = {
 			}
 			case 'charm':
 			case 'gamble': {
-				console.log(`[Shop Button] User ${userId} is attempting action: ${action}`);
 				let message = '';
 				const expiry = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString();
 				let modifier = 1.0;
@@ -298,47 +469,35 @@ module.exports = {
 					modifier = 0.8;
 					rapportChange = 1;
 					message = `Your silver tongue works wonders! ${vendor.name} offers you a **20% discount** on all purchases for the next 8 hours. Your rapport has increased.`;
-					console.log(`[Shop Button] User ${userId} succeeded at 'charm'.`);
 				}
 				else if (action === 'gamble') {
 					if (Math.random() < successChance) {
 						modifier = 0.8;
 						rapportChange = 1;
 						message = `Your risky compliment paid off! ${vendor.name} chuckles and offers you a **20% discount** for 8 hours. Your rapport has increased. (Success Chance: ${Math.round(successChance * 100)}%)`;
-						console.log(`[Shop Button] User ${userId} succeeded at 'gamble'. (Chance: ${successChance})`);
 					}
 					else {
 						modifier = 1.2;
 						rapportChange = -1;
 						message = `You fumbled your words and insulted ${vendor.name}! Prices are **increased by 20%** for you for the next 8 hours. Your rapport has decreased. (Success Chance: ${Math.round(successChance * 100)}%)`;
-						console.log(`[Shop Button] User ${userId} failed at 'gamble'. (Chance: ${successChance})`);
 					}
 				}
 
 				db.prepare(`
-					UPDATE character_npc_interactions
-					SET discount_modifier = ?, discount_expires_at = ?, rapport = rapport + ?
-					WHERE user_id = ? AND vendor_id = ?
-				`).run(modifier, expiry, rapportChange, userId, vendorId);
-				console.log(`[Shop Button] Updated DB for user ${userId} with modifier: ${modifier}, rapportChange: ${rapportChange}`);
+						UPDATE character_npc_interactions
+						SET discount_modifier = ?, discount_expires_at = ?, rapport = rapport + ?
+						WHERE user_id = ? AND vendor_id = ?
+					`).run(modifier, expiry, rapportChange, userId, vendorId);
 
 				const ui = getFreshUI();
 				await interaction.editReply({ content: message, embeds: ui.embeds, components: ui.components });
 				break;
 			}
-			default:
-			{ console.warn(`[Shop Button] Unhandled action '${action}' from customId '${interaction.customId}'.`);
-				// Fallback to the main menu if something goes wrong.
-				const ui = getFreshUI();
-				await interaction.editReply({ content: 'An unknown action was performed. Returning to the main menu.', ...ui }); }
 			}
 		}
 		catch (error) {
-			console.error(`[Shop Button] A critical error occurred during button processing for user ${userId} (Action: ${action}):`, error);
-			// Check if we can still respond to the user
-			if (interaction.deferred || interaction.replied) {
-				await interaction.editReply({ content: 'A critical error occurred while processing your request. Please try again.', embeds:[], components: [] }).catch(e => console.error('Failed to send error message to user:', e));
-			}
+			console.error(`[Shop Button] A critical error occurred for user ${userId} (Action: ${action}):`, error);
+			await interaction.editReply({ content: 'A critical server error occurred. Please try again.', embeds: [], components: [] }).catch(e => console.error('Failed to send error message to user:', e));
 		}
 	},
 };
