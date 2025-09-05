@@ -66,7 +66,7 @@ async function startNewShopSession(interaction, isUpdate = false) {
 	const replyOptions = { ...ui, flags: MessageFlags.Ephemeral, content: '' };
 
 	if (isUpdate) {
-		await interaction.update(replyOptions);
+		await interaction.editReply(replyOptions);
 	}
 	else {
 		await interaction.reply(replyOptions);
@@ -85,11 +85,62 @@ function buildBuyConfirmationUI(vendor, item, price, economy) {
 	const embed = new EmbedBuilder()
 		.setColor(0x3498DB)
 		.setTitle(`Buy: ${item.name}`)
-		.setDescription(item.description || 'An item of curious origin.')
-		.addFields(
-			{ name: '💰 Price', value: `${price} Crowns`, inline: true },
-			{ name: '👑 Your Balance', value: `${economy.crowns.toLocaleString()} Crowns`, inline: true },
-		);
+		.setDescription(item.description || 'An item of curious origin.');
+
+	// --- Item Basics Field ---
+	const basicsLines = [
+		`**Type:** ${item.item_type.charAt(0).toUpperCase() + item.item_type.slice(1).toLowerCase()}`,
+		`**Rarity:** ${item.rarity.charAt(0).toUpperCase() + item.rarity.slice(1).toLowerCase()}`,
+		`**Tradeable:** ${item.is_tradeable ? 'Yes' : 'No'}`,
+	];
+	embed.addFields({ name: 'Item Basics', value: basicsLines.join('\n'), inline: false });
+
+	// --- Item Specifications Field (from effects_json) ---
+	let effects = {};
+	try {
+		if (item.effects_json) effects = JSON.parse(item.effects_json);
+	}
+	catch (e) {
+		console.error(`[Shop UI] Failed to parse effects_json for item ${item.name}:`, e);
+	}
+
+	const specLines = [];
+	if (effects.slot) {
+		specLines.push(`**Equipable Slot:** ${effects.slot.charAt(0).toUpperCase() + effects.slot.slice(1)}`);
+	}
+
+	const bonuses = [];
+	if (effects.ac_bonus) bonuses.push(`+${effects.ac_bonus} AC`);
+	if (effects.base_stats) {
+		for (const [stat, value] of Object.entries(effects.base_stats)) {
+			bonuses.push(`${value > 0 ? '+' : ''}${value} ${stat.charAt(0).toUpperCase() + stat.slice(1)}`);
+		}
+	}
+	if (bonuses.length > 0) {
+		specLines.push(`**Bonuses:** ${bonuses.join(', ')}`);
+	}
+
+	const requirements = [];
+	if (effects.requirements) {
+		for (const [req, value] of Object.entries(effects.requirements)) {
+			const reqName = req.charAt(0).toUpperCase() + req.slice(1);
+			requirements.push(`${value} ${reqName}`);
+		}
+	}
+	if (requirements.length > 0) {
+		specLines.push(`**Requirements:** ${requirements.join(', ')}`);
+	}
+
+	if (specLines.length > 0) {
+		embed.addFields({ name: 'Item Specifications', value: specLines.join('\n'), inline: false });
+	}
+
+
+	// --- Price & Balance ---
+	embed.addFields(
+		{ name: '💰 Price', value: `${price.toLocaleString()} Crowns`, inline: true },
+		{ name: '👑 Your Balance', value: `${economy.crowns.toLocaleString()} Crowns`, inline: true },
+	);
 
 	const canAfford = economy.crowns >= price;
 	const isStackable = item.is_stackable === 1;
@@ -339,7 +390,7 @@ module.exports = {
 					return interaction.editReply({ content: 'This item cannot be sold here or no longer exists.', components: [] });
 				}
 
-				const availableQuantity = db.prepare('SELECT COUNT(*) as count FROM user_inventory WHERE user_id = ? AND item_id = ? AND equipped_slot IS NULL').get(userId, itemId).count;
+				const availableQuantity = db.prepare('SELECT SUM(quantity) as count FROM user_inventory WHERE user_id = ? AND item_id = ? AND equipped_slot IS NULL').get(userId, itemId).count;
 				const interactionData = db.prepare('SELECT discount_modifier FROM character_npc_interactions WHERE user_id = ? AND vendor_id = ?').get(userId, vendorId);
 				const modifier = interactionData?.discount_modifier || 1.0;
 				const finalSellPrice = Math.floor(itemToSell.sell_price * modifier);
@@ -398,7 +449,7 @@ module.exports = {
 				const vendor = db.prepare('SELECT * FROM npc_vendors WHERE vendor_id = ?').get(vendorId);
 				vendor.user_id = userId;
 				const item = db.prepare('SELECT * FROM items WHERE item_id = ?').get(itemId);
-				const availableQuantity = db.prepare('SELECT COUNT(*) as count FROM user_inventory WHERE user_id = ? AND item_id = ? AND equipped_slot IS NULL').get(userId, itemId).count;
+				const availableQuantity = db.prepare('SELECT SUM(quantity) as count FROM user_inventory WHERE user_id = ? AND item_id = ? AND equipped_slot IS NULL').get(userId, itemId).count;
 
 				if (amountToSell > availableQuantity) {
 					return interaction.editReply({ content: `You only have ${availableQuantity} to sell.`, embeds: [], components: [] });
@@ -454,7 +505,16 @@ module.exports = {
 				db.transaction(() => {
 					db.prepare('UPDATE user_economy SET crowns = crowns - ? WHERE user_id = ?').run(totalCost, userId);
 					if (item.is_stackable) {
-						db.prepare('INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, ?) ON CONFLICT(user_id, item_id) DO UPDATE SET quantity = quantity + excluded.quantity').run(userId, itemId, amountToBuy);
+						// Check for an existing, unequipped stack of this item.
+						const existingStack = db.prepare('SELECT inventory_id FROM user_inventory WHERE user_id = ? AND item_id = ? AND equipped_slot IS NULL LIMIT 1').get(userId, itemId);
+						if (existingStack) {
+							// If it exists, add to the quantity.
+							db.prepare('UPDATE user_inventory SET quantity = quantity + ? WHERE inventory_id = ?').run(amountToBuy, existingStack.inventory_id);
+						}
+						else {
+							// Otherwise, insert a new row for the new stack.
+							db.prepare('INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, ?)').run(userId, itemId, amountToBuy);
+						}
 					}
 					else {
 						const stmt = db.prepare('INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, 1)');
@@ -582,13 +642,13 @@ module.exports = {
 							db.prepare(`DELETE FROM user_inventory WHERE inventory_id IN (${ids.map(() => '?').join(',')})`).run(...ids);
 							db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(totalCrowns, userId);
 						})();
-						const newQuantity = db.prepare('SELECT COUNT(*) as count FROM user_inventory WHERE user_id = ? AND item_id = ? AND equipped_slot IS NULL').get(userId, itemId).count;
+						const newQuantity = db.prepare('SELECT SUM(quantity) as count FROM user_inventory WHERE user_id = ? AND item_id = ? AND equipped_slot IS NULL').get(userId, itemId).count || 0;
 						const ui = buildSellConfirmationUI(vendor, item, newQuantity, finalSinglePrice);
 						await interaction.editReply({ content: `✅ You sold **${amountToSell}x ${item.name}** for **${totalCrowns}** Crowns.`, embeds: ui.embeds, components: ui.components });
 					}
 					catch (e) {
 						if (e.message !== 'INSUFFICIENT_ITEMS') throw e;
-						const currentQty = db.prepare('SELECT COUNT(*) as count FROM user_inventory WHERE user_id = ? AND item_id = ? AND equipped_slot IS NULL').get(userId, itemId).count;
+						const currentQty = db.prepare('SELECT SUM(quantity) as count FROM user_inventory WHERE user_id = ? AND item_id = ? AND equipped_slot IS NULL').get(userId, itemId).count || 0;
 						const ui = buildSellConfirmationUI(vendor, item, currentQty, finalSinglePrice);
 						await interaction.editReply({ content: '❌ You don\'t have enough of that item to sell.', embeds: ui.embeds, components: ui.components });
 					}
@@ -607,7 +667,16 @@ module.exports = {
 					db.transaction(() => {
 						db.prepare('UPDATE user_economy SET crowns = crowns - ? WHERE user_id = ?').run(totalCost, userId);
 						if (item.is_stackable) {
-							db.prepare('INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, ?) ON CONFLICT(user_id, item_id) DO UPDATE SET quantity = quantity + excluded.quantity').run(userId, itemId, amountToBuy);
+							// Check for an existing, unequipped stack of this item.
+							const existingStack = db.prepare('SELECT inventory_id FROM user_inventory WHERE user_id = ? AND item_id = ? AND equipped_slot IS NULL LIMIT 1').get(userId, itemId);
+							if (existingStack) {
+								// If it exists, add to the quantity.
+								db.prepare('UPDATE user_inventory SET quantity = quantity + ? WHERE inventory_id = ?').run(amountToBuy, existingStack.inventory_id);
+							}
+							else {
+								// Otherwise, insert a new row for the new stack.
+								db.prepare('INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, ?)').run(userId, itemId, amountToBuy);
+							}
 						}
 						else {
 							const stmt = db.prepare('INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, 1)');
@@ -649,7 +718,7 @@ module.exports = {
 			case 'sell':
 			case 'sellback': {
 				const sellableItems = db.prepare(`
-    					SELECT i.item_id, i.name, vs.sell_price, COUNT(ui.inventory_id) as quantity
+    					SELECT i.item_id, i.name, vs.sell_price, SUM(ui.quantity) as quantity
     					FROM user_inventory ui
     					JOIN items i ON ui.item_id = i.item_id
     					JOIN vendor_stock vs ON i.item_id = vs.item_id AND vs.vendor_id = ?
@@ -660,7 +729,10 @@ module.exports = {
 
 				if (sellableItems.length === 0) {
 					const ui = getFreshUI();
-					await interaction.editReply({ content: `You have no unequipped items that ${vendor.name} is interested in.`, ...ui });
+					// Access the first embed in the array and set its description.
+					ui.embeds[0].setDescription(`You have no unequipped items that ${vendor.name} is interested in right now.`);
+					// Reply with the modified UI, ensuring content is empty.
+					await interaction.editReply({ ...ui, content: '' });
 					return;
 				}
 

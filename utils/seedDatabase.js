@@ -45,9 +45,26 @@ const vendorStockData = [
 	{ vendor_name: 'Rowan the Blacksmith', item_name: 'Wolf Fang', sell_price: 5 },
 	{ vendor_name: 'Rowan the Blacksmith', item_name: 'Orc Tusk', sell_price: 7 },
 	{ vendor_name: 'Rowan the Blacksmith', item_name: 'Large Bone', sell_price: 9 },
+
+	{ vendor_name: 'Rowan the Blacksmith', item_name: 'Crude Iron Helm', sell_price: 20 },
+
 	{ vendor_name: 'Rowan the Blacksmith', item_name: 'Crude Dagger', sell_price: 5, buy_price: 20 },
 	{ vendor_name: 'Rowan the Blacksmith', item_name: 'Rusty Shortsword', sell_price: 7, buy_price: 30 },
-	{ vendor_name: 'Rowan the Blacksmith', item_name: 'Crude Iron Helm', sell_price: 20 },
+	{ vendor_name: 'Rowan the Blacksmith', item_name: 'Steel Shortsword', buy_price: 600 },
+	{ vendor_name: 'Rowan the Blacksmith', item_name: 'Reinforced Iron Shield', buy_price: 550 },
+	{ vendor_name: 'Rowan the Blacksmith', item_name: 'Full Iron Helm', buy_price: 500 },
+	{ vendor_name: 'Rowan the Blacksmith', item_name: 'Dwarven Waraxe', buy_price: 4000 },
+	{ vendor_name: 'Rowan the Blacksmith', item_name: 'Knight\'s Platebody', buy_price: 5000 },
+	{ vendor_name: 'Rowan the Blacksmith', item_name: 'Blade of the Justicar', buy_price: 25000 },
+
+	// Greg (Oddball)
+	{ vendor_name: 'Greg the Oddball', item_name: 'Rusted Lockbox', buy_price: 150 },
+	{ vendor_name: 'Greg the Oddball', item_name: 'Rusted Key', buy_price: 200 },
+	{ vendor_name: 'Greg the Oddball', item_name: 'Gilded Chest', buy_price: 1200 },
+	{ vendor_name: 'Greg the Oddball', item_name: 'Gilded Key', buy_price: 1800 },
+	{ vendor_name: 'Greg the Oddball', item_name: 'Aegis of the Unbroken', buy_price: 750000 },
+	{ vendor_name: 'Greg the Oddball', item_name: 'Whisperwind, the Soulrazor', buy_price: 750000 },
+	{ vendor_name: 'Greg the Oddball', item_name: 'Crown of the Mad King', buy_price: 666666 },
 
 	// Pip (Alchemist) - Buys alchemy materials
 	{ vendor_name: 'Pip the Alchemist', item_name: 'Rat Tail', sell_price: 1 },
@@ -55,10 +72,35 @@ const vendorStockData = [
 	{ vendor_name: 'Pip the Alchemist', item_name: 'Venom Gland', sell_price: 4 },
 	{ vendor_name: 'Pip the Alchemist', item_name: 'Hag\'s Eye', sell_price: 12 },
 
+	{ vendor_name: 'Pip the Alchemist', item_name: 'Minor Healing Potion', buy_price: 75 },
+	{ vendor_name: 'Pip the Alchemist', item_name: 'Healing Potion', buy_price: 275 },
+	{ vendor_name: 'Pip the Alchemist', item_name: 'Greater Healing Potion', buy_price: 1000 },
+	{ vendor_name: 'Pip the Alchemist', item_name: 'Elixir of Might', buy_price: 1500 },
+
 	// Sable (Hunter) - Buys trophies
 	{ vendor_name: 'Sable the Hunter', item_name: 'Goblin Ear', sell_price: 2 },
 	{ vendor_name: 'Sable the Hunter', item_name: 'Thick Pelt', sell_price: 7 },
+	{ vendor_name: 'Sable the Hunter', item_name: 'Beast-Hide Jerkin', buy_price: 750 },
+	{ vendor_name: 'Sable the Hunter', item_name: 'Stalker\'s Shortbow', buy_price: 800 },
+	{ vendor_name: 'Sable the Hunter', item_name: 'Cloak of the Shifting Sands', buy_price: 4200 },
 ];
+
+
+/*
+
+COMMON (50-200 Crowns): Basic, functional gear. Often found as drops.
+
+UNCOMMON (250-1,000 Crowns): A solid upgrade for a new adventurer. Minor stat bonuses (+1). Low requirements (e.g., stat >= 8).
+
+RARE (1,500-5,000 Crowns): High-quality, specialized equipment. Noticeable stat bonuses (+2 or +3) and sometimes a unique effect. Requires some character investment (e.g., stat >= 14).
+
+EPIC (7,500-20,000 Crowns): Powerful, defining items for a build. Multiple stat bonuses or significant unique effects. Requires dedication to a stat (e.g., stat >= 20). This is where we can introduce archetype or alignment locks.
+
+LEGENDARY (50,000-150,000 Crowns): Artifact-level gear with powerful, build-altering effects. Sold exclusively by Greg. Very high requirements (e.g., stat >= 28).
+
+MYTHIC (250,000+ Crowns): The "Pantheon" items. Unique, server-defining artifacts. Extremely expensive with the highest requirements (stat >= 35).
+
+*/
 
 const pveItems = [
 	// Materials
@@ -80,6 +122,46 @@ const pveItems = [
 	{ name: 'Ogre\'s Club', description: 'A crudely fashioned but brutally effective large club.', item_type: 'WEAPON', rarity: 'UNCOMMON', is_stackable: 0, is_tradeable: 1, crown_value: 80, damage_dice: '1d10', damage_type: 'Bludgeoning', handedness: 'two-handed', effects_json: '{"slot": "weapon", "base_stats": {"might": 1}}' },
 	// Armor
 	{ name: 'Crude Iron Helm', description: 'A dented and poorly fitting helmet of orcish make.', item_type: 'ARMOR', rarity: 'COMMON', is_stackable: 0, is_tradeable: 1, crown_value: 40, effects_json: '{"slot": "helmet", "ac_bonus": 1}' },
+
+
+	// --- ROWAN THE BLACKSMITH'S NEW WARES ---
+	// UNCOMMON
+	{ name: 'Steel Shortsword', description: 'A reliable and well-balanced shortsword, trusted by soldiers and adventurers alike.', item_type: 'WEAPON', rarity: 'UNCOMMON', is_stackable: 0, is_tradeable: 1, crown_value: 450, damage_dice: '1d6', damage_type: 'Slashing', handedness: 'one-handed', effects_json: '{"slot": "weapon", "base_stats": {"might": 1}, "requirements": {"might": 8}}' },
+	{ name: 'Reinforced Iron Shield', description: 'A sturdy shield banded with iron, offering excellent protection.', item_type: 'ARMOR', rarity: 'UNCOMMON', is_stackable: 0, is_tradeable: 1, crown_value: 400, effects_json: '{"slot": "offhand", "ac_bonus": 2, "requirements": {"grit": 8}}' },
+	{ name: 'Full Iron Helm', description: 'A heavy helmet that offers complete head protection.', item_type: 'ARMOR', rarity: 'UNCOMMON', is_stackable: 0, is_tradeable: 1, crown_value: 350, effects_json: '{"slot": "helmet", "ac_bonus": 2, "base_stats": {"grit": 1}, "requirements": {"grit": 10}}' },
+
+	// RARE
+	{ name: 'Dwarven Waraxe', description: 'A masterfully crafted axe with a heavy, sharp head. It feels incredibly solid in your hands.', item_type: 'WEAPON', rarity: 'RARE', is_stackable: 0, is_tradeable: 1, crown_value: 3200, damage_dice: '1d10', damage_type: 'Slashing', handedness: 'one-handed', effects_json: '{"slot": "weapon", "base_stats": {"might": 2, "grit": 1}, "requirements": {"might": 14}}' },
+	{ name: 'Knight\'s Platebody', description: 'Polished steel plates that form an articulated and highly protective cuirass.', item_type: 'ARMOR', rarity: 'RARE', is_stackable: 0, is_tradeable: 1, crown_value: 4000, effects_json: '{"slot": "chestplate", "ac_bonus": 4, "base_stats": {"grit": 2}, "requirements": {"grit": 16}}' },
+
+	// EPIC
+	{ name: 'Blade of the Justicar', description: 'A holy greatsword that glows with a faint inner light. It feels heavy with purpose.', item_type: 'WEAPON', rarity: 'EPIC', is_stackable: 0, is_tradeable: 1, crown_value: 18000, damage_dice: '2d8', damage_type: 'Slashing', handedness: 'two-handed', effects_json: '{"slot": "weapon", "base_stats": {"might": 3, "charm": 2}, "requirements": {"might": 22, "archetype": "Justicar"}}' },
+
+	// --- SABLE THE HUNTER'S NEW GEAR ---
+	// UNCOMMON
+	{ name: 'Beast-Hide Jerkin', description: 'Armor stitched together from the tough hides of various wild beasts.', item_type: 'ARMOR', rarity: 'UNCOMMON', is_stackable: 0, is_tradeable: 1, crown_value: 500, effects_json: '{"slot": "chestplate", "ac_bonus": 1, "base_stats": {"finesse": 1, "fortune": 1}, "requirements": {"finesse": 10}}' },
+	{ name: 'Stalker\'s Shortbow', description: 'A quiet, efficient bow favored by those who hunt in dense forests.', item_type: 'WEAPON', rarity: 'UNCOMMON', is_stackable: 0, is_tradeable: 1, crown_value: 650, damage_dice: '1d8', damage_type: 'Piercing', handedness: 'two-handed', effects_json: '{"slot": "weapon", "base_stats": {"finesse": 2}, "requirements": {"finesse": 12}}' },
+
+	// RARE
+	{ name: 'Cloak of the Shifting Sands', description: 'A magical cloak that seems to blur your outline, making you harder to hit.', item_type: 'ARMOR', rarity: 'RARE', is_stackable: 0, is_tradeable: 1, crown_value: 3500, effects_json: '{"slot": "chestplate", "ac_bonus": 2, "base_stats": {"finesse": 2, "fortune": 1}, "requirements": {"archetype": "Shifter"}}' },
+
+	// --- PIP THE ALCHEMIST'S NEW POTIONS ---
+	{ name: 'Minor Healing Potion', description: 'A common red liquid that restores a small amount of health.', item_type: 'CONSUMABLE', rarity: 'COMMON', is_stackable: 1, is_tradeable: 1, crown_value: 50 },
+	{ name: 'Healing Potion', description: 'A bubbling red potion that restores a moderate amount of health.', item_type: 'CONSUMABLE', rarity: 'UNCOMMON', is_stackable: 1, is_tradeable: 1, crown_value: 200 },
+	{ name: 'Greater Healing Potion', description: 'A shimmering, potent red elixir that restores a large amount of health.', item_type: 'CONSUMABLE', rarity: 'RARE', is_stackable: 1, is_tradeable: 1, crown_value: 800 },
+	{ name: 'Elixir of Might', description: 'Temporarily boosts your Might stat.', item_type: 'CONSUMABLE', rarity: 'RARE', is_stackable: 1, is_tradeable: 1, crown_value: 1200 },
+
+	// --- GREG THE ODDBALL'S NEW STOCK ---
+	// LOOTBOXES & KEYS
+	{ name: 'Rusted Lockbox', description: 'A common, dented lockbox. Requires a Rusted Key to open.', item_type: 'LOOTCRATE', rarity: 'COMMON', is_stackable: 1, is_tradeable: 1, crown_value: 100 },
+	{ name: 'Rusted Key', description: 'A simple, corroded key.', item_type: 'MATERIAL', item_subtype: 'KEY', is_stackable: 1, is_tradeable: 1, crown_value: 150 },
+	{ name: 'Gilded Chest', description: 'An ornate, heavy chest secured with a complex lock. Requires a Gilded Key to open.', item_type: 'LOOTCRATE', rarity: 'RARE', is_stackable: 1, is_tradeable: 1, crown_value: 1000 },
+	{ name: 'Gilded Key', description: 'A masterfully crafted key, shimmering with a golden hue.', item_type: 'MATERIAL', item_subtype: 'KEY', is_stackable: 1, is_tradeable: 1, crown_value: 1500 },
+
+	// THE PANTHEON ITEMS (MYTHIC)
+	{ name: 'Aegis of the Unbroken', description: '"The last bastion against the encroaching dark. It has never yielded. It never will." - Pantheon Inscription', item_type: 'ARMOR', rarity: 'MYTHIC', is_stackable: 0, is_tradeable: 1, crown_value: 500000, effects_json: '{"slot": "offhand", "ac_bonus": 8, "base_stats": {"grit": 10}, "requirements": {"grit": 35}}' },
+	{ name: 'Whisperwind, the Soulrazor', description: '"It strikes not at the flesh, but at the thread of fate itself." - Pantheon Inscription', item_type: 'WEAPON', rarity: 'MYTHIC', is_stackable: 0, is_tradeable: 1, crown_value: 500000, damage_dice: '1d8', damage_type: 'Piercing', handedness: 'one-handed', effects_json: '{"slot": "weapon", "base_stats": {"finesse": 7, "wits": 7}, "requirements": {"finesse": 30, "wits": 30}}' },
+	{ name: 'Crown of the Mad King', description: '"To know all is to lose all. A worthy price." - Pantheon Inscription', item_type: 'ARMOR', rarity: 'MYTHIC', is_stackable: 0, is_tradeable: 1, crown_value: 450000, effects_json: '{"slot": "helmet", "ac_bonus": 2, "base_stats": {"wits": 10, "charm": 10, "grit": -5}, "requirements": {"alignment": "Evil"}}' },
 ];
 
 const lootTables = [

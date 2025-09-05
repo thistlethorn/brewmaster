@@ -294,22 +294,27 @@ async function handleEquip(interaction) {
 	const inventoryId = interaction.options.getInteger('item');
 	const intendedSlot = interaction.options.getString('slot');
 
-	const character = db.prepare('SELECT user_id FROM characters WHERE user_id = ?').get(userId);
+	// Fetch the character's full data, including their archetype name, in one go.
+	const character = db.prepare(`
+        SELECT c.*, a.name as archetype_name
+        FROM characters c
+        JOIN archetypes a ON c.archetype_id = a.id
+        WHERE c.user_id = ?
+    `).get(userId);
+
 	if (!character) {
 		return interaction.reply({ content: 'You must create a character first with `/character create`.', flags: MessageFlags.Ephemeral });
 	}
+
 	const validEquipTargetSlots = ['weapon', 'offhand', 'helmet', 'chestplate', 'leggings', 'boots', 'ring1', 'ring2', 'amulet'];
 	if (!validEquipTargetSlots.includes(intendedSlot)) {
 		return interaction.reply({ content: 'Invalid equipment slot specified.', flags: MessageFlags.Ephemeral });
 	}
-	const validItemSlotTypes = ['weapon', 'offhand', 'helmet', 'chestplate', 'leggings', 'boots', 'ring', 'amulet'];
-	const itemSlotType = intendedSlot.startsWith('ring') ? 'ring' : intendedSlot;
-	if (!validItemSlotTypes.includes(itemSlotType)) {
-		return interaction.reply({ content: 'Invalid equipment slot specified.', flags: MessageFlags.Ephemeral });
-	}
 
+	const itemSlotType = intendedSlot.startsWith('ring') ? 'ring' : 'amulet';
 	const itemToEquip = db.prepare(`
-        SELECT i.name, i.handedness, i.effects_json FROM user_inventory ui
+        SELECT i.name, i.handedness, i.effects_json
+        FROM user_inventory ui
         JOIN items i ON ui.item_id = i.item_id
         WHERE ui.inventory_id = ? AND ui.user_id = ? AND json_extract(i.effects_json, '$.slot') = ?
     `).get(inventoryId, userId, itemSlotType);
@@ -318,16 +323,64 @@ async function handleEquip(interaction) {
 		return interaction.reply({ content: 'The selected item is not valid for that slot or was not found in your inventory.', flags: MessageFlags.Ephemeral });
 	}
 
+	let effects;
 	try {
+		effects = itemToEquip.effects_json ? JSON.parse(itemToEquip.effects_json) : {};
+	}
+	catch (e) {
+		console.error(`[Equip Error] Failed to parse effects_json for inventory_id ${inventoryId}:`, e);
+		return interaction.reply({ content: 'This item has corrupted data and cannot be equipped. Please contact an admin.', flags: MessageFlags.Ephemeral });
+	}
 
+	const requirements = effects.requirements;
+	if (requirements) {
+		const failedRequirements = [];
+
+		// Check for stat requirements
+		const statsToCheck = ['might', 'finesse', 'wits', 'grit', 'charm', 'fortune'];
+		for (const stat of statsToCheck) {
+			if (requirements[stat] && character[`stat_${stat}`] < requirements[stat]) {
+				const statName = stat.charAt(0).toUpperCase() + stat.slice(1);
+				failedRequirements.push(`Requires **${requirements[stat]} ${statName}** (You have ${character[`stat_${stat}`]})`);
+			}
+		}
+
+		// Check for archetype requirement
+		if (requirements.archetype && character.archetype_name !== requirements.archetype) {
+			failedRequirements.push(`Requires **${requirements.archetype}** Archetype`);
+		}
+
+		// Check for alignment requirement
+		if (requirements.alignment) {
+			const charAlignment = character.character_alignment || 'Unaligned';
+			// This check works for both general ("Good", "Evil") and specific ("Lawful Good") requirements.
+			if (!charAlignment.includes(requirements.alignment)) {
+				failedRequirements.push(`Requires a **${requirements.alignment}** Alignment`);
+			}
+		}
+
+		// If any checks failed, build and send an informative error message.
+		if (failedRequirements.length > 0) {
+			const errorEmbed = new EmbedBuilder()
+				.setColor(0xE74C3C)
+				.setTitle(`❌ Cannot Equip ${itemToEquip.name}`)
+				.setDescription('You do not meet the requirements for this item:\n' + failedRequirements.map(reason => `• ${reason}`).join('\n'));
+			return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
+		}
+	}
+
+	// If all checks passed, proceed with the transaction to equip the item.
+	try {
 		const equipTx = db.transaction(() => {
 			const isTwoHanded = itemToEquip.handedness === 'two-handed';
+			// Unequip any item currently in the target slot
 			db.prepare(`
                 UPDATE user_inventory
                 SET equipped_slot = NULL
                 WHERE user_id = ? AND equipped_slot = ?
             `).run(userId, intendedSlot);
 
+			// If equipping a two-handed weapon, also unequip the offhand item
 			if (isTwoHanded && intendedSlot === 'weapon') {
 				db.prepare(`
                     UPDATE user_inventory
@@ -335,6 +388,7 @@ async function handleEquip(interaction) {
                     WHERE user_id = ? AND equipped_slot = 'offhand'
                 `).run(userId);
 			}
+			// If equipping an offhand, check if a two-handed weapon is equipped
 			else if (intendedSlot === 'offhand') {
 				const mainWeapon = db.prepare(`
                     SELECT i.handedness FROM user_inventory ui
@@ -346,12 +400,14 @@ async function handleEquip(interaction) {
 				}
 			}
 
+			// Finally, equip the new item
 			db.prepare(`
                 UPDATE user_inventory
                 SET equipped_slot = ?
                 WHERE inventory_id = ? AND user_id = ?
             `).run(intendedSlot, inventoryId, userId);
 		});
+
 		equipTx();
 		recalculateStats(userId);
 		await interaction.reply({ content: `✅ Successfully equipped **${itemToEquip.name}**. Your stats have been updated.`, flags: MessageFlags.Ephemeral });
