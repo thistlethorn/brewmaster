@@ -329,7 +329,6 @@ module.exports = {
 				if (inventoryCommand && typeof inventoryCommand.buttons === 'function') {
 					try {
 						await inventoryCommand.buttons(interaction);
-						console.log(`[Execute] Handled Inventory Button for ${interaction.user.displayName}`);
 						return;
 					}
 					catch (error) {
@@ -340,9 +339,20 @@ module.exports = {
 						return;
 					}
 				}
-				else if (!interaction.replied && !interaction.deferred) {
-					await interaction.reply({ content: 'Inventory actions are currently unavailable.', flags: MessageFlags.Ephemeral });
-					return;
+			}
+			if (interaction.isStringSelectMenu() && interaction.customId.startsWith('inventory_')) {
+				if (inventoryCommand && typeof inventoryCommand.menus === 'function') {
+					try {
+						await inventoryCommand.menus(interaction);
+						return;
+					}
+					catch (error) {
+						console.error('[Error] Inventory menu error:', error);
+						if (!interaction.replied && !interaction.deferred) {
+							await interaction.reply({ content: 'There was an error processing your inventory action.', flags: MessageFlags.Ephemeral });
+						}
+						return;
+					}
 				}
 			}
 

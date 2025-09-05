@@ -1,5 +1,5 @@
 // commands/charsys/inventory.js
-const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags, StringSelectMenuBuilder } = require('discord.js');
 const db = require('../../database');
 
 const ITEMS_PER_PAGE = 10;
@@ -22,6 +22,17 @@ const rarityColors = {
 	'MYTHIC': 0xE67E22,
 	// Orange
 };
+// Defines the order in which categories will appear in the UI.
+const CATEGORY_ORDER = ['equipped', 'weapons', 'armor', 'consumables', 'materials', 'miscellaneous'];
+const CATEGORY_NAMES = {
+	equipped: 'Equipped Gear',
+	weapons: 'Weapons',
+	armor: 'Armor',
+	consumables: 'Consumables',
+	materials: 'Materials',
+	miscellaneous: 'Miscellaneous',
+};
+
 
 /**
  * Handles the /inventory item_info command.
@@ -106,92 +117,110 @@ async function handleItemInfo(interaction) {
 
 	await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 }
-/**
- * Handles the /inventory view command, displaying a paginated list of items.
- * @param {import('discord.js').ChatInputCommandInteraction | import('discord.js').ButtonInteraction} interaction
- * @param {number} [pageArg] - The page number to display, used for button pagination.
- */
-async function handleView(interaction, pageArg) {
-	const userId = interaction.user.id;
-	const rawPage = pageArg ?? interaction.options?.getInteger('page') ?? 1;
-	const page = Number.isFinite(Number(rawPage)) ? Math.max(1, Math.floor(rawPage)) : 1;
 
-	// First, ensure the user has a character.
+/**
+ * REFACTORED: Handles viewing the inventory by category and page.
+ * @param {import('discord.js').ChatInputCommandInteraction | import('discord.js').ButtonInteraction | import('discord.js').StringSelectMenuInteraction} interaction
+ * @param {string} [categoryArg] - The category to display.
+ * @param {number} [pageArg] - The page number within the category.
+ */
+async function handleView(interaction, categoryArg, pageArg) {
+	const userId = interaction.user.id;
+	const isUpdate = interaction.isButton() || interaction.isStringSelectMenu();
+
 	const character = db.prepare('SELECT user_id FROM characters WHERE user_id = ?').get(userId);
 	if (!character) {
-		const replyOptions = { content: 'You need to create a character first with `/character create`.', flags: MessageFlags.Ephemeral };
-		return interaction.isButton() ? interaction.update(replyOptions) : interaction.reply(replyOptions);
+		const replyOptions = { content: 'You need to create a character first with `/character create`.', flags: MessageFlags.Ephemeral, embeds: [], components: [] };
+		return isUpdate ? interaction.update(replyOptions) : interaction.reply(replyOptions);
 	}
 
-	// Get all inventory items for the user, joined with item details.
-	const inventoryItems = db.prepare(`
-        SELECT
-            ui.inventory_id,
-            ui.quantity,
-            i.name
+	const allItems = db.prepare(`
+        SELECT ui.inventory_id, ui.quantity, ui.equipped_slot, i.name, i.item_type
         FROM user_inventory ui
         JOIN items i ON ui.item_id = i.item_id
         WHERE ui.user_id = ?
         ORDER BY i.name ASC
     `).all(userId);
 
-	if (inventoryItems.length === 0) {
+	if (allItems.length === 0) {
 		const embed = new EmbedBuilder()
 			.setColor(0x95A5A6)
 			.setTitle(`${interaction.user.username}'s Inventory`)
 			.setDescription('*Your pockets are empty.*');
-		const replyOptions = { embeds: [embed], flags: MessageFlags.Ephemeral };
-		return interaction.isButton() ? interaction.update(replyOptions) : interaction.reply(replyOptions);
+		const replyOptions = { embeds: [embed], components: [], flags: MessageFlags.Ephemeral };
+		return isUpdate ? interaction.update(replyOptions) : interaction.reply(replyOptions);
 	}
 
-	const equippedItems = db.prepare(`
-        SELECT inventory_id FROM user_inventory
-        WHERE user_id = ? AND equipped_slot IS NOT NULL
-    `).all(userId);
-	const equippedIds = new Set(equippedItems.map(item => item.inventory_id));
+	const unequippedItems = allItems.filter(item => !item.equipped_slot);
+	const categories = {
+		equipped: allItems.filter(item => item.equipped_slot),
+		weapons: unequippedItems.filter(i => i.item_type === 'WEAPON'),
+		armor: unequippedItems.filter(i => i.item_type === 'ARMOR'),
+		consumables: unequippedItems.filter(i => i.item_type === 'CONSUMABLE'),
+		materials: unequippedItems.filter(i => i.item_type === 'MATERIAL'),
+		miscellaneous: unequippedItems.filter(i => !['WEAPON', 'ARMOR', 'CONSUMABLE', 'MATERIAL'].includes(i.item_type)),
+	};
 
+	const availableCategories = CATEGORY_ORDER.filter(c => categories[c].length > 0);
+	const currentCategory = categoryArg && availableCategories.includes(categoryArg) ? categoryArg : availableCategories[0] || 'equipped';
+	const itemsToList = categories[currentCategory];
 
-	// Pagination logic
-	const totalPages = Math.max(1, Math.ceil(inventoryItems.length / ITEMS_PER_PAGE));
-	const safePage = Math.min(page, totalPages);
-	const start = (safePage - 1) * ITEMS_PER_PAGE;
+	const totalPages = Math.max(1, Math.ceil(itemsToList.length / ITEMS_PER_PAGE));
+	const page = Math.min(pageArg || 1, totalPages);
+	const start = (page - 1) * ITEMS_PER_PAGE;
 	const end = start + ITEMS_PER_PAGE;
-	const pageContent = inventoryItems.slice(start, end);
+	const pageContent = itemsToList.slice(start, end);
 
 	const embed = new EmbedBuilder()
 		.setColor(0x95A5A6)
-		.setTitle(`${interaction.user.username}'s Inventory (Page ${safePage}/${totalPages})`)
-		.setFooter({ text: 'Use /character equip to manage your gear.' });
+		.setTitle(`${interaction.user.username}'s Inventory - ${CATEGORY_NAMES[currentCategory]}`)
+		.setFooter({ text: `Page ${page}/${totalPages} | Use /character equip to manage gear.` });
 
 	const descriptionLines = pageContent.map(item => {
-		const isEquipped = equippedIds.has(item.inventory_id) ? '`(Equipped)`' : '';
+		const slot = item.equipped_slot ? `\`(${item.equipped_slot.charAt(0).toUpperCase() + item.equipped_slot.slice(1)})\`` : '';
 		const quantity = item.quantity > 1 ? `x${item.quantity}` : '';
-		return `• **${item.name}** ${quantity} ${isEquipped}`;
+		return `• **${item.name}** ${quantity} ${slot}`;
 	});
-	embed.setDescription(descriptionLines.join('\n'));
+	embed.setDescription(descriptionLines.join('\n') || '*This category is empty.*');
 
+	// --- Components ---
 	const components = [];
+
+	// Category Selector
+	const categoryMenu = new StringSelectMenuBuilder()
+		.setCustomId(`inventory_category_${userId}`)
+		.setPlaceholder('View a different category...')
+		.addOptions(availableCategories.map(cat => ({
+			label: CATEGORY_NAMES[cat],
+			value: cat,
+			default: cat === currentCategory,
+		})));
+	components.push(new ActionRowBuilder().addComponents(categoryMenu));
+
+
+	// Page Buttons
 	if (totalPages > 1) {
-		const row = new ActionRowBuilder().addComponents(
+		const pageRow = new ActionRowBuilder().addComponents(
 			new ButtonBuilder()
-				.setCustomId(`inventory_view_${userId}_${safePage - 1}`)
+				.setCustomId(`inventory_page_${userId}_${currentCategory}_${page - 1}`)
 				.setLabel('◀️ Previous')
 				.setStyle(ButtonStyle.Secondary)
-				.setDisabled(safePage === 1),
+				.setDisabled(page === 1),
 			new ButtonBuilder()
-				.setCustomId(`inventory_view_${userId}_${safePage + 1}`)
+				.setCustomId(`inventory_page_${userId}_${currentCategory}_${page + 1}`)
 				.setLabel('Next ▶️')
 				.setStyle(ButtonStyle.Secondary)
-				.setDisabled(safePage === totalPages),
+				.setDisabled(page === totalPages),
 		);
-		components.push(row);
+		components.push(pageRow);
 	}
 
-	if (interaction.isButton()) {
-		await interaction.update({ embeds: [embed], components });
+	const replyOptions = { embeds: [embed], components, flags: MessageFlags.Ephemeral };
+	if (isUpdate) {
+		await interaction.update(replyOptions);
 	}
 	else {
-		await interaction.reply({ embeds: [embed], components, flags: MessageFlags.Ephemeral });
+		await interaction.reply(replyOptions);
 	}
 }
 
@@ -212,11 +241,8 @@ module.exports = {
 		.addSubcommand(subcommand =>
 			subcommand
 				.setName('view')
-				.setDescription('View your character\'s inventory.')
-				.addIntegerOption(option =>
-					option.setName('page')
-						.setDescription('The page number to view.')
-						.setRequired(false))),
+				.setDescription('View your character\'s inventory.')),
+
 	async autocomplete(interaction) {
 		const subcommand = interaction.options.getSubcommand();
 		const focusedOption = interaction.options.getFocused(true);
@@ -262,15 +288,35 @@ module.exports = {
      */
 	async buttons(interaction) {
 		const parts = interaction.customId.split('_');
-		if (parts.length !== 4 || parts[0] !== 'inventory' || parts[1] !== 'view') {
-			return interaction.reply({ content: 'Invalid button interaction.', flags: MessageFlags.Ephemeral });
+		if (parts.length !== 5 || parts[0] !== 'inventory' || parts[1] !== 'page') {
+			return;
 		}
-		const [,, targetUserId, page] = parts;
+		const [,, targetUserId, category, page] = parts;
 
 		if (interaction.user.id !== targetUserId) {
 			return interaction.reply({ content: 'This is not your inventory menu.', flags: MessageFlags.Ephemeral });
 		}
 
-		await handleView(interaction, parseInt(page));
+		await handleView(interaction, category, parseInt(page));
+	},
+
+	/**
+     * Handles select menu for changing inventory category.
+     * @param {import('discord.js').StringSelectMenuInteraction} interaction
+     */
+	async menus(interaction) {
+		const parts = interaction.customId.split('_');
+		if (parts.length !== 3 || parts[0] !== 'inventory' || parts[1] !== 'category') {
+			return;
+		}
+		const [,, targetUserId] = parts;
+
+		if (interaction.user.id !== targetUserId) {
+			return interaction.reply({ content: 'This is not your inventory menu.', flags: MessageFlags.Ephemeral });
+		}
+
+		const selectedCategory = interaction.values[0];
+		// Go to page 1 of the newly selected category
+		await handleView(interaction, selectedCategory, 1);
 	},
 };

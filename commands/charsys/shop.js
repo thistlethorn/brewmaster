@@ -268,11 +268,50 @@ function buildSellConfirmationUI(vendor, item, availableQuantity, price) {
 	const embed = new EmbedBuilder()
 		.setColor(0xF1C40F)
 		.setTitle(`Sell: ${item.name}`)
-		.setDescription(item.description || 'An item of curious origin.')
-		.addFields(
-			{ name: '💰 Price Per Item', value: `${price} Crowns`, inline: true },
-			{ name: '📦 You Have', value: `**${availableQuantity}** available to sell`, inline: true },
-		);
+		.setDescription(item.description || 'An item of curious origin.');
+
+	// --- Item Basics Field ---
+	const basicsLines = [
+		`**Type:** ${item.item_type.charAt(0).toUpperCase() + item.item_type.slice(1).toLowerCase()}`,
+		`**Rarity:** ${item.rarity.charAt(0).toUpperCase() + item.rarity.slice(1).toLowerCase()}`,
+		`**Tradeable:** ${item.is_tradeable ? 'Yes' : 'No'}`,
+	];
+	embed.addFields({ name: 'Item Basics', value: basicsLines.join('\n'), inline: false });
+
+	// --- Item Specifications Field (from effects_json) ---
+	let effects = {};
+	try {
+		if (item.effects_json) effects = JSON.parse(item.effects_json);
+	}
+	catch (e) {
+		console.error(`[Shop UI] Failed to parse effects_json for item ${item.name}:`, e);
+	}
+
+	const specLines = [];
+	if (effects.slot) {
+		specLines.push(`**Equipable Slot:** ${effects.slot.charAt(0).toUpperCase() + effects.slot.slice(1)}`);
+	}
+
+	const bonuses = [];
+	if (effects.ac_bonus) bonuses.push(`+${effects.ac_bonus} AC`);
+	if (effects.base_stats) {
+		for (const [stat, value] of Object.entries(effects.base_stats)) {
+			bonuses.push(`${value > 0 ? '+' : ''}${value} ${stat.charAt(0).toUpperCase() + stat.slice(1)}`);
+		}
+	}
+	if (bonuses.length > 0) {
+		specLines.push(`**Bonuses:** ${bonuses.join(', ')}`);
+	}
+
+	if (specLines.length > 0) {
+		embed.addFields({ name: 'Item Specifications', value: specLines.join('\n'), inline: false });
+	}
+
+	// --- Transaction Details ---
+	embed.addFields(
+		{ name: '💰 Price Per Item', value: `${price} Crowns`, inline: true },
+		{ name: '📦 You Have', value: `**${availableQuantity}** available to sell`, inline: true },
+	);
 
 	const row1 = new ActionRowBuilder().addComponents(
 		new ButtonBuilder()
@@ -558,8 +597,13 @@ module.exports = {
 			return;
 		}
 
-		// Defer immediately for all other actions
-		await interaction.deferUpdate();
+		// Handle actions that open a modal FIRST. These are unique reply types and cannot be deferred.
+		const isModalAction = ['buycustom', 'sellcustom'].includes(action);
+		if (!isModalAction) {
+			// Defer immediately for all other actions that will only update the message.
+			await interaction.deferUpdate();
+		}
+		// *** FIX END ***
 
 		try {
 			if (action === 'restart' && parts[2] === 'session') {
@@ -808,7 +852,13 @@ module.exports = {
 		}
 		catch (error) {
 			console.error(`[Shop Button] A critical error occurred for user ${userId} (Action: ${action}):`, error);
-			await interaction.editReply({ content: 'A critical server error occurred. Please try again.', embeds: [], components: [] }).catch(e => console.error('Failed to send error message to user:', e));
+			// Check if the interaction can still be replied to. This is crucial for errors that happen before deferral.
+			if (!interaction.replied && !interaction.deferred) {
+				await interaction.reply({ content: 'A critical server error occurred. Please try again.', flags: MessageFlags.Ephemeral }).catch(e => console.error('Failed to send initial error message to user:', e));
+			}
+			else {
+				await interaction.editReply({ content: 'A critical server error occurred. Please try again.', embeds: [], components: [] }).catch(e => console.error('Failed to send follow-up error message to user:', e));
+			}
 		}
 	},
 };

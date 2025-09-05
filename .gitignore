@@ -32,3 +32,5 @@ check_fkeys.js
 token.json
 character_system.md
 cleanup.js
+bump_data.db-shm
+bump_data.db-wal
