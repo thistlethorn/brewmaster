@@ -1406,4 +1406,6 @@ async function showFinalConfirmation(interaction, session) {
 	);
 	await interaction.update({ embeds: [confirmEmbed], components: [confirmRow] });
 }
+
+module.exports.handleCreate = handleCreate;
 module.exports.charSessionCleanup = charSessionCleanup;

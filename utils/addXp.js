@@ -1,68 +1,122 @@
-// utils/addXp.js
-const { EmbedBuilder, MessageFlags } = require('discord.js');
+const { EmbedBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const db = require('../database');
 
 /**
- * Adds XP to a character, handles level-ups, and sends a notification.
+ * Sends a level-up notification. Can handle an interaction, a message, or just a client instance for DMs.
+ * @param {object} params
+ * @param {import('discord.js').Client} params.client The Discord client.
+ * @param {string} params.userId The user who leveled up.
+ * @param {EmbedBuilder} params.embed The embed to send.
+ * @param {import('discord.js').Interaction | import('discord.js').Message | null} [params.source] The interaction or message that triggered the XP gain.
+ */
+async function sendLevelUpNotification({ client, userId, embed, source }) {
+	// If there's an interaction, use it to reply ephemerally.
+	if (source && source.isInteraction) {
+		if (source.deferred || source.replied) {
+			await source.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
+		}
+		else {
+			await source.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+		}
+		return;
+	}
+
+	// If it was a regular message, send in the same channel.
+	if (source && source.channel) {
+		await source.channel.send({ content: `<@${userId}>`, embeds: [embed] });
+		return;
+	}
+
+	// As a fallback (e.g., for weekly resets), send a DM.
+	try {
+		const user = await client.users.fetch(userId);
+		await user.send({ embeds: [embed] });
+	}
+	catch (error) {
+		console.error(`[addXp] Failed to DM user ${userId} about their level up:`, error);
+	}
+}
+
+
+/**
+ * Adds XP to a character, handles level-ups, and sends notifications.
  * @param {string} userId The ID of the user whose character is gaining XP.
  * @param {number} amount The amount of XP to add.
- * @param {import('discord.js').Interaction} interaction The interaction object, used for replying with a level-up message.
+ * @param {import('discord.js').Interaction | import('discord.js').Message | import('discord.js').Client} source The interaction, message, or client instance that triggered the XP gain.
  * @returns {Promise<void>}
  */
-async function addXp(userId, amount, interaction) {
+async function addXp(userId, amount, source) {
+	const client = source.isInteraction || source.isMessage ? source.client : source;
 	const character = db.prepare('SELECT level, xp, stat_points_unspent FROM characters WHERE user_id = ?').get(userId);
 
+	// Case 1: User does not have a character.
 	if (!character) {
-		console.log(`[addXp] Attempted to add XP to user ${userId}, but they have no character.`);
+		const promptEmbed = new EmbedBuilder()
+			.setColor(0x3498DB)
+			.setTitle('Adventure Awaits!')
+			.setDescription('You\'re doing things that earn some XP, but you don\'t have a character yet! Create one now to start your journey and claim your rewards.');
+
+		const row = new ActionRowBuilder().addComponents(
+			new ButtonBuilder()
+				.setCustomId('start_char_creation')
+				.setLabel('Create Your Character')
+				.setStyle(ButtonStyle.Success)
+				.setEmoji('⚔️'),
+		);
+
+		const replyOptions = { embeds: [promptEmbed], components: [row], flags: MessageFlags.Ephemeral };
+
+		// Case A: The source is a direct command/button interaction. Reply ephemerally.
+		if (source.isInteraction) {
+			if (source.replied || source.deferred) {
+				await source.followUp(replyOptions);
+			}
+			else {
+				await source.reply(replyOptions);
+			}
+		}
+		// Case B: The source is a message. Send a public @mention in the same channel.
+		else if (source.channel) {
+			await source.channel.send({ content: `<@${userId}>`, embeds: [promptEmbed], components: [row] });
+		}
+		// Case C: The source is just the client (e.g., weekly reset). Send a DM.
+		else {
+			try {
+				const user = await client.users.fetch(userId);
+				// A more informative embed just for the DM
+				const dmPromptEmbed = new EmbedBuilder()
+					.setColor(0x3498DB)
+					.setTitle('Adventure Awaits!')
+					.setDescription('You\'re doing things that earn some XP, but you don\'t have a character yet! Head over to <#BOT_COMMANDS_CHANNEL_ID> and use the `/character create` command to start your journey!'.replace('BOT_COMMANDS_CHANNEL_ID', require('../config.json').discord.botCommandsId));
+
+				await user.send({ embeds: [dmPromptEmbed], components: [row] });
+			}
+			catch (error) {
+				console.error(`[addXp] Failed to DM user ${userId} about starting a character.`, error);
+			}
+		}
 		return;
 	}
 
-	let { level, xp } = character;
-	// Defensive clamps: avoid level 0/negative and negative/float XP
-	level = Math.max(1, Math.floor(level));
-	xp = Math.max(0, Math.floor(xp));
-
-	const rawSpu = Number(character.stat_points_unspent);
-	let stat_points_unspent = Number.isFinite(rawSpu)
-		? Math.max(0, Math.floor(rawSpu))
-		: 0;
-
-	// Validate and normalize XP delta
-	const delta = Number.isFinite(amount) ? Math.floor(amount) : NaN;
-	if (!Number.isFinite(delta) || delta < 0) {
-		console.warn(`[addXp] Invalid XP amount (${amount}) for user ${userId}; must be a non-negative integer.`);
-		return;
-	}
-	xp = Math.max(0, xp + delta);
-
-	let xpToNextLevel = Math.max(1, Math.floor(100 * (level ** 1.5)));
-
+	// Case 2: User has a character.
+	let { level, xp, stat_points_unspent } = character;
+	xp += amount;
 	let levelsGained = 0;
-	// Loop to handle multiple level-ups from a single XP gain
+	let xpToNextLevel = Math.floor(100 * (level ** 1.5));
+
 	while (xp >= xpToNextLevel) {
 		level++;
+		levelsGained++;
 		xp -= xpToNextLevel;
-
-		// Award 2 stat points per level
 		stat_points_unspent += 2;
-		levelsGained += 1;
-		xpToNextLevel = Math.max(1, Math.floor(100 * (level ** 1.5)));
+		xpToNextLevel = Math.floor(100 * (level ** 1.5));
 	}
 
-	// Use a transaction to update the character's stats atomically
 	try {
-		// Use a transaction to update the character's stats atomically
-		const updateChar = db.transaction(() => {
-			db.prepare(`
-                UPDATE characters
-                SET level = ?, xp = ?, stat_points_unspent = ?
-                WHERE user_id = ?
-            `).run(level, xp, stat_points_unspent, userId);
-		});
-		updateChar();
+		db.prepare('UPDATE characters SET level = ?, xp = ?, stat_points_unspent = ? WHERE user_id = ?')
+			.run(level, xp, stat_points_unspent, userId);
 
-		// If a level-up occurred, send a notification.
-		if (levelsGained > 0 && interaction) {
+		if (levelsGained > 0) {
 			const pointsGained = levelsGained * 2;
 			const levelUpEmbed = new EmbedBuilder()
 				.setColor(0xF1C40F)
@@ -74,12 +128,7 @@ async function addXp(userId, amount, interaction) {
 				)
 				.setFooter({ text: 'Use /character spendpoints to improve your stats!' });
 
-			if (interaction.deferred || interaction.replied) {
-				await interaction.followUp({ embeds: [levelUpEmbed], flags: MessageFlags.Ephemeral });
-			}
-			else {
-				await interaction.reply({ embeds: [levelUpEmbed], flags: MessageFlags.Ephemeral });
-			}
+			await sendLevelUpNotification({ client, userId, embed: levelUpEmbed, source });
 		}
 	}
 	catch (error) {

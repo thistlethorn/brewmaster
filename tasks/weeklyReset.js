@@ -5,6 +5,8 @@ const updateLeaderboard = require('../utils/updateLeaderboard');
 const sendMessage = require('../utils/sendMessageToChannel');
 const { updateMultiplier } = require('../utils/handleCrownRewards');
 const { createMotwGiveaway } = require('../utils/handleMotwGiveaway');
+const { addXp } = require('../utils/addXp');
+const config = require('../config.json');
 
 
 async function applyGuildCompoundBonus() {
@@ -142,6 +144,13 @@ async function migrateLeaderboard(client) {
 				console.log(`[weeklyReset] Rank ${index + 1}: ${row.user_id} - ${row.bumps} bumps (${amount} crowns)`);
 			});
 		})();
+
+		if (bumpLB.length > 0) {
+			const winnerId = bumpLB[0].user_id;
+			// Pass the client instance directly, since there's no interaction/message here.
+			// The addXp utility will handle sending a DM.
+			await addXp(winnerId, config.xpRewards.topBumperWin, client);
+		}
 
 		// Fetch user details
 		const [winner, secondPlace, thirdPlace] = await Promise.all([

@@ -39,5 +39,14 @@
   },
   "gamble" : {
     "jackpotBaseAmount" : 5000
+  },
+  "xpRewards": {
+    "dailyClaim": 25,
+    "activeChatter": 50,
+    "bump": 5,
+    "bumpStreakBreak": 75,
+    "motwEntry": 20,
+    "topBumperWin": 250,
+    "welcomeMember": 15
   }
 }

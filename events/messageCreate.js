@@ -5,6 +5,7 @@ const getWeekIdentifier = require('../utils/getWeekIdentifier');
 const { reschedule } = require('../tasks/bumpReminder');
 const { isBot, isInGameroom, isNormalMessage } = require('../utils/chatFilters');
 const { calculateBumpReward, updateMultiplier } = require('../utils/handleCrownRewards');
+const { addXp } = require('../utils/addXp');
 const config = require('../config.json');
 const MAX_TRIGGER_USES = config.tonyQuote?.maxTriggerUses ?? 20;
 
@@ -219,7 +220,7 @@ module.exports = {
 					if (activity.normal_messages >= 15) {
 						await message.member.roles.add(ACTIVE_CHATTER_ROLE);
 						const nextMidnight = new Date();
-   					nextMidnight.setUTCHours(24, 0, 0, 0);
+   						nextMidnight.setUTCHours(24, 0, 0, 0);
 						const embed = new EmbedBuilder()
 							.setColor(0xF1C40F)
 							.setTimestamp()
@@ -252,6 +253,8 @@ module.exports = {
 
 						await message.channel.send({ embeds: [embed] });
 						console.log(`[messageCreate] [CHATLOG] ${message.author.displayName} has been given the Active Chatter role.`);
+
+						await addXp(userId, config.xpRewards.activeChatter, message);
 
 					}
 				}
@@ -448,6 +451,12 @@ module.exports = {
 
 			const reward = calculateBumpReward(userId, message.guild, streakInfo);
 
+			await addXp(userId, config.xpRewards.bump, message);
+			// ADD BONUS XP FOR BREAKING A STREAK
+			if (streakInfo.brokeStreak) {
+				await addXp(userId, config.xpRewards.bumpStreakBreak, message);
+			}
+
 			// Update user's crowns
 			db.prepare(`
 					INSERT INTO user_economy (user_id, crowns)
@@ -580,6 +589,8 @@ module.exports = {
 				});
 
 				transaction();
+
+				await addXp(userId, config.xpRewards.welcomeMember, message);
 
 				// 9. Send a detailed reward notification
 				const rewardEmbed = new EmbedBuilder()

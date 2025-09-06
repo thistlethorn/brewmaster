@@ -4,7 +4,8 @@ const { updateMultiplier } = require('../../utils/handleCrownRewards');
 const { scheduleDailyReminder } = require('../../tasks/dailyReminder');
 const { getTierData } = require('../../utils/getTierBenefits');
 const { ONLY_CRESTS } = require('../../utils/emoji');
-
+const { addXp } = require('../../utils/addXp');
+const config = require('../../config.json');
 
 module.exports = {
 	category: 'utility',
@@ -459,6 +460,8 @@ async function handleDaily(interaction) {
 			{ name: '👑 New Balance:', value: `**${newBalance.toLocaleString()}** Crowns`, inline: false },
 		)
 		.setFooter({ text: streakFooter });
+
+	await addXp(userId, config.xpRewards.dailyClaim, interaction);
 
 	// --- NOTIFICATION OPT-IN LOGIC ---
 	const pingPref = db.prepare('SELECT opt_in_status FROM daily_ping_preferences WHERE user_id = ?').get(userId);

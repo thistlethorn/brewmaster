@@ -2,6 +2,8 @@ const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('
 const db = require('../database');
 const getWeekIdentifier = require('./getWeekIdentifier');
 const { updateMultiplier } = require('./handleCrownRewards');
+const { addXp } = require('./addXp');
+const config = require('../config.json');
 
 const EVENT_PING_ROLE = '1363538515576750130';
 const HALL_OF_FAME_CHANNEL = '1365345890591703080';
@@ -93,6 +95,8 @@ async function handleMotwEntry(interaction) {
 
 		db.prepare('INSERT INTO motw_entries (giveaway_id, user_id, entry_time) VALUES (?, ?, ?)')
 			.run(giveawayId, userId, new Date().toISOString());
+
+		await addXp(userId, config.xpRewards.motwEntry, interaction);
 
 		const newCount = db.prepare(`
             UPDATE motw_giveaways SET entries_count = entries_count + 1 WHERE message_id = ? RETURNING entries_count

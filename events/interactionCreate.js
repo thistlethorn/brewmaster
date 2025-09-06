@@ -237,7 +237,16 @@ module.exports = {
 				}
 				return;
 			}
-
+			if (interaction.isButton() && interaction.customId === 'start_char_creation') {
+				if (characterCommand && typeof characterCommand.handleCreate === 'function') {
+					// This directly calls the function that starts the character creation modal flow.
+					await characterCommand.handleCreate(interaction);
+				}
+				else {
+					await interaction.reply({ content: 'Character creation is currently unavailable.', flags: MessageFlags.Ephemeral });
+				}
+				return;
+			}
 			if (interaction.isModalSubmit() && interaction.customId.startsWith('char_')) {
 				if (characterCommand && typeof characterCommand.modals === 'function') {
 					try {
