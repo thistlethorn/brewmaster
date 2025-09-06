@@ -502,10 +502,24 @@ module.exports = {
 
 				// Transaction to ensure atomicity
 				const sellTransaction = db.transaction(() => {
-					const itemsToRemove = db.prepare('SELECT inventory_id FROM user_inventory WHERE user_id = ? AND item_id = ? AND equipped_slot IS NULL LIMIT ?').all(userId, itemId, amountToSell);
-					const ids = itemsToRemove.map(i => i.inventory_id);
-					if (ids.length < amountToSell) throw new Error('Not enough items found to delete, something went wrong.');
-					db.prepare(`DELETE FROM user_inventory WHERE inventory_id IN (${ids.map(() => '?').join(',')})`).run(...ids);
+					if (item.is_stackable) {
+						const stack = db.prepare('SELECT inventory_id, quantity FROM user_inventory WHERE user_id = ? AND item_id = ? AND equipped_slot IS NULL LIMIT 1').get(userId, itemId);
+						if (!stack || stack.quantity < amountToSell) {
+							throw new Error('INSUFFICIENT_ITEMS');
+						}
+						if (stack.quantity > amountToSell) {
+							db.prepare('UPDATE user_inventory SET quantity = quantity - ? WHERE inventory_id = ?').run(amountToSell, stack.inventory_id);
+						}
+						else {
+							db.prepare('DELETE FROM user_inventory WHERE inventory_id = ?').run(stack.inventory_id);
+						}
+					}
+					else {
+						const itemsToRemove = db.prepare('SELECT inventory_id FROM user_inventory WHERE user_id = ? AND item_id = ? AND equipped_slot IS NULL LIMIT ?').all(userId, itemId, amountToSell);
+						if (itemsToRemove.length < amountToSell) throw new Error('INSUFFICIENT_ITEMS');
+						const ids = itemsToRemove.map(i => i.inventory_id);
+						db.prepare(`DELETE FROM user_inventory WHERE inventory_id IN (${ids.map(() => '?').join(',')})`).run(...ids);
+					}
 					db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(totalCrowns, userId);
 				});
 
@@ -680,10 +694,24 @@ module.exports = {
 
 					try {
 						db.transaction(() => {
-							const itemsToRemove = db.prepare('SELECT inventory_id FROM user_inventory WHERE user_id = ? AND item_id = ? AND equipped_slot IS NULL LIMIT ?').all(userId, itemId, amountToSell);
-							if (itemsToRemove.length < amountToSell) throw new Error('INSUFFICIENT_ITEMS');
-							const ids = itemsToRemove.map(i => i.inventory_id);
-							db.prepare(`DELETE FROM user_inventory WHERE inventory_id IN (${ids.map(() => '?').join(',')})`).run(...ids);
+							if (item.is_stackable) {
+								const stack = db.prepare('SELECT inventory_id, quantity FROM user_inventory WHERE user_id = ? AND item_id = ? AND equipped_slot IS NULL LIMIT 1').get(userId, itemId);
+								if (!stack || stack.quantity < amountToSell) {
+									throw new Error('INSUFFICIENT_ITEMS');
+								}
+								if (stack.quantity > amountToSell) {
+									db.prepare('UPDATE user_inventory SET quantity = quantity - ? WHERE inventory_id = ?').run(amountToSell, stack.inventory_id);
+								}
+								else {
+									db.prepare('DELETE FROM user_inventory WHERE inventory_id = ?').run(stack.inventory_id);
+								}
+							}
+							else {
+								const itemsToRemove = db.prepare('SELECT inventory_id FROM user_inventory WHERE user_id = ? AND item_id = ? AND equipped_slot IS NULL LIMIT ?').all(userId, itemId, amountToSell);
+								if (itemsToRemove.length < amountToSell) throw new Error('INSUFFICIENT_ITEMS');
+								const ids = itemsToRemove.map(i => i.inventory_id);
+								db.prepare(`DELETE FROM user_inventory WHERE inventory_id IN (${ids.map(() => '?').join(',')})`).run(...ids);
+							}
 							db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(totalCrowns, userId);
 						})();
 						const newQuantity = db.prepare('SELECT SUM(quantity) as count FROM user_inventory WHERE user_id = ? AND item_id = ? AND equipped_slot IS NULL').get(userId, itemId).count || 0;
