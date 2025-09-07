@@ -96,7 +96,9 @@ async function handleMotwEntry(interaction) {
 		db.prepare('INSERT INTO motw_entries (giveaway_id, user_id, entry_time) VALUES (?, ?, ?)')
 			.run(giveawayId, userId, new Date().toISOString());
 
-		await addXp(userId, config.xpRewards.motwEntry, interaction);
+		const reason = 'entering the weekly Member of the Week giveaway in <#1365345890591703080>!';
+
+		await addXp(userId, config.xpRewards.motwEntry, interaction, reason);
 
 		const newCount = db.prepare(`
             UPDATE motw_giveaways SET entries_count = entries_count + 1 WHERE message_id = ? RETURNING entries_count
@@ -202,6 +204,10 @@ async function endMotwGiveaway(client, messageId) {
 			}
 			db.prepare('UPDATE user_economy SET crowns = crowns + 300 WHERE user_id = ?').run(winnerId);
 			await updateMultiplier(winnerId, channel.guild);
+
+			const reason = '**WINNING** the __Member of the Week__ giveaway hosted in <#1365345890591703080>!';
+
+			await addXp(userId, config.xpRewards.motwWin, interaction, reason);
 		}
 
 		// Give consolation prizes

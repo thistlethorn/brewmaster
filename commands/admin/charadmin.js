@@ -61,11 +61,12 @@ module.exports = {
 			.setAuthor({ name: `${targetUser.username}'s Character Admin`, iconURL: targetUser.displayAvatarURL() });
 
 		try {
+			const reason = 'DEV: Manual adjustment.';
 			switch (subcommand) {
 			case 'addxp':
 				await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-				await addXp(targetUser.id, amount, interaction);
-				await recalculateStats(targetUser.id);
+				await addXp(targetUser.id, amount, interaction, reason);
+				recalculateStats(targetUser.id);
 				await interaction.editReply({ content: `Successfully granted ${amount} XP to ${targetUser.username}.` });
 				break;
 

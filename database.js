@@ -973,6 +973,11 @@ const setupTables = db.transaction(() => {
         )
     `).run();
 
+	db.prepare(`
+        CREATE TABLE IF NOT EXISTS character_creation_opt_out (
+            user_id TEXT PRIMARY KEY
+        )
+    `).run();
 
 	db.prepare(`
         CREATE TABLE IF NOT EXISTS parties (

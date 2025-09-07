@@ -46,7 +46,11 @@
     "bump": 5,
     "bumpStreakBreak": 75,
     "motwEntry": 20,
+    "motwWin" : 300,
     "topBumperWin": 250,
     "welcomeMember": 15
+  },
+  "tavernborne": {
+    "characterLogChannelId": "1414061959107707060"
   }
 }

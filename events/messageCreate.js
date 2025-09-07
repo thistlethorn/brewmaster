@@ -253,8 +253,9 @@ module.exports = {
 
 						await message.channel.send({ embeds: [embed] });
 						console.log(`[messageCreate] [CHATLOG] ${message.author.displayName} has been given the Active Chatter role.`);
+						const reason = 'earning the active chatter bonus (sending 15+ quality messages in a day)';
 
-						await addXp(userId, config.xpRewards.activeChatter, message);
+						await addXp(userId, config.xpRewards.activeChatter, message, reason);
 
 					}
 				}
@@ -268,6 +269,8 @@ module.exports = {
 		if (message.author.id === '302050872383242240' &&
             message.embeds[0].description?.includes('Bump done!')) {
 			console.log('[messageCreate] Someone has done /bump.');
+
+			let reason = 'bumping the server';
 
 			// grab the userID of the member who sent a disboard bump message, confirm it's an id.
 			const userId = message.interactionMetadata.user.id;
@@ -344,19 +347,24 @@ module.exports = {
 			else {
 				if (streakCountVariable <= 2) {
 					streakBreakFlag = 0;
+					reason += `, breaking <@${streakRow.user_id}>'s streak of ${streakCountVariable} bumps in a row`;
 					// Normal streak (1-2 bumps) - no special message
 				}
 				else if (streakCountVariable <= 6) {
 					// Blazing streak (3-6 bumps)
 					streakBreakFlag = 1;
+					reason += `, extinguishing <@${streakRow.user_id}>'s BLAZING streak of ${streakCountVariable} bumps in a row`;
 				}
 				else if (streakCountVariable <= 11) {
 					// Unstoppable streak (7-11 bumps)
 					streakBreakFlag = 2;
+					reason += `, neutralizing <@${streakRow.user_id}>'s **UNSTOPPABLE** streak of ${streakCountVariable} bumps in a row`;
 				}
 				else if (streakCountVariable >= 12) {
 					// Legendary streak (12+ bumps)
 					streakBreakFlag = 3;
+					reason += `, ending the legacy of <@${streakRow.user_id}>'s 👑__**LEGENDARY**__👑 streak of ${streakCountVariable} bumps in a row`;
+
 				}
 
 				// push the new bump data to the streak tracking database, and set the variable streak counter to 1 for the new streak
@@ -376,6 +384,7 @@ module.exports = {
 
 						// bump streak database is empty, this is the first message, set information as such
 						if (databaseEmptyFlag) {
+							reason += ', for the first time this week';
 							embed.setTitle('🥇 First bump this iteration! 🥇');
 							embed.setDescription(`<@${row.user_id}> bumped the server, and managed to be the first!\n${formatStreakProgress(streakCountVariable)}`);
 							embed.setFooter({ text: row.bumps + ' bump this week!' });
@@ -383,6 +392,7 @@ module.exports = {
 						}
 						// normal bump
 						else if (streakCountVariable <= 2) {
+							reason += `, keeping up the bump streak of ${streakCountVariable} bumps in a row`;
 							embed.setTitle('Normal Bump Logged!');
 							embed.setDescription(`<@${row.user_id}> bumped the server!\n${formatStreakProgress(streakCountVariable)}`);
 							embed.setFooter({ text: row.bumps + ' bump this week!' });
@@ -390,6 +400,8 @@ module.exports = {
 						}
 						// blazing streak
 						else if (streakCountVariable <= 6) {
+							reason += `, burning up a BLAZING streak of ${streakCountVariable} bumps in a row`;
+
 							embed.setTitle('🔥 Blazing Streak Bump 🔥');
 							embed.setDescription(`<@${row.user_id}> bumped the server!\n${formatStreakProgress(streakCountVariable)}`);
 							embed.setFooter({ text: row.bumps + ' bumps this week!' });
@@ -397,6 +409,8 @@ module.exports = {
 						}
 						// wildfire streak
 						else if (streakCountVariable <= 11) {
+							reason += `, dominating with an **UNSTOPPABLE** streak of ${streakCountVariable} bumps in a row`;
+
 							embed.setTitle('🚀🚀 Unstoppable Streak Bump! 🚀🚀');
 							embed.setDescription(`<@${row.user_id}> bumped the server!\n${formatStreakProgress(streakCountVariable)}`);
 							embed.setFooter({ text: row.bumps + ' bumps this week!' });
@@ -404,6 +418,7 @@ module.exports = {
 						}
 						// legendary streak
 						else if (streakCountVariable >= 12) {
+							reason += `, annihilating competition with a 👑__**LEGENDARY**__👑 streak of ${streakCountVariable} bumps in a row`;
 							embed.setTitle('👑👑👑 LEGENDARY STREAK BUMP! 👑👑👑');
 							embed.setDescription(`<@${row.user_id}> bumped the server!\n${formatStreakProgress(streakCountVariable)}`);
 							embed.setFooter({ text: row.bumps + ' bumps this week!' });
@@ -450,11 +465,14 @@ module.exports = {
 			};
 
 			const reward = calculateBumpReward(userId, message.guild, streakInfo);
+			reason += '!';
 
-			await addXp(userId, config.xpRewards.bump, message);
-			// ADD BONUS XP FOR BREAKING A STREAK
+			// ADD XP FOR BREAKING A STREAK
 			if (streakInfo.brokeStreak) {
-				await addXp(userId, config.xpRewards.bumpStreakBreak, message);
+				await addXp(userId, Number(config.xpRewards.bumpStreakBreak + config.xpRewards.bump), message, reason);
+			}
+			else {
+				await addXp(userId, config.xpRewards.bump, message, reason);
 			}
 
 			// Update user's crowns
@@ -589,8 +607,9 @@ module.exports = {
 				});
 
 				transaction();
+				const reason = 'welcoming a new member of the server in <#1353631829453836291>!';
 
-				await addXp(userId, config.xpRewards.welcomeMember, message);
+				await addXp(userId, config.xpRewards.welcomeMember, message, reason);
 
 				// 9. Send a detailed reward notification
 				const rewardEmbed = new EmbedBuilder()

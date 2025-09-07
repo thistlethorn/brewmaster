@@ -1,5 +1,9 @@
 const { EmbedBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const db = require('../database');
+const config = require('../config.json');
+const BOT_COMMANDS_CHANNEL_ID = config.discord.botCommandsId;
+const CHAR_LOG_CHANNEL_ID = config.tavernborne.characterLogChannelId;
+
 
 /**
  * Sends a level-up notification. Can handle an interaction, a message, or just a client instance for DMs.
@@ -45,16 +49,25 @@ async function sendLevelUpNotification({ client, userId, embed, source }) {
  * @param {import('discord.js').Interaction | import('discord.js').Message | import('discord.js').Client} source The interaction, message, or client instance that triggered the XP gain.
  * @returns {Promise<void>}
  */
-async function addXp(userId, amount, source) {
+async function addXp(userId, amount, source, reason) {
 	const client = source.isInteraction || source.isMessage ? source.client : source;
 	const character = db.prepare('SELECT level, xp, stat_points_unspent FROM characters WHERE user_id = ?').get(userId);
+	const otherCharData = db.prepare('SELECT character_name, character_image FROM characters WHERE user_id = ?').get(userId);
+	const charLogChannel = await client.channels.fetch(CHAR_LOG_CHANNEL_ID);
+	const user = await client.users.fetch(userId);
 
 	// Case 1: User does not have a character.
 	if (!character) {
+		const isOptedOut = db.prepare('SELECT 1 FROM character_creation_opt_out WHERE user_id = ?').get(userId);
+		if (isOptedOut) {
+			// If they've opted out, do nothing.
+			return;
+		}
 		const promptEmbed = new EmbedBuilder()
 			.setColor(0x3498DB)
 			.setTitle('Adventure Awaits!')
-			.setDescription('You\'re doing things that earn some XP, but you don\'t have a character yet! Create one now to start your journey and claim your rewards.');
+			.addFields({ name: 'Missed XP Amount:', value: `**${amount}** XP`, inline: true })
+			.setDescription('You\'re doing **GREAT** things that would earn some __serious__ XP, but you don\'t have a character yet to use it! Create one now to start your journey and claim your rewards going forward.');
 
 		const row = new ActionRowBuilder().addComponents(
 			new ButtonBuilder()
@@ -62,6 +75,10 @@ async function addXp(userId, amount, source) {
 				.setLabel('Create Your Character')
 				.setStyle(ButtonStyle.Success)
 				.setEmoji('⚔️'),
+			new ButtonBuilder()
+				.setCustomId(`opt_out_char_creation_${userId}`)
+				.setLabel('Never show this again')
+				.setStyle(ButtonStyle.Secondary),
 		);
 
 		const replyOptions = { embeds: [promptEmbed], components: [row], flags: MessageFlags.Ephemeral };
@@ -82,12 +99,12 @@ async function addXp(userId, amount, source) {
 		// Case C: The source is just the client (e.g., weekly reset). Send a DM.
 		else {
 			try {
-				const user = await client.users.fetch(userId);
 				// A more informative embed just for the DM
 				const dmPromptEmbed = new EmbedBuilder()
 					.setColor(0x3498DB)
 					.setTitle('Adventure Awaits!')
-					.setDescription('You\'re doing things that earn some XP, but you don\'t have a character yet! Head over to <#BOT_COMMANDS_CHANNEL_ID> and use the `/character create` command to start your journey!'.replace('BOT_COMMANDS_CHANNEL_ID', require('../config.json').discord.botCommandsId));
+					.addFields({ name: 'Missed XP Amount:', value: `**${amount}** XP`, inline: true })
+					.setDescription('You\'re doing **GREAT** things that would earn some __serious__ XP, but you don\'t have a character yet to use it! Head over to <#BOT_COMMANDS_CHANNEL_ID> and use the `/character create` command to start your journey!'.replace('BOT_COMMANDS_CHANNEL_ID', BOT_COMMANDS_CHANNEL_ID));
 
 				await user.send({ embeds: [dmPromptEmbed], components: [row] });
 			}
@@ -103,6 +120,7 @@ async function addXp(userId, amount, source) {
 	xp += amount;
 	let levelsGained = 0;
 	let xpToNextLevel = Math.floor(100 * (level ** 1.5));
+
 
 	while (xp >= xpToNextLevel) {
 		level++;
@@ -130,6 +148,15 @@ async function addXp(userId, amount, source) {
 
 			await sendLevelUpNotification({ client, userId, embed: levelUpEmbed, source });
 		}
+		const xpRewardEmbed = new EmbedBuilder()
+			.setColor(0xF1C40F)
+			.setTitle('💠 XP Gained! 💠')
+			.setThumbnail(otherCharData.character_image || null)
+			.addFields(
+				{ name: `${otherCharData.character_name}`, value: `Earned ${amount} XP for ${reason}`, inline: true },
+			)
+			.setFooter({ text: 'To view your character and their XP, use /character view!' });
+		await charLogChannel.send({ embeds: [xpRewardEmbed] });
 	}
 	catch (error) {
 		console.error(`[addXp] Failed to update character data for user ${userId}:`, error);

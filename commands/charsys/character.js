@@ -1158,7 +1158,7 @@ module.exports = {
 
 				const rpModal = new ModalBuilder()
 					.setCustomId(`char_create_rp_${userId}`)
-					.setTitle('Character Creation: Role-Playing Details (Optional)');
+					.setTitle('Character Creation: Role-Playing Details');
 				rpModal.addComponents(
 					new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('rp_ideals').setLabel('What are your character\'s ideals?').setStyle(TextInputStyle.Paragraph).setRequired(false).setMaxLength(500)),
 					new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('rp_backstory').setLabel('Character Backstory').setStyle(TextInputStyle.Paragraph).setRequired(false).setMaxLength(2000)),

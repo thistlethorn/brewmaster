@@ -461,7 +461,10 @@ async function handleDaily(interaction) {
 		)
 		.setFooter({ text: streakFooter });
 
-	await addXp(userId, config.xpRewards.dailyClaim, interaction);
+
+	const reason = `claiming their \`/econ daily\` Crowns of ${payout.toLocaleString()}${prestigedThisClaim ? `, achieving a new prestige level of ${currentPrestige}` : ''}${(currentStreak > 1) ? `, and keeping their streak of ${currentStreak}` : ''}!`;
+
+	await addXp(userId, config.xpRewards.dailyClaim, interaction, reason);
 
 	// --- NOTIFICATION OPT-IN LOGIC ---
 	const pingPref = db.prepare('SELECT opt_in_status FROM daily_ping_preferences WHERE user_id = ?').get(userId);

@@ -247,6 +247,38 @@ module.exports = {
 				}
 				return;
 			}
+
+			if (interaction.isButton() && interaction.customId.startsWith('opt_out_char_creation_')) {
+				const clickerId = interaction.user.id;
+				const intendedUserId = interaction.customId.split('_')[4];
+
+				if (clickerId !== intendedUserId) {
+					return interaction.reply({ content: 'This is not your message to opt out from!', flags: MessageFlags.Ephemeral });
+				}
+				try {
+					// Add user to the opt-out list. INSERT OR IGNORE prevents errors if they click it multiple times.
+					db.prepare('INSERT OR IGNORE INTO character_creation_opt_out (user_id) VALUES (?)').run(intendedUserId);
+					// Disable the buttons on the original message to show the action was completed.
+					const originalEmbed = interaction.message.embeds[0];
+					const disabledRow = new ActionRowBuilder();
+					for (const component of interaction.message.components[0].components) {
+						disabledRow.addComponents(ButtonBuilder.from(component).setDisabled(true));
+					}
+
+					// Update the original message with a confirmation.
+					await interaction.update({
+						embeds: [originalEmbed],
+						components: [disabledRow],
+						content: 'Your preference has been saved. You won\'t see this prompt again.',
+					});
+				}
+				catch (error) {
+					console.error('[Opt-Out Error] Failed to save user preference:', error);
+					await interaction.reply({ content: 'An error occurred while saving your preference.', flags: MessageFlags.Ephemeral });
+				}
+				return;
+			}
+
 			if (interaction.isModalSubmit() && interaction.customId.startsWith('char_')) {
 				if (characterCommand && typeof characterCommand.modals === 'function') {
 					try {
