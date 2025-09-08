@@ -64,7 +64,6 @@ async function handleVictory(interaction, combatState) {
 	const { userId, nodeData, thread, turn, critsThisFight } = combatState;
 	// Final DB updates in a transaction
 	try {
-		const nodeName = db.prepare('SELECT name FROM pve_nodes WHERE node_id = ?').get(nodeData.node_id);
 		const victoryTransaction = db.transaction(() => {
 
 			// Update core character stats
@@ -107,7 +106,7 @@ async function handleVictory(interaction, combatState) {
 
 		db.prepare('INSERT INTO user_economy (user_id, crowns) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET crowns = crowns + excluded.crowns').run(userId, rewards.crowns || 0);
 
-		const reason = `beating the dungeon ${nodeName}${isFirstClear ? ' for the first time' : newBestTime ? ' and setting a new dungeon clear record' : ''} in ${turn} turns!`;
+		const reason = `beating the dungeon ${nodeData.name}${isFirstClear ? ' for the first time' : newBestTime ? ' and setting a new dungeon clear record' : ''} in ${turn} turns!`;
 		if (rewards.xp > 0) await addXp(userId, rewards.xp, interaction, reason);
 
 		const victoryEmbed = new EmbedBuilder()

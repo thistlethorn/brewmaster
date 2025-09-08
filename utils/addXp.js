@@ -13,7 +13,7 @@ const CHAR_LOG_CHANNEL_ID = config.tavernborne.characterLogChannelId;
  * @param {EmbedBuilder} params.embed The embed to send.
  * @param {import('discord.js').Interaction | import('discord.js').Message | null} [params.source] The interaction or message that triggered the XP gain.
  */
-async function sendLevelUpNotification({ client, userId, embed, source }) {
+async function sendLevelUpNotification({ activeClient, userId, embed, source }) {
 	// If there's an interaction, use it to reply ephemerally.
 	if (source && source.isInteraction) {
 		if (source.deferred || source.replied) {
@@ -33,7 +33,7 @@ async function sendLevelUpNotification({ client, userId, embed, source }) {
 
 	// As a fallback (e.g., for weekly resets), send a DM.
 	try {
-		const user = await client.users.fetch(userId);
+		const user = await activeClient.users.fetch(userId);
 		await user.send({ embeds: [embed] });
 	}
 	catch (error) {
@@ -50,11 +50,20 @@ async function sendLevelUpNotification({ client, userId, embed, source }) {
  * @returns {Promise<void>}
  */
 async function addXp(userId, amount, source, reason) {
-	const client = source.isInteraction || source.isMessage ? source.client : source;
+	let activeClient;
+	if (source?.client) {
+		activeClient = source.client;
+	}
+	else if (source?.ws) {
+		activeClient = source;
+	}
+	else {
+		throw new Error('Invalid source passed to addXp');
+	}
 	const character = db.prepare('SELECT level, xp, stat_points_unspent FROM characters WHERE user_id = ?').get(userId);
 	const otherCharData = db.prepare('SELECT character_name, character_image FROM characters WHERE user_id = ?').get(userId);
-	const charLogChannel = await client.channels.fetch(CHAR_LOG_CHANNEL_ID);
-	const user = await client.users.fetch(userId);
+	const charLogChannel = await activeClient.channels.fetch(CHAR_LOG_CHANNEL_ID);
+	const user = await activeClient.users.fetch(userId);
 
 	// Case 1: User does not have a character.
 	if (!character) {
@@ -146,7 +155,7 @@ async function addXp(userId, amount, source, reason) {
 				)
 				.setFooter({ text: 'Use /character spendpoints to improve your stats!' });
 
-			await sendLevelUpNotification({ client, userId, embed: levelUpEmbed, source });
+			await sendLevelUpNotification({ activeClient, userId, embed: levelUpEmbed, source });
 		}
 		const xpRewardEmbed = new EmbedBuilder()
 			.setColor(0xF1C40F)
