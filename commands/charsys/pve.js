@@ -1,4 +1,8 @@
 // commands/charsys/pve.js
+
+const path = require('path');
+const { checkBetatestLock } = require(`${global.__utils}/betaLock.js`);
+const commandFilename = path.basename(__filename);
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const db = require('../../database');
 const { addXp } = require('../../utils/addXp');
@@ -383,6 +387,12 @@ module.exports = {
 	},
 
 	async execute(interaction) {
+		if (checkBetatestLock(commandFilename, interaction)) {
+			return interaction.reply({
+				content: '🍻 Apologies! This feature is currently under lock and key for some super-secret beta testing. Keep an eye on <#1385675092591378452> and <#1414069644410748938> for the full release!',
+				flags: MessageFlags.Ephemeral,
+			});
+		}
 		const subcommand = interaction.options.getSubcommand();
 
 		switch (subcommand) {
@@ -542,40 +552,49 @@ module.exports.buttons = async (interaction) => {
 		if (monster.current_health === 0) {
 			combatState.combatLog.push(`> **${monster.name} #${targetIndex + 1}** has been defeated!`);
 		}
-
-		// --- Monsters' Turn ---
+		const allMonstersDefeated = combatState.monsters.every(m => m.current_health <= 0);
 		let totalDamageTakenThisTurn = 0;
-		combatState.monsters.forEach((m, i) => {
-			if (m.current_health > 0) {
-				const monsterDamageRoll = Math.floor(Math.random() * (m.base_damage * 2)) + 1;
-				const monsterDamage = Math.max(1, monsterDamageRoll);
-				character.current_health = Math.max(0, character.current_health - monsterDamage);
-				totalDamageTakenThisTurn += monsterDamage;
-				// Added monster emoji to the log
-				combatState.combatLog.push(`> 👹 **${m.name} #${i + 1}** attacks you for **${monsterDamage}** damage.`);
-			}
-		});
+		let highestDamageSurvivedThisTurn = 0;
+		const healthBeforeDamage = character.current_health;
+
+		if (!allMonstersDefeated) {
+			// --- Monsters' Turn ---
+			combatState.monsters.forEach((m, i) => {
+				if (m.current_health > 0) {
+					const monsterDamageRoll = Math.floor(Math.random() * (m.base_damage * 2)) + 1;
+					const monsterDamage = Math.max(1, monsterDamageRoll);
+					character.current_health = Math.max(0, character.current_health - monsterDamage);
+					totalDamageTakenThisTurn += monsterDamage;
+					highestDamageSurvivedThisTurn = highestDamageSurvivedThisTurn >= monsterDamage ? highestDamageSurvivedThisTurn : monsterDamage;
+					// Added monster emoji to the log
+					combatState.combatLog.push(`> 👹 **${m.name} #${i + 1}** attacks you for **${monsterDamage}** damage, leaving you at \`${character.current_health}\` HP.`);
+				}
+			});
+		}
+
 
 		// --- End of Turn: Update Stats & Check State ---
 		db.transaction(() => {
-			db.prepare('UPDATE characters SET highest_damage_dealt = MAX(highest_damage_dealt, ?) WHERE user_id = ?').run(playerDamage, character.user_id);
-			if (totalDamageTakenThisTurn > 0) {
-				db.prepare('UPDATE characters SET largest_hit_survived = MAX(largest_hit_survived, ?) WHERE user_id = ?').run(totalDamageTakenThisTurn, character.user_id);
+
+			const maxIntCheck = db.prepare('SELECT highest_damage_dealt, largest_hit_survived FROM characters WHERE user_id = ?').get(character.user_id);
+
+			if (maxIntCheck.highest_damage_dealt < playerDamage) {
+				db.prepare('UPDATE characters SET highest_damage_dealt = MAX(highest_damage_dealt, ?) WHERE user_id = ?').run(playerDamage, character.user_id);
+				combatState.combatLog.push(`> You've set a new best of damage done in a turn, **${playerDamage}**!`);
+
+			}
+
+			if (highestDamageSurvivedThisTurn > 0) {
+				if (maxIntCheck.largest_hit_survived < highestDamageSurvivedThisTurn) {
+					db.prepare('UPDATE characters SET largest_hit_survived = MAX(largest_hit_survived, ?) WHERE user_id = ?').run(highestDamageSurvivedThisTurn, character.user_id);
+					combatState.combatLog.push(`> You've set a personal record of highest single damage survived, **${highestDamageSurvivedThisTurn}!**`);
+
+				}
+
 			}
 		})();
 
-		const allMonstersDefeated = combatState.monsters.every(m => m.current_health <= 0);
-		if (allMonstersDefeated) {
-			return handleVictory(interaction, combatState);
-		}
-
-		if (character.current_health === 0) {
-			return handleDefeat(interaction, combatState);
-		}
-
-		// If combat continues, increment turn and update UI
-		combatState.turn++;
-		const updatedEmbed = buildCombatEmbed(combatState, interaction.user);
+		if (character.current_health != healthBeforeDamage) combatState.combatLog.push(`> Total damage taken this turn: \`${totalDamageTakenThisTurn}\` (${healthBeforeDamage} -> ${character.current_health})`);
 
 		// Rebuild action rows with updated button states
 		const updatedActionRows = [];
@@ -607,6 +626,26 @@ module.exports.buttons = async (interaction) => {
 		}
 		if (btnInRow > 0 && rowCount < MAX_ROWS) updatedActionRows.push(currentRow);
 
+		// --- VICTORY CHECK ---
+		if (allMonstersDefeated) {
+			const finalEmbed = buildCombatEmbed(combatState, interaction.user);
+
+			await interaction.message.edit({ embeds: [finalEmbed], components: updatedActionRows });
+			db.prepare('UPDATE characters SET highest_damage_dealt = MAX(highest_damage_dealt, ?) WHERE user_id = ?').run(playerDamage, character.user_id);
+			return handleVictory(interaction, combatState);
+		}
+
+		// --- DEFEAT CHECK ---
+		if (character.current_health === 0) {
+			combatState.combatLog.push('> You have been defeated!');
+			const finalEmbed = buildCombatEmbed(combatState, interaction.user);
+
+			await interaction.message.edit({ embeds: [finalEmbed], components: updatedActionRows });
+			return handleDefeat(interaction, combatState);
+		}
+		// If combat continues, increment turn and update UI
+		combatState.turn++;
+		const updatedEmbed = buildCombatEmbed(combatState, interaction.user);
 
 		await interaction.message.edit({ embeds: [updatedEmbed], components: updatedActionRows });
 	}

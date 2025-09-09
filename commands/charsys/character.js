@@ -1,4 +1,8 @@
 // commands/charsys/character.js
+
+const path = require('path');
+const { checkBetatestLock } = require(`${global.__utils}/betaLock.js`);
+const commandFilename = path.basename(__filename);
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, MessageFlags, StringSelectMenuBuilder } = require('discord.js');
 const db = require('../../database');
 const { recalculateStats } = require('../../utils/recalculateStats');
@@ -274,7 +278,7 @@ async function handleView(interaction) {
 	sheetEmbed.addFields({
 		name: '⚔️ Combat Stats',
 		value: `${damageString}\n**Armor Class:** ${finalCharacterData.armor_class}\n` +
-               `**Crit Chance:** ${Math.round(finalCharacterData.crit_chance * 100)}% | **Crit Damage:** ${finalCharacterData.crit_damage_modifier.toFixed(2)}x`,
+               `**Crit Chance:** ${(finalCharacterData.crit_chance * 100).toFixed(2)}% | **Crit Damage:** ${finalCharacterData.crit_damage_modifier.toFixed(2)}x`,
 		inline: false,
 	});
 
@@ -848,6 +852,12 @@ module.exports = {
 	},
 
 	async execute(interaction) {
+		if (checkBetatestLock(commandFilename, interaction)) {
+			return interaction.reply({
+				content: '🍻 Apologies! This feature is currently under lock and key for some super-secret beta testing. Keep an eye on <#1385675092591378452> and <#1414069644410748938> for the full release!',
+				flags: MessageFlags.Ephemeral,
+			});
+		}
 		const subcommand = interaction.options.getSubcommand();
 
 		switch (subcommand) {

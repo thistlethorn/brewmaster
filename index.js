@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { Client, Collection, GatewayIntentBits } = require('discord.js');
 const { token } = require('./token.json');
-
+global.__utils = path.join(__dirname, 'utils');
 
 // This is the main entry point for Brewmaster, the Discord bot.
 
