@@ -3,6 +3,7 @@ const db = require('../database');
 const config = require('../config.json');
 const BOT_COMMANDS_CHANNEL_ID = config.discord.botCommandsId;
 const CHAR_LOG_CHANNEL_ID = config.tavernborne.characterLogChannelId;
+const { checkBetatestLock } = require(`${global.__utils}/betaLock.js`);
 
 
 /**
@@ -50,6 +51,9 @@ async function sendLevelUpNotification({ activeClient, userId, embed, source }) 
  * @returns {Promise<void>}
  */
 async function addXp(userId, amount, source, reason) {
+
+	if (await checkBetatestLock(source, null, userId)) return;
+
 	let activeClient;
 	if (source?.client) {
 		activeClient = source.client;

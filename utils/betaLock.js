@@ -1,6 +1,8 @@
 // utils/betaLock.js
 
+const config = require('../config.json');
 const BETA_TESTER_ROLE_ID = '1414796278008774736';
+const GUILD_ID = config.guildId;
 
 const lockedCommands = [
 	'character.js',
@@ -12,33 +14,76 @@ const lockedCommands = [
 ];
 
 /**
- * Checks if a command is locked for beta testing and if the user has permission to use it.
- * @param {string} commandFilename - The filename of the command being executed (e.g., 'character.js').
- * @param {import('discord.js').Interaction} interaction - The interaction object from the command.
- * @returns {boolean} Returns `true` if access is DENIED, `false` if access is ALLOWED.
+ * An internal helper function to reliably get a guild member object
+ * from various Discord.js sources.
+ * @returns {Promise<import('discord.js').GuildMember|null>}
  */
-function checkBetatestLock(commandFilename, interaction) {
-	// First, check if the command being run is on our list of locked features.
+async function getMember(source, userId) {
+	// Case 1: Source is an Interaction or Message, which has a .member property.
+	if (source?.client) {
+		return source.member;
+	}
+
+	// Case 2: Source is the Client itself. We must fetch the member.
+	if (source?.ws && userId) {
+		try {
+			const guild = await source.guilds.fetch(GUILD_ID);
+			// Fetching from the guild is more reliable than from the cache.
+			const member = await guild.members.fetch(userId);
+			return member;
+		}
+		catch (error) {
+			// Fail closed by returning null
+			console.error(`[betaLock.getMember] Failed to fetch member ${userId}:`, error);
+			return null;
+		}
+	}
+
+	// If the source is unknown or userId is missing for the client, return null.
+	return null;
+}
+
+
+/**
+ * A universal function to check for beta-testing locks.
+ * Returns `true` if access is DENIED, `false` if access is ALLOWED.
+ *
+ * @param {Client | Interaction | Message} inputSource The interaction, message, or client instance.
+ * @param {string | null} commandFilename The filename of the command, or null to just check if a user is a beta tester.
+ * @param {string | null} [userIdForClient] The user's ID. **Required** only when the source is the Client object.
+ * @returns {Promise<boolean>} A promise that resolves to true (DENIED) or false (ALLOWED).
+ */
+async function checkBetatestLock(inputSource, commandFilename = null, userIdForClient = null) {
+	const member = await getMember(inputSource, userIdForClient);
+
+	if (!member) {
+		// Fail closed - DENIED
+		return true;
+	}
+
+	const isUserBetaTester = member.roles.cache.has(BETA_TESTER_ROLE_ID);
+
+	if (!commandFilename) {
+
+		// Is a beta tester, so they are not locked out.
+		return !isUserBetaTester;
+	}
+
 	const isCommandLocked = lockedCommands.includes(commandFilename);
 
-	// If the command is not on the list, it's a public feature. Allow access for everyone.
+	// Access is ALLOWED if the command is not locked at all.
 	if (!isCommandLocked) {
-		// Access ALLOWED
+		// ALLOWED
 		return false;
 	}
 
-	// The command is locked. Now, check if the user has the beta tester role.
-	// We use the roles cache on the member object for an efficient check.
-	const isUserBetaTester = interaction.member.roles.cache.has(BETA_TESTER_ROLE_ID);
-
-	// If the user has the role, they are a beta tester. Allow access.
+	// Access is ALLOWED if the command IS locked, but the user is a beta tester.
 	if (isUserBetaTester) {
-		// Access ALLOWED
+		// ALLOWED
 		return false;
 	}
 
-	// If the command is locked and the user does NOT have the role, deny access.
-	// Access DENIED
+	// Otherwise, access is DENIED.
 	return true;
 }
 
