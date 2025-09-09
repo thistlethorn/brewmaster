@@ -1,4 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, MessageFlags, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
+const { rarityEmojis, rarityColors } = require('../../utils/constants.js');
 const db = require('../../database');
 
 const activeShopSessions = new Map();
@@ -82,16 +83,28 @@ async function startNewShopSession(interaction, isUpdate = false) {
  * @returns {{embeds: EmbedBuilder[], components: ActionRowBuilder[]}}
  */
 function buildBuyConfirmationUI(vendor, item, price, economy) {
+
+	const color = rarityColors[item.rarity.toUpperCase()] ?? 0x836953;
+	const isWeapon = item.item_type === 'WEAPON';
+	const emoji = rarityEmojis[item.rarity.toUpperCase()] ?? '❓';
+
 	const embed = new EmbedBuilder()
-		.setColor(0x3498DB)
+		.setColor(color)
 		.setTitle(`Buy: ${item.name}`)
 		.setDescription(item.description || 'An item of curious origin.');
+
 
 	// --- Item Basics Field ---
 	const basicsLines = [
 		`**Type:** ${item.item_type.charAt(0).toUpperCase() + item.item_type.slice(1).toLowerCase()}`,
-		`**Rarity:** ${item.rarity.charAt(0).toUpperCase() + item.rarity.slice(1).toLowerCase()}`,
+		`**Rarity:** ${emoji} ${item.rarity.charAt(0).toUpperCase() + item.rarity.slice(1).toLowerCase()}`,
+		`**Base Value:** ${item.crown_value} Crowns`,
 		`**Tradeable:** ${item.is_tradeable ? 'Yes' : 'No'}`,
+		`**Stackable:** ${item.is_stackable ? 'Yes' : 'No'}`,
+		`${item.owned_quantity > 0 ? `**Quantity Owned:** ${item.owned_quantity}` : ''}`,
+		`${isWeapon ? `**Damage Dice:** ${item.damage_dice}` : ''}`,
+		`${isWeapon ? `**Handedness:** ${item.handedness === 'one-handed' ? 'Single Handed' : 'Two Handed'}` : ''}`,
+		`${isWeapon ? `**Damage Type:** ${item.damage_type}` : ''}`,
 	];
 	embed.addFields({ name: 'Item Basics', value: basicsLines.join('\n'), inline: false });
 
@@ -265,18 +278,30 @@ function buildVendorSelectionUI(vendors, userId) {
  * @returns {{embeds: EmbedBuilder[], components: ActionRowBuilder[]}}
  */
 function buildSellConfirmationUI(vendor, item, availableQuantity, price) {
+
+	const color = rarityColors[item.rarity.toUpperCase()] ?? 0x836953;
+	const isWeapon = item.item_type === 'WEAPON';
+	const emoji = rarityEmojis[item.rarity.toUpperCase()] ?? '❓';
+
 	const embed = new EmbedBuilder()
-		.setColor(0xF1C40F)
+		.setColor(color)
 		.setTitle(`Sell: ${item.name}`)
 		.setDescription(item.description || 'An item of curious origin.');
+
 
 	// --- Item Basics Field ---
 	const basicsLines = [
 		`**Type:** ${item.item_type.charAt(0).toUpperCase() + item.item_type.slice(1).toLowerCase()}`,
-		`**Rarity:** ${item.rarity.charAt(0).toUpperCase() + item.rarity.slice(1).toLowerCase()}`,
+		`**Rarity:** ${emoji} ${item.rarity.charAt(0).toUpperCase() + item.rarity.slice(1).toLowerCase()}`,
+		`**Base Value:** ${item.crown_value} Crowns`,
 		`**Tradeable:** ${item.is_tradeable ? 'Yes' : 'No'}`,
+		`**Stackable:** ${item.is_stackable ? 'Yes' : 'No'}`,
+		`${isWeapon ? `**Damage Dice:** ${item.damage_dice}` : ''}`,
+		`${isWeapon ? `**Handedness:** ${item.handedness === 'one-handed' ? 'Single Handed' : 'Two Handed'}` : ''}`,
+		`${isWeapon ? `**Damage Type:** ${item.damage_type}` : ''}`,
 	];
 	embed.addFields({ name: 'Item Basics', value: basicsLines.join('\n'), inline: false });
+
 
 	// --- Item Specifications Field (from effects_json) ---
 	let effects = {};
@@ -447,10 +472,16 @@ module.exports = {
 				vendor.user_id = userId;
 
 				const itemToBuy = db.prepare(`
-				SELECT i.*, vs.buy_price FROM items i
-				JOIN vendor_stock vs ON i.item_id = vs.item_id
-				WHERE i.item_id = ? AND vs.vendor_id = ?
-			`).get(itemId, vendorId);
+					SELECT
+						i.*,
+						vs.buy_price,
+						COALESCE(SUM(ui.quantity), 0) as owned_quantity
+					FROM items i
+					JOIN vendor_stock vs ON i.item_id = vs.item_id
+					LEFT JOIN user_inventory ui ON i.item_id = ui.item_id AND ui.user_id = ?
+					WHERE i.item_id = ? AND vs.vendor_id = ?
+					GROUP BY i.item_id
+				`).get(userId, itemId, vendorId);
 
 				if (!itemToBuy) {
 					return interaction.editReply({ content: 'This item is no longer for sale.', components: [] });

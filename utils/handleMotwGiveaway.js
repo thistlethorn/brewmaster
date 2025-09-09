@@ -207,7 +207,7 @@ async function endMotwGiveaway(client, messageId) {
 
 			const reason = '**WINNING** the __Member of the Week__ giveaway hosted in <#1365345890591703080>!';
 
-			await addXp(userId, config.xpRewards.motwWin, interaction, reason);
+			await addXp(winnerId, config.xpRewards.motwWin, client, reason);
 		}
 
 		// Give consolation prizes

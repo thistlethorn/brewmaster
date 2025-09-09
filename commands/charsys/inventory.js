@@ -1,27 +1,10 @@
 // commands/charsys/inventory.js
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags, StringSelectMenuBuilder } = require('discord.js');
 const db = require('../../database');
+const { rarityEmojis, rarityColors } = require('../../utils/constants.js');
 
 const ITEMS_PER_PAGE = 10;
-const rarityColors = {
-	'COMMON': 0x95A5A6,
-	// Gray
 
-	'UNCOMMON': 0x2ECC71,
-	// Green
-
-	'RARE': 0x3498DB,
-	// Blue
-
-	'EPIC': 0x9B59B6,
-	// Purple
-
-	'LEGENDARY': 0xF1C40F,
-	// Gold
-
-	'MYTHIC': 0xE67E22,
-	// Orange
-};
 // Defines the order in which categories will appear in the UI.
 const CATEGORY_ORDER = ['equipped', 'weapons', 'armor', 'consumables', 'materials', 'miscellaneous'];
 const CATEGORY_NAMES = {
@@ -42,57 +25,53 @@ async function handleItemInfo(interaction) {
 	const userId = interaction.user.id;
 	const inventoryId = interaction.options.getInteger('item');
 
-	const itemData = db.prepare(`
+	const item = db.prepare(`
         SELECT
-            i.name, i.description, i.item_type, i.rarity,
-            i.is_tradeable, i.crown_value,
-            i.damage_dice, i.damage_type, i.handedness, i.effects_json,
-            ui.quantity, ui.equipped_slot
+            i.*, ui.quantity, ui.equipped_slot
         FROM user_inventory ui
         JOIN items i ON ui.item_id = i.item_id
         WHERE ui.user_id = ? AND ui.inventory_id = ?
     `).get(userId, inventoryId);
 
-	if (!itemData) {
+	if (!item) {
 		return interaction.reply({ content: 'Could not find that item in your inventory.', flags: MessageFlags.Ephemeral });
 	}
 
-	const embed = new EmbedBuilder()
-		.setTitle(itemData.name)
-		.setColor(rarityColors[itemData.rarity.toUpperCase()] || 0x95A5A6)
-		.setDescription(itemData.description || '*No description available.*');
+	const emoji = rarityEmojis[item.rarity.toUpperCase()] ?? '❓';
+	const color = rarityColors[item.rarity.toUpperCase()] ?? 0x836953;
+	const isWeapon = item.item_type === 'WEAPON';
 
-	let status = itemData.equipped_slot
-		? `Equipped (${itemData.equipped_slot.charAt(0).toUpperCase() + itemData.equipped_slot.slice(1)})`
+	const embed = new EmbedBuilder()
+		.setTitle(item.name)
+		.setColor(color)
+		.setDescription(item.description || 'An item of curious origin.');
+
+	const status = item.equipped_slot
+		? `Equipped (${item.equipped_slot.charAt(0).toUpperCase() + item.equipped_slot.slice(1)})`
 		: 'In Inventory';
-	if (itemData.quantity > 1) {
-		status += ` (Quantity: ${itemData.quantity})`;
-	}
+
 
 	embed.addFields({ name: 'Status', value: status, inline: false });
 
-	const details = [
-		`**Rarity:** ${itemData.rarity}`,
-		`**Type:** ${itemData.item_type}`,
-		`**Value:** ${itemData.crown_value} Crowns`,
-		`**Tradeable:** ${itemData.is_tradeable ? 'Yes' : 'No'}`,
-	];
-	embed.addFields({ name: 'Details', value: details.join('\n'), inline: false });
 
-	// Combat stats for weapons
-	if (itemData.damage_dice) {
-		const combatDetails = [
-			`**Damage:** \`${itemData.damage_dice}\``,
-			`**Type:** ${itemData.damage_type}`,
-			`**Handedness:** ${itemData.handedness}`,
-		];
-		embed.addFields({ name: 'Combat Stats', value: combatDetails.join('\n'), inline: true });
-	}
+	const details = [
+		`**Type:** ${item.item_type.charAt(0).toUpperCase() + item.item_type.slice(1).toLowerCase()}`,
+		`**Rarity:** ${emoji} ${item.rarity.charAt(0).toUpperCase() + item.rarity.slice(1).toLowerCase()}`,
+		`**Base Value:** ${item.crown_value} Crowns`,
+		`**Tradeable:** ${item.is_tradeable ? 'Yes' : 'No'}`,
+		`**Stackable:** ${item.is_stackable ? 'Yes' : 'No'}`,
+		`${item.quantity > 0 ? `**Quantity Owned:** ${item.quantity}` : ''}`,
+		`${isWeapon ? `**Damage Dice:** ${item.damage_dice}` : ''}`,
+		`${isWeapon ? `**Handedness:** ${item.handedness === 'one-handed' ? 'Single Handed' : 'Two Handed'}` : ''}`,
+		`${isWeapon ? `**Damage Type:** ${item.damage_type}` : ''}`,
+	];
+
+	embed.addFields({ name: 'Item Basics', value: details.join('\n'), inline: false });
 
 	// Effects from JSON
-	if (itemData.effects_json) {
+	if (item.effects_json) {
 		try {
-			const effects = JSON.parse(itemData.effects_json);
+			const effects = JSON.parse(item.effects_json);
 			const effectLines = [];
 			if (effects.slot) {
 				effectLines.push(`**Slot:** ${effects.slot.charAt(0).toUpperCase() + effects.slot.slice(1)}`);

@@ -7,7 +7,7 @@ const { recalculateStats } = require('../../utils/recalculateStats');
 const creationSessions = new Map();
 const SESSION_TIMEOUT = 30 * 60 * 1000;
 
-// NEW: In-memory store for spend points sessions.
+// In-memory store for spend points sessions.
 const spendPointsSessions = new Map();
 
 const alignmentExplanation = `
@@ -215,11 +215,50 @@ async function handleView(interaction) {
 	sheetEmbed.addFields({ name: '📜 Character Info', value: `**Origin:** ${finalCharacterData.origin_name}\n${affiliationString}\n${roleString}`, inline: false });
 
 	// --- Base Stats ---
+	const equippedItemsEffects = db.prepare(`
+		SELECT i.effects_json 
+		FROM user_inventory ui
+		JOIN items i ON ui.item_id = i.item_id
+		WHERE ui.user_id = ? AND ui.equipped_slot IS NOT NULL
+	`).all(targetUser.id);
+
+	const statBonuses = { might: 0, finesse: 0, wits: 0, grit: 0, charm: 0, fortune: 0 };
+	for (const row of equippedItemsEffects) {
+		if (!row.effects_json) continue;
+		try {
+			const effects = JSON.parse(row.effects_json);
+			if (effects.base_stats) {
+				for (const stat in effects.base_stats) {
+					if (Object.prototype.hasOwnProperty.call(statBonuses, stat)) {
+						statBonuses[stat] += Number(effects.base_stats[stat]) || 0;
+					}
+				}
+			}
+		}
+		catch (e) {
+			console.error(e);
+		}
+	}
+
+	const statsDisplay = ['might', 'finesse', 'wits', 'grit', 'charm', 'fortune'].map(stat => {
+		const base = finalCharacterData[`stat_${stat}`];
+		const bonus = statBonuses[stat];
+		const total = base + bonus;
+		let display = `**${stat.charAt(0).toUpperCase() + stat.slice(1)}:** ${total}`;
+		if (bonus !== 0) {
+			const sign = bonus > 0 ? '+' : '';
+			// e.g., "Grit: 11 (10+1)"
+			display += ` _(${base}${sign}${bonus})_`;
+		}
+		return display;
+	}).join(' | ');
+
 	const unspentPoints = finalCharacterData.stat_points_unspent > 0 ? `\n**Unspent Stat Points:** 🌟 \`${finalCharacterData.stat_points_unspent}\`` : '';
+
 	sheetEmbed.addFields({
-		name: '📊 Base Stats',
-		value: `**Might:** ${finalCharacterData.stat_might} | **Finesse:** ${finalCharacterData.stat_finesse} | **Wits:** ${finalCharacterData.stat_wits}\n` +
-               `**Grit:** ${finalCharacterData.stat_grit} | **Charm:** ${finalCharacterData.stat_charm} | **Fortune:** ${finalCharacterData.stat_fortune}${unspentPoints}`,
+		name: '📊 Total Stats (Base + Gear)',
+		// Replacing for the newline
+		value: statsDisplay.replace(' | wits', '\n**Wits**') + unspentPoints,
 		inline: false,
 	});
 
@@ -311,8 +350,8 @@ async function handleEquip(interaction) {
 		return interaction.reply({ content: 'Invalid equipment slot specified.', flags: MessageFlags.Ephemeral });
 	}
 
-	const itemSlotType = intendedSlot.startsWith('ring') ? 'ring' : 'amulet';
-	const itemToEquip = db.prepare(`
+	const itemSlotType = intendedSlot.startsWith('ring') ? 'ring' : intendedSlot;
+	const itemToEquip = db.prepare(`	
         SELECT i.name, i.handedness, i.effects_json
         FROM user_inventory ui
         JOIN items i ON ui.item_id = i.item_id
