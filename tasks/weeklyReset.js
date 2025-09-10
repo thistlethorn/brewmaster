@@ -149,7 +149,7 @@ async function migrateLeaderboard(client) {
 			const winnerId = bumpLB[0].user_id;
 			// Pass the client instance directly, since there's no interaction/message here.
 			// The addXp utility will handle sending a DM.
-			const reason = 'becoming this week\'s Top Bumper of the server!';
+			const reason = 'Became this week\'s Top Bumper of the server!';
 
 			await addXp(winnerId, config.xpRewards.topBumperWin, client, reason);
 		}

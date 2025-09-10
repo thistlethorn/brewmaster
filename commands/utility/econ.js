@@ -462,7 +462,7 @@ async function handleDaily(interaction) {
 		.setFooter({ text: streakFooter });
 
 
-	const reason = `claiming their \`/econ daily\` Crowns of ${payout.toLocaleString()}${prestigedThisClaim ? `, achieving a new prestige level of ${currentPrestige}` : ''}${(currentStreak > 1) ? `, and keeping their streak of ${currentStreak}` : ''}!`;
+	const reason = `Claimed their \`/econ daily\` Crowns of ${payout.toLocaleString()}${prestigedThisClaim ? `, achieving a new prestige level of ${currentPrestige}` : ''}${(currentStreak > 1) ? `, and keeping their streak of ${currentStreak}` : ''}!`;
 
 	await addXp(userId, config.xpRewards.dailyClaim, interaction, reason);
 

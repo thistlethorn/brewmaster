@@ -253,7 +253,7 @@ module.exports = {
 
 						await message.channel.send({ embeds: [embed] });
 						console.log(`[messageCreate] [CHATLOG] ${message.author.displayName} has been given the Active Chatter role.`);
-						const reason = 'earning the active chatter bonus (sending 15+ quality messages in a day)';
+						const reason = 'Earned the active chatter bonus (sending 15+ quality messages in a day)!';
 
 						await addXp(userId, config.xpRewards.activeChatter, message, reason);
 
@@ -607,7 +607,7 @@ module.exports = {
 				});
 
 				transaction();
-				const reason = 'welcoming a new member of the server in <#1353631829453836291>!';
+				const reason = 'Welcomed a new member of the server in <#1353631829453836291>!';
 
 				await addXp(userId, config.xpRewards.welcomeMember, message, reason);
 

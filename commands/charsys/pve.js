@@ -65,7 +65,7 @@ function buildCombatEmbed(combatState, user) {
  * @param {object} combatState The final state of the combat encounter.
  */
 async function handleVictory(interaction, combatState) {
-	const { userId, nodeData, thread, turn, critsThisFight } = combatState;
+	const { userId, nodeData, thread, turn, character, critsThisFight } = combatState;
 	// Final DB updates in a transaction
 	try {
 		const victoryTransaction = db.transaction(() => {
@@ -110,8 +110,9 @@ async function handleVictory(interaction, combatState) {
 
 		db.prepare('INSERT INTO user_economy (user_id, crowns) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET crowns = crowns + excluded.crowns').run(userId, rewards.crowns || 0);
 
-		const reason = `beating the dungeon ${nodeData.name}${isFirstClear ? ' for the first time' : newBestTime ? ' and setting a new dungeon clear record' : ''} in ${turn} turns!`;
-		if (rewards.xp > 0) await addXp(userId, rewards.xp, interaction, reason);
+		const reason = `__${character.character_name}__ beat ${nodeData.name}${isFirstClear ? ' for the first time' : newBestTime ? ' and set a new dungeon clear record' : ''} in ${turn} turns!`;
+		const title = `Victory at \`${nodeData.name}\``;
+		if (rewards.xp > 0) await addXp(userId, rewards.xp, interaction, reason, title);
 
 		const victoryEmbed = new EmbedBuilder()
 			.setColor(0x2ECC71)
@@ -143,7 +144,7 @@ async function handleVictory(interaction, combatState) {
  * @param {object} combatState The final state of the combat encounter.
  */
 async function handleDefeat(interaction, combatState) {
-	const { userId, nodeData, thread, turn } = combatState;
+	const { userId, nodeData, thread, character, turn } = combatState;
 	let consolationXp = 0;
 	if (nodeData.repeatable_reward_json) {
 		try {
@@ -173,9 +174,11 @@ async function handleDefeat(interaction, combatState) {
         `).run(userId, nodeData.node_id);
 	})();
 
-	const reason = `their failed raid of the dungeon ${nodeData.name}, outlasting death for ${turn} turns!`;
+	const reason = `__${character.character_name}__ failed to beat ${nodeData.name}, but managed to outlast death for ${turn} turns!`;
+	const title = `Defeat at \`${nodeData.name}\``;
+
 	if (consolationXp > 0) {
-		await addXp(userId, consolationXp, interaction, reason);
+		await addXp(userId, consolationXp, interaction, reason, title);
 	}
 
 	activeCombats.delete(thread.id);
@@ -290,6 +293,7 @@ async function handleEngage(interaction) {
 				monsters.push({ ...monsterData, current_health: monsterData.max_health });
 			}
 		}
+
 
 		const combatState = {
 			userId,
@@ -567,7 +571,7 @@ module.exports.buttons = async (interaction) => {
 					totalDamageTakenThisTurn += monsterDamage;
 					highestDamageSurvivedThisTurn = highestDamageSurvivedThisTurn >= monsterDamage ? highestDamageSurvivedThisTurn : monsterDamage;
 					// Added monster emoji to the log
-					combatState.combatLog.push(`> 👹 **${m.name} #${i + 1}** attacks you for **${monsterDamage}** damage, leaving you at \`${character.current_health}\` HP.`);
+					combatState.combatLog.push(`👹 **${m.name} #${i + 1}** attacks you for **${monsterDamage}** damage, leaving you at \`${character.current_health}\` HP.`);
 				}
 			});
 		}

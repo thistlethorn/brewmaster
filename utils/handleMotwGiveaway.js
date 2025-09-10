@@ -96,7 +96,7 @@ async function handleMotwEntry(interaction) {
 		db.prepare('INSERT INTO motw_entries (giveaway_id, user_id, entry_time) VALUES (?, ?, ?)')
 			.run(giveawayId, userId, new Date().toISOString());
 
-		const reason = 'entering the weekly Member of the Week giveaway in <#1365345890591703080>!';
+		const reason = 'Entered the weekly Member of the Week giveaway in <#1365345890591703080>!';
 
 		await addXp(userId, config.xpRewards.motwEntry, interaction, reason);
 
@@ -205,7 +205,7 @@ async function endMotwGiveaway(client, messageId) {
 			db.prepare('UPDATE user_economy SET crowns = crowns + 300 WHERE user_id = ?').run(winnerId);
 			await updateMultiplier(winnerId, channel.guild);
 
-			const reason = '**WINNING** the __Member of the Week__ giveaway hosted in <#1365345890591703080>!';
+			const reason = '**WON** the __Member of the Week__ giveaway hosted in <#1365345890591703080>!';
 
 			await addXp(winnerId, config.xpRewards.motwWin, client, reason);
 		}

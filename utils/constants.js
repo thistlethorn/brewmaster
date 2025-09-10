@@ -18,8 +18,13 @@ const rarityColors = {
 	MYTHIC:    0xE74C3C,
 };
 
+const tavernborneEmojis = {
+	XP: '<a:xp:1415141534533292123>',
+};
+
 // Export both objects so other files can use them
 module.exports = {
 	rarityEmojis,
 	rarityColors,
+	tavernborneEmojis,
 };

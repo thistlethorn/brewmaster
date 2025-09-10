@@ -4,7 +4,8 @@ const config = require('../config.json');
 const BOT_COMMANDS_CHANNEL_ID = config.discord.botCommandsId;
 const CHAR_LOG_CHANNEL_ID = config.tavernborne.characterLogChannelId;
 const { checkBetatestLock } = require(`${global.__utils}/betaLock.js`);
-
+// const { tavernborneEmojis } = require('./constants.js');
+// const xpEmoji = tavernborneEmojis.XP;
 
 /**
  * Sends a level-up notification. Can handle an interaction, a message, or just a client instance for DMs.
@@ -50,7 +51,7 @@ async function sendLevelUpNotification({ activeClient, userId, embed, source }) 
  * @param {import('discord.js').Interaction | import('discord.js').Message | import('discord.js').Client} source The interaction, message, or client instance that triggered the XP gain.
  * @returns {Promise<void>}
  */
-async function addXp(userId, amount, source, reason) {
+async function addXp(userId, amount, source, reason, title = null) {
 
 	if (await checkBetatestLock(source, null, userId)) return;
 
@@ -150,8 +151,8 @@ async function addXp(userId, amount, source, reason) {
 		if (levelsGained > 0) {
 			const pointsGained = levelsGained * 2;
 			const levelUpEmbed = new EmbedBuilder()
-				.setColor(0xF1C40F)
-				.setTitle('🌟 LEVEL UP! 🌟')
+				.setColor(0x75146a)
+				.setTitle('🌟 LEVEL GAINED! 🌟')
 				.setDescription(`Congratulations, you have reached **Level ${level}**!`)
 				.addFields(
 					{ name: 'Stat Points Gained', value: `You gained **${pointsGained}** unspent stat points.`, inline: true },
@@ -160,15 +161,26 @@ async function addXp(userId, amount, source, reason) {
 				.setFooter({ text: 'Use /character spendpoints to improve your stats!' });
 
 			await sendLevelUpNotification({ activeClient, userId, embed: levelUpEmbed, source });
+
+			levelUpEmbed.spliceFields(0, 2)
+				.clearDescription()
+				.setThumbnail(otherCharData.character_image || null)
+				.addFields(
+					{ name: `__${otherCharData.character_name}__`, value: 'Reached **Level ${level}**!', inline: false },
+					{ name: `[\`${stat_points_unspent} SP\`] Unspent Statpoints`, value: '🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟', inline: false },
+				);
+
+			await charLogChannel.send({ embeds: [levelUpEmbed] });
 		}
 		const xpRewardEmbed = new EmbedBuilder()
 			.setColor(0xF1C40F)
 			.setTitle('💠 XP Gained! 💠')
 			.setThumbnail(otherCharData.character_image || null)
 			.addFields(
-				{ name: `${otherCharData.character_name}`, value: `Earned ${amount} XP for ${reason}`, inline: true },
+				{ name: `${title ? title : `__${otherCharData.character_name}__`}`, value: `${reason}`, inline: false },
+				{ name: `[\`${amount} XP\`] Earned`, value: '💠💠💠💠💠💠💠💠💠💠💠', inline: false },
 			)
-			.setFooter({ text: 'To view your character and their XP, use /character view!' });
+			.setFooter({ text: 'To view your character, their XP, and your progress, use /character view!' });
 		await charLogChannel.send({ embeds: [xpRewardEmbed] });
 	}
 	catch (error) {

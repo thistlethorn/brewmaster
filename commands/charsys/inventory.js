@@ -19,8 +19,21 @@ const CATEGORY_NAMES = {
 	materials: 'Materials',
 	miscellaneous: 'Miscellaneous',
 };
-
-
+const SLOT_EMOJIS = {
+	helmet: '🪖',
+	amulet: '📿',
+	chestplate: '👕',
+	ring1: '💍',
+	ring2: '💍',
+	weapon: '⚔️',
+	offhand: '🛡️',
+	leggings: '👖',
+	boots: '👢',
+};
+const EQUIPMENT_SLOT_ORDER = [
+	'helmet', 'amulet', 'chestplate', 'ring1', 'ring2',
+	'weapon', 'offhand', 'leggings', 'boots',
+];
 /**
  * Handles the /inventory item_info command.
  * @param {import('discord.js').ChatInputCommandInteraction} interaction
@@ -136,7 +149,16 @@ async function handleView(interaction, categoryArg, pageArg) {
 
 	const unequippedItems = allItems.filter(item => !item.equipped_slot);
 	const categories = {
-		equipped: allItems.filter(item => item.equipped_slot),
+		equipped: allItems
+			.filter(item => item.equipped_slot)
+			.sort((a, b) => {
+				const indexA = EQUIPMENT_SLOT_ORDER.indexOf(a.equipped_slot);
+				const indexB = EQUIPMENT_SLOT_ORDER.indexOf(b.equipped_slot);
+
+				if (indexA === -1) return 1;
+				if (indexB === -1) return -1;
+				return indexA - indexB;
+			}),
 		weapons: unequippedItems.filter(i => i.item_type === 'WEAPON'),
 		armor: unequippedItems.filter(i => i.item_type === 'ARMOR'),
 		consumables: unequippedItems.filter(i => i.item_type === 'CONSUMABLE'),
@@ -160,9 +182,12 @@ async function handleView(interaction, categoryArg, pageArg) {
 		.setFooter({ text: `Page ${page}/${totalPages} | Use /character equip to manage gear.` });
 
 	const descriptionLines = pageContent.map(item => {
+		const emoji = (currentCategory === 'equipped' && item.equipped_slot)
+			? `${SLOT_EMOJIS[item.equipped_slot] || '❔'} `
+			: '';
 		const slot = item.equipped_slot ? `\`(${item.equipped_slot.charAt(0).toUpperCase() + item.equipped_slot.slice(1)})\`` : '';
 		const quantity = item.quantity > 1 ? `x${item.quantity}` : '';
-		return `• **${item.name}** ${quantity} ${slot}`;
+		return `• ${emoji} **${item.name}** ${quantity} ${slot}`;
 	});
 	embed.setDescription(descriptionLines.join('\n') || '*This category is empty.*');
 
