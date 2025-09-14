@@ -29,29 +29,38 @@ module.exports = {
 		// Create welcome embed
 		const welcomeEmbed = new EmbedBuilder()
 			.setColor('#8a3c00')
-			.setTitle('A New Member Has Arrived!')
-			.setDescription(`Hear hear, ${member.displayName}!\n🍻 We raise our drinks to you, o' wayward traveller! 🍻\nWelcome to the Westwind Tavern, pull up a chair near the fire.`)
+			.setThumbnail(member.user.displayAvatarURL())
+			.setTitle('There\'s Been a New Addition to the Tavern!')
+			.setDescription(`Hear hear, ${member.displayName} has arrived! Welcome to the Westwind Tavern.\nPull up a chair, warm yourself by the fire, and tell us your story.`)
 			.addFields(
 				{
-					name: 'Firstly, let\'s get you oriented.',
-					value: '⤜■■■■■ Please read the <#1375496710440358022>! ■■■■■⤛',
+					name: '🧭 Start Your Adventure Here!',
+					// Blockquote for visibility
+					value: '> **Your first quest is to read the <#1375496710440358022>!**\n> It has everything you need to know about our community and games, listed step by step!',
 					inline: false,
 				},
 				{
-					name: 'Got any questions or concerns?',
-					value: 'Check out what everyone is discussing in <#1377104879025131581> and open a new thread if it\'s something that\'s not been covered! We\'ll get back to you as soon as possible.',
+					name: 'Essential Stops',
+					// One-stop shop
+					value: [
+						'✅ Get verified in <#1375485421990969487> to access the server.',
+						'📛 Grab some flair in <#1353631851734106165>.',
+						'📜 Read the house rules in <#1353632019233378415>.',
+						'👋 Introduce yourself over in <#1354166019203268679>!',
+						'🍻 Join the main conversation in <#1353623582411984931>.',
+					].join('\n'),
 					inline: false,
 				},
 			)
 			.setImage('https://i.ibb.co/Df8H2Y6h/Westwind.png')
+			// Footer is like Tony talking, using his PFP and textline.
 			.setFooter({
-				text: 'Use `?welcome` to join the Welcoming Table!',
-				iconURL: member.guild.iconURL(),
+				text: 'Tony says: "Welcome fellow travelers in this channel, pal. There\'s a hefty sum of Crowns and XP in it for you, if you do."',
+				iconURL: member.client.user.displayAvatarURL(),
 			})
 			.setTimestamp();
 
 		try {
-			await welcomeChannel.send('<@&1354156128162021467>');
 			const welcomeMessage = await welcomeChannel.send({
 				content: `${member}`,
 				embeds: [welcomeEmbed],

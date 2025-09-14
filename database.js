@@ -134,6 +134,7 @@ const setupTables = db.transaction(() => {
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             guildmember_title TEXT DEFAULT 'Member',
             attitude TEXT DEFAULT 'Neutral',
+            guild_image TEXT DEFAULT '',
             UNIQUE(guild_name)
         )
     `).run();
@@ -1317,17 +1318,17 @@ const setupTables = db.transaction(() => {
 
 	// MIGRATION SCRIPT for Character Sheet v2 - Adds new columns if they don't exist.
 
-	console.log('[DB Migration] Checking schema for Item Subtypes...');
+	console.log('[DB Migration] Checking schema for guild_list guild_image...');
 	try {
-		const itemColumns = new Set(db.pragma('table_info(items)').map(c => c.name));
-		if (!itemColumns.has('item_subtype')) {
-			db.prepare('ALTER TABLE items ADD COLUMN item_subtype TEXT').run();
-			console.log('[DB Migration] Added column: items.item_subtype');
+		const guildListColumns = new Set(db.pragma('table_info(guild_list)').map(c => c.name));
+		if (!guildListColumns.has('guild_image')) {
+			db.prepare('ALTER TABLE guild_list ADD COLUMN guild_image TEXT DEFAULT \'\'').run();
+			console.log('[DB Migration] Added column: guild_list.guild_image');
 		}
-		console.log('[DB Migration] Item Subtype schema check complete.');
+		console.log('[DB Migration] Guild guild_image schema check complete.');
 	}
 	catch (error) {
-		console.error('[DB Migration] Failed to update items schema for subtypes:', error);
+		console.error('[DB Migration] Failed to update guild_list schema for guild_image:', error);
 		throw error;
 	}
 

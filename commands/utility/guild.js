@@ -228,6 +228,7 @@ async function handleInvite(interaction) {
             gl.guild_tag,
             gl.motto,
             gl.lore,
+			gl.guild_image,
             COALESCE(gt.tier, 1) AS tier
         FROM guildmember_tracking gmt
         JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
@@ -267,7 +268,7 @@ async function handleInvite(interaction) {
 		.setColor(0x3498db)
 		.setTitle(getTonyQuote('invite_embed_title', inviterGuild.guild_name, inviterGuild.guild_tag))
 		.setDescription(getTonyQuote('invite_embed_desc', inviterGuild.guild_name) || 'A promising guild is seeking new allies!')
-		.setThumbnail('https://i.ibb.co/2YqsK07D/guild.jpg')
+		.setThumbnail(inviterGuild.guild_image || 'https://i.ibb.co/2YqsK07D/guild.jpg')
 		.addFields(
 			{ name: 'Motto', value: inviterGuild.motto ? `*${inviterGuild.motto}*` : 'No motto set.' },
 			{ name: 'Tier', value: `${tierEmojis[inviterGuild.tier - 1]} (${tierInfo.name})`, inline: true },
@@ -1226,7 +1227,7 @@ async function handleDues(interaction) {
 
 	// Verify user is guild owner or vice gm
 	const guildData = db.prepare(`
-        SELECT gl.guild_tag, gl.guild_name, gl.channel_id, gl.public_channel_id, gl.role_id
+        SELECT gl.guild_tag, gl.guild_name, gl.channel_id, gl.public_channel_id, gl.role_id, gl.guild_image
         FROM guildmember_tracking gmt
         JOIN guild_list gl ON gmt.guild_tag = gl.guild_tag
         WHERE gmt.user_id = ? AND (gmt.owner = 1 OR gmt.vice_gm = 1)
@@ -1333,7 +1334,7 @@ async function handleDues(interaction) {
 		.setColor(0xF1C40F)
 		.setTitle(`🏦 Collecting Dues for ${guildData.guild_name}...`)
 		.setDescription('Each member contributes 1% of their Crowns. These funds are then invested, with a chance for a bonus or a loss!')
-		.setThumbnail('https://i.ibb.co/2YqsK07D/guild.jpg');
+		.setThumbnail(guildData.guild_image || 'https://i.ibb.co/2YqsK07D/guild.jpg');
 
 	addLogFields(baseEmbed, resultsLog, 'Contribution Log');
 	const duesMessage = await guildChannel.send({ embeds: [baseEmbed] });
@@ -1435,7 +1436,7 @@ async function handleDues(interaction) {
 	const finalEmbed = new EmbedBuilder()
 		.setColor(0x2ECC71)
 		.setTitle(`✅ Dues Collection Complete! - ${guildData.guild_name}`)
-		.setThumbnail('https://i.ibb.co/2YqsK07D/guild.jpg')
+		.setThumbnail(guildData.guild_image || 'https://i.ibb.co/2YqsK07D/guild.jpg')
 		.setDescription('Each member contributes 1% of their Crowns. These funds are then invested, with a chance for a bonus or a loss!')
 		.addFields(
 			{ name: '🏛️ Base Contributions', value: `**${baseContributions.toLocaleString()}** crowns`, inline: true },
@@ -1665,7 +1666,7 @@ async function handleFullInfo(interaction) {
 
 async function buildMainMenuEmbed(guildTag) {
 	const guild = db.prepare(`
-		SELECT gl.guild_name, gl.guild_tag, gl.is_open, COALESCE(gt.tier, 1) as tier
+		SELECT gl.guild_name, gl.guild_tag, gl.is_open, gl.guild_image, COALESCE(gt.tier, 1) as tier
 		FROM guild_list gl
 		LEFT JOIN guild_tiers gt ON gl.guild_tag = gt.guild_tag
 		WHERE gl.guild_tag = ?
@@ -1677,7 +1678,7 @@ async function buildMainMenuEmbed(guildTag) {
 		.setColor(0x3498DB)
 		.setTitle(`${tierEmojis[guild.tier - 1]} Main Menu: ${guild.guild_name} [${guild.guild_tag}]`)
 		.setDescription('Select a button below to view detailed information about this guild.')
-		.setThumbnail('https://i.ibb.co/2YqsK07D/guild.jpg')
+		.setThumbnail(guild.guild_image || 'https://i.ibb.co/2YqsK07D/guild.jpg')
 		.setFooter({ text: 'This menu is only visible to you.' });
 
 	const primaryButtons = new ActionRowBuilder().addComponents(
@@ -2400,6 +2401,23 @@ async function handleSettings(interaction, settingType) {
 			const existingSticker = db.prepare('SELECT * FROM guild_stickers WHERE guild_tag = ?').get(guildData.guild_tag);
 			await processStickerUpdate(interaction, guildData, existingSticker);
 			break;
+		}
+		case 'image': {
+			const modal = new ModalBuilder()
+				.setCustomId(`guild_edit_image_${guildData.guild_tag}`)
+				.setTitle('Set Guild Image');
+			modal.addComponents(
+				new ActionRowBuilder().addComponents(
+					new TextInputBuilder()
+						.setCustomId('guild_image_url')
+						.setLabel('Image URL')
+						.setStyle(1)
+						.setValue(guildData.guild_image || '')
+						.setPlaceholder('https://example.com/image.png')
+						.setRequired(false),
+				),
+			);
+			return interaction.showModal(modal);
 		}
 		}
 	}
@@ -5555,6 +5573,43 @@ module.exports = {
 			}
 		},
 	},
+	async modals(interaction) {
+		const parts = interaction.customId.split('_');
+		const command = parts[1];
+		const action = parts[2];
+		const guildTag = parts[3];
+
+		if (command !== 'edit' || action !== 'image') return;
+
+		// Verify user is a leader of the guild this modal is for
+		const isLeader = db.prepare(`
+			SELECT 1 FROM guildmember_tracking
+			WHERE user_id = ? AND guild_tag = ? AND (owner = 1 OR vice_gm = 1)
+		`).get(interaction.user.id, guildTag);
+
+		if (!isLeader) {
+			return interaction.reply({ content: 'You are not authorized to edit this guild\'s settings.', flags: MessageFlags.Ephemeral });
+		}
+
+		try {
+			const imageUrl = interaction.fields.getTextInputValue('guild_image_url');
+			// This regex is the same one used in character.js for validation
+			const urlRegex = /\.(jpeg|jpg|gif|png)$/;
+			if (imageUrl && !urlRegex.test(imageUrl)) {
+				return interaction.reply({ content: 'Please provide a valid direct image URL (ending in .png, .jpg, .jpeg, or .gif).', flags: MessageFlags.Ephemeral });
+			}
+
+			db.prepare('UPDATE guild_list SET guild_image = ? WHERE guild_tag = ?')
+				.run(imageUrl || '', guildTag);
+
+			await interaction.reply({ content: '✅ Your guild\'s image has been updated.', flags: MessageFlags.Ephemeral });
+		}
+		catch (error) {
+			console.error(`Error updating guild image for tag ${guildTag}:`, error);
+			await interaction.reply({ content: 'There was an error updating your guild\'s image. Please try again.', flags: MessageFlags.Ephemeral });
+		}
+	},
+
 	async autocomplete(interaction) {
 		if (interaction.commandName === 'guild') {
 			const subcommand = interaction.options.getSubcommand();
@@ -5759,6 +5814,10 @@ module.exports = {
 					subcommand
 						.setName('sticker')
 						.setDescription('Set or replace your guild\'s custom sticker slot.'))
+				.addSubcommand(subcommand =>
+					subcommand
+						.setName('image')
+						.setDescription('Set your guild\'s custom image/emblem.'))
 				.addSubcommand(subcommand =>
 					subcommand
 						.setName('motto')

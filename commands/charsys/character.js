@@ -268,10 +268,11 @@ async function handleView(interaction) {
 
 	// --- Combat Stats ---
 	const equipmentSlots = ['weapon', 'offhand', 'helmet', 'chestplate', 'leggings', 'boots', 'ring1', 'ring2', 'amulet'];
-	const equippedItems = db.prepare('SELECT i.name, i.damage_dice, i.damage_type, ui.equipped_slot FROM user_inventory ui JOIN items i ON ui.item_id = i.item_id WHERE ui.user_id = ? AND ui.equipped_slot IS NOT NULL').all(targetUser.id);
+	const equippedItems = db.prepare('SELECT i.name, i.damage_dice, i.damage_type, i.handedness, ui.equipped_slot FROM user_inventory ui JOIN items i ON ui.item_id = i.item_id WHERE ui.user_id = ? AND ui.equipped_slot IS NOT NULL').all(targetUser.id);
 	const equippedMap = new Map(equippedItems.map(item => [item.equipped_slot, item]));
 	const weapon = equippedMap.get('weapon');
 	const damageType = weapon?.damage_type || 'Bludgeoning';
+	const weaponHandedness = weapon?.handedness;
 	const statModifier = getDamageModifier(damageType, finalCharacterData);
 	const statSign = statModifier >= 0 ? '+' : '';
 	const damageString = `**Damage:** \`${weapon?.damage_dice || '1d4'}${statSign}${statModifier}\` ${damageType}`;
@@ -303,7 +304,7 @@ async function handleView(interaction) {
 	// --- Equipment ---
 	const equipmentDisplay = equipmentSlots.map(slot => {
 		const item = equippedMap.get(slot);
-		const itemName = item ? item.name : '[Empty]';
+		const itemName = item ? item.name : weaponHandedness === 'two-handed' ? '[Two-Handed Weapon]' : '[Empty]';
 		const slotName = slot.charAt(0).toUpperCase() + slot.slice(1).replace(/(\d+)/, ' $1');
 		return `**${slotName}:** ${itemName}`;
 	});

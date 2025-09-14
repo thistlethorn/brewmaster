@@ -110,8 +110,8 @@ async function handleVictory(interaction, combatState) {
 
 		db.prepare('INSERT INTO user_economy (user_id, crowns) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET crowns = crowns + excluded.crowns').run(userId, rewards.crowns || 0);
 
-		const reason = `__${character.character_name}__ beat ${nodeData.name}${isFirstClear ? ' for the first time' : newBestTime ? ' and set a new dungeon clear record' : ''} in ${turn} turns!`;
-		const title = `Victory at \`${nodeData.name}\``;
+		const reason = `__${character.character_name}__ beat ${nodeData.name}${isFirstClear ? ' for the **first time**' : newBestTime ? ' and set a **new best time** clearing the dungeon' : ''} in ${turn} turns!`;
+		const title = `Victory at \`${nodeData.name}\`${isFirstClear ? ' / 🥇`First Clear!`' : newBestTime ? ' / 🆕`New Best Time!`' : ''}`;
 		if (rewards.xp > 0) await addXp(userId, rewards.xp, interaction, reason, title);
 
 		const victoryEmbed = new EmbedBuilder()

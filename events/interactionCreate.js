@@ -446,7 +446,21 @@ module.exports = {
 					}
 				}
 			}
-
+			if (interaction.isModalSubmit() && interaction.customId.startsWith('guild_')) {
+				if (guildCommand && typeof guildCommand.modals === 'function') {
+					try {
+						await guildCommand.modals(interaction);
+						return;
+					}
+					catch (error) {
+						console.error('[Error] Guild modal error:', error);
+						if (!interaction.replied && !interaction.deferred) {
+							await interaction.reply({ content: 'There was an error processing your guild action.', flags: MessageFlags.Ephemeral });
+						}
+					}
+				}
+				return;
+			}
 			if (interaction.isModalSubmit() && interaction.customId.startsWith('fundraise_custommodal_')) {
 				if (guildCommand && typeof guildCommand.buttons?.handleFundraiseCustomModal === 'function') {
 					try {
