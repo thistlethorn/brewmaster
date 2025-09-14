@@ -1,6 +1,8 @@
 const db = require('../database');
 const { scheduleJob } = require('node-schedule');
 const { updateMultiplier } = require('../utils/handleCrownRewards');
+const { createMonarchGiveaway } = require('../utils/handleMonarchGiveaway');
+
 
 async function setupDailyReset(client) {
 	// Runs at 00:00 UTC every day
@@ -71,6 +73,17 @@ async function setupDailyReset(client) {
 			}
 
 			console.log('[dailyReset] Daily reset completed successfully');
+			const today = new Date();
+			// Use UTC functions to align with the cron job's timezone
+			const isFirstOfMonth = today.getUTCDate() === 1;
+			const isSpecialDay = today.getUTCFullYear() === 2025 && today.getUTCMonth() === 8 && today.getUTCDate() === 15;
+			// Sep 15 2025
+
+			if (isFirstOfMonth || isSpecialDay) {
+				console.log(`[dailyReset] Triggering Monarch of the Month giveaway. Reason: ${isFirstOfMonth ? 'First of the month' : 'Special override day'}.`);
+				await createMonarchGiveaway(client);
+			}
+
 		}
 		catch (error) {
 			console.error('[dailyReset] [Global Error]', error);

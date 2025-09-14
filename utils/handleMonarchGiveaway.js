@@ -1,23 +1,31 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const db = require('../database');
-const getWeekIdentifier = require('./getWeekIdentifier');
+const { getMonthIdentifier, getMonthName } = require('./getMonthIdentifier');
 const { updateMultiplier } = require('./handleCrownRewards');
 const { addXp } = require('./addXp');
 const config = require('../config.json');
 
 const EVENT_PING_ROLE = '1363538515576750130';
 const HALL_OF_FAME_CHANNEL = '1365345890591703080';
-const MOTW_ROLE = '1363537152658378793';
-const REMEMBERED_SOUL_ROLE = '1365350340496588840';
+const MONARCH_ROLE = '1363537152658378793';
 const TOP_BUMPER_ROLE = '1382828074789503128';
 
-async function createMotwGiveaway(client) {
+async function createMonarchGiveaway(client) {
 	try {
-		// Get current week identifier
-		const weekIdentifier = getWeekIdentifier();
+		// Get current month identifier
+		const monthIdentifier = getMonthIdentifier();
 		const now = new Date();
-		const endTime = new Date(now.getTime() + 12 * 60 * 60 * 1000);
-		// 12 hours from now
+		const monthName = getMonthName(now.getMonth());
+		const year = now.getFullYear();
+
+		const existingGiveaway = db.prepare('SELECT 1 FROM motw_giveaways WHERE week_identifier = ?').get(monthIdentifier);
+		if (existingGiveaway) {
+			console.log(`[MotM] Giveaway for ${monthIdentifier} already exists. Skipping creation.`);
+			return;
+		}
+
+		const endTime = new Date(now.getTime() + 16 * 60 * 60 * 1000);
+		// 16 hours from now
 
 		const channel = await client.channels.fetch(HALL_OF_FAME_CHANNEL);
 		if (!channel?.isTextBased()) {
@@ -29,9 +37,9 @@ async function createMotwGiveaway(client) {
 
 		const embed = new EmbedBuilder()
 			.setColor(0x9B59B6)
-			.setTitle(`🎉 Week ${weekIdentifier}'s Member of the Week Giveaway! 🎉`)
+			.setTitle(`👑 ${monthName} ${year}'s Monarch of the Month Giveaway! 👑`)
 			.setDescription(
-				'Join our free weekly raffle to win the **Member of the Week** title, a feature on our socials, **300 Crowns**, and a **3X Crown multiplier** for the week! Good luck!',
+				'Join our free monthly raffle to win the **Monarch of the Month** title, a feature on our socials, **300 Crowns**, and a **3X Crown multiplier** for the month! Good luck!',
 			)
 			.addFields(
 				{ name: 'Ends', value: `<t:${Math.floor(endTime.getTime() / 1000)}:R> (<t:${Math.floor(endTime.getTime() / 1000)}:F>)`, inline: false },
@@ -54,18 +62,18 @@ async function createMotwGiveaway(client) {
 		db.prepare(`
             INSERT INTO motw_giveaways (message_id, channel_id, week_identifier, start_time, end_time)
             VALUES (?, ?, ?, ?, ?)
-        `).run(giveawayMessage.id, channel.id, weekIdentifier, now.toISOString(), endTime.toISOString());
+        `).run(giveawayMessage.id, channel.id, monthIdentifier, now.toISOString(), endTime.toISOString());
 
-		console.log(`[MotW] Giveaway for week ${weekIdentifier} created. Ending at ${endTime.toISOString()}`);
+		console.log(`[MotM] Giveaway for ${monthIdentifier} created. Ending at ${endTime.toISOString()}`);
 		scheduleGiveawayEnd(client, giveawayMessage.id, endTime);
 
 	}
 	catch (error) {
-		console.error('[MotW] Error creating giveaway:', error);
+		console.error('[MotM] Error creating giveaway:', error);
 	}
 }
 
-async function handleMotwEntry(interaction) {
+async function handleMonarchEntry(interaction) {
 	const giveawayId = interaction.message.id;
 	const userId = interaction.user.id;
 
@@ -79,13 +87,21 @@ async function handleMotwEntry(interaction) {
 			return interaction.reply({ content: 'This giveaway has already ended or is invalid.', ephemeral: true });
 		}
 
-		// Prevent last week's winner from entering
-		const lastWeekWinner = db.prepare(`
-			SELECT winner_id FROM motw_giveaways WHERE week_identifier = ? - 1
-		`).get(giveaway.week_identifier)?.winner_id;
+		// Prevent last month's winner from entering
+		// this is now YYYY-MM
+		const currentMonthIdentifier = giveaway.week_identifier;
+		const [year, month] = currentMonthIdentifier.split('-').map(Number);
+		// Get previous month
+		const lastMonthDate = new Date(year, month - 2, 1);
+		const lastMonthIdentifier = `${lastMonthDate.getFullYear()}-${(lastMonthDate.getMonth() + 1).toString().padStart(2, '0')}`;
 
-		if (userId === lastWeekWinner) {
-			return interaction.reply({ content: 'Congratulations on your win last week! You can\'t enter this week to give others a chance.', ephemeral: true });
+		const lastMonthWinner = db.prepare(`
+			SELECT winner_id FROM motw_giveaways WHERE week_identifier = ?
+		`).get(lastMonthIdentifier)?.winner_id;
+
+
+		if (userId === lastMonthWinner) {
+			return interaction.reply({ content: 'Congratulations on your win last month! You can\'t enter this month to give others a chance.', ephemeral: true });
 		}
 
 		const existingEntry = db.prepare('SELECT 1 FROM motw_entries WHERE giveaway_id = ? AND user_id = ?').get(giveawayId, userId);
@@ -96,7 +112,7 @@ async function handleMotwEntry(interaction) {
 		db.prepare('INSERT INTO motw_entries (giveaway_id, user_id, entry_time) VALUES (?, ?, ?)')
 			.run(giveawayId, userId, new Date().toISOString());
 
-		const reason = 'Entered the weekly Member of the Week giveaway in <#1365345890591703080>!';
+		const reason = 'Entered the monthly Monarch of the Month giveaway in <#1365345890591703080>!';
 
 		await addXp(userId, config.xpRewards.motwEntry, interaction, reason);
 
@@ -108,22 +124,21 @@ async function handleMotwEntry(interaction) {
 		embed.data.fields = embed.data.fields.map(field => field.name === 'Entries' ? { ...field, value: newCount.toString() } : field);
 
 		await interaction.message.edit({ embeds: [embed] });
-		await interaction.reply({ content: 'You have successfully entered the Member of the Week giveaway! Good luck!', ephemeral: true });
+		await interaction.reply({ content: 'You have successfully entered the Monarch of the Month giveaway! Good luck!', ephemeral: true });
 
 	}
 	catch (error) {
-		console.error('[MotW] Error handling entry:', error);
+		console.error('[MotM] Error handling entry:', error);
 		await interaction.reply({ content: 'There was an error processing your entry.', ephemeral: true });
 	}
 }
 
-async function endMotwGiveaway(client, messageId) {
+async function endMonarchGiveaway(client, messageId) {
 	try {
 		const giveaway = db.prepare('SELECT * FROM motw_giveaways WHERE message_id = ? AND completed = 0').get(messageId);
 		if (!giveaway) return;
-		// Already completed or invalid
 
-		console.log(`[MotW] Ending giveaway ${messageId}`);
+		console.log(`[MotM] Ending giveaway ${messageId}`);
 
 		const channel = await client.channels.fetch(giveaway.channel_id);
 		if (!channel?.isTextBased()) throw new Error('Channel not found');
@@ -136,7 +151,6 @@ async function endMotwGiveaway(client, messageId) {
 					.setCustomId('motw_closed')
 					.setLabel('Giveaway Closed!')
 					.setStyle(ButtonStyle.Danger)
-				// Red button as requested
 					.setDisabled(true),
 			);
 			await message.edit({ components: [disabledButton] });
@@ -145,24 +159,24 @@ async function endMotwGiveaway(client, messageId) {
 		const entries = db.prepare('SELECT user_id FROM motw_entries WHERE giveaway_id = ?').all(messageId);
 		if (entries.length === 0) {
 			db.prepare('UPDATE motw_giveaways SET completed = 1 WHERE message_id = ?').run(messageId);
-			await channel.send('No one entered this week\'s Member of the Week giveaway!');
+			await channel.send('No one entered this month\'s Monarch of the Month giveaway!');
 			return;
 		}
 
 		await channel.guild.members.fetch();
 
-		const previousMotwRole = await channel.guild.roles.fetch(MOTW_ROLE);
-		if (previousMotwRole) {
-			const membersWithRole = previousMotwRole.members;
-			console.log(`[MotW] Found ${membersWithRole.size} member(s) with the previous MOTW role. Starting removal.`);
+		const previousMonarchRole = await channel.guild.roles.fetch(MONARCH_ROLE);
+		if (previousMonarchRole) {
+			const membersWithRole = previousMonarchRole.members;
+			console.log(`[MotM] Found ${membersWithRole.size} member(s) with the previous Monarch role. Starting removal.`);
 			for (const member of membersWithRole.values()) {
 				try {
-					await member.roles.remove(previousMotwRole);
+					await member.roles.remove(previousMonarchRole);
 					await updateMultiplier(member.id, channel.guild);
-					console.log(`[MotW] Removed MOTW role from previous winner ${member.user.tag}`);
+					console.log(`[MotM] Removed Monarch role from previous winner ${member.user.tag}`);
 				}
 				catch (error) {
-					console.error(`[MotW] Failed to remove role from ${member.user.tag}`, error);
+					console.error(`[MotM] Failed to remove role from ${member.user.tag}`, error);
 				}
 			}
 		}
@@ -171,9 +185,7 @@ async function endMotwGiveaway(client, messageId) {
 		const members = await Promise.all(
 			entries.map(entry => channel.guild.members.fetch(entry.user_id).catch(() => null)),
 		).then(results => results.filter(m => m !== null));
-		// Filter out any members who may have left
 
-		// **FATAL BUG FIX**: Correctly check roles using member objects
 		const entrantsWithStatus = members.map(member => {
 			const hasWonBefore = db.prepare('SELECT 1 FROM motw_winners_history WHERE user_id = ?').get(member.id) !== undefined;
 			const isTopBumper = member.roles.cache.has(TOP_BUMPER_ROLE);
@@ -195,17 +207,17 @@ async function endMotwGiveaway(client, messageId) {
 
 		// Give rewards to the winner
 		const winnerMember = await channel.guild.members.fetch(winnerId);
-		let rememberedSoulGiven = false;
+		let specialPrize = 0;
 		if (winnerMember) {
-			await winnerMember.roles.add(MOTW_ROLE);
-			if (!winnerMember.roles.cache.has(REMEMBERED_SOUL_ROLE)) {
-				await winnerMember.roles.add(REMEMBERED_SOUL_ROLE);
-				rememberedSoulGiven = true;
+			await winnerMember.roles.add(MONARCH_ROLE);
+			// SPECIAL PRIZE LOGIC for Sep 2025
+			if (giveaway.week_identifier === '2025-09') {
+				specialPrize = 10000;
 			}
-			db.prepare('UPDATE user_economy SET crowns = crowns + 300 WHERE user_id = ?').run(winnerId);
+			db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(300 + specialPrize, winnerId);
 			await updateMultiplier(winnerId, channel.guild);
 
-			const reason = '**WON** the __Member of the Week__ giveaway hosted in <#1365345890591703080>!';
+			const reason = '**WON** the __Monarch of the Month__ giveaway hosted in <#1365345890591703080>!';
 
 			await addXp(winnerId, config.xpRewards.motwWin, client, reason);
 		}
@@ -221,28 +233,28 @@ async function endMotwGiveaway(client, messageId) {
 		}
 
 		// Announce the winner
+		const [year, monthNum] = giveaway.week_identifier.split('-').map(Number);
+		const monthName = getMonthName(monthNum - 1);
+
 		const winnerEmbed = new EmbedBuilder()
 			.setColor(0xF1C40F)
-			.setTitle(`🏆 Congratulations to Week ${giveaway.week_identifier}'s Member of the Week! 🏆`)
+			.setTitle(`🏆 Congratulations to ${monthName} ${year}'s Monarch of the Month! 🏆`)
 			.setDescription(`Please congratulate ${winnerMember} for being selected! They will be featured on our social media and receive:`)
 			.setThumbnail(winnerMember.user.displayAvatarURL())
 			.addFields(
-				{ name: '👑 Crowns Reward', value: '**300 Crowns** have been added to your balance!', inline: false },
-				{ name: '✨ Multiplier Bonus', value: 'You now have a **3X Crown earnings multiplier** for the week!', inline: false },
+				{ name: '👑 Crowns Reward', value: `**${300 + specialPrize} Crowns** have been added to your balance!${specialPrize > 0 ? ' (Includes a special one-time bonus!)' : ''}`, inline: false },
+				{ name: '✨ Multiplier Bonus', value: 'You now have a **3X Crown earnings multiplier** for the month!', inline: false },
 			);
 
-		if (rememberedSoulGiven) {
-			winnerEmbed.addFields({ name: '🌟 New Permanent Role!', value: `You have earned the <@&${REMEMBERED_SOUL_ROLE}> role!`, inline: false });
-		}
 		if (consolationWinners.length > 0) {
 			winnerEmbed.addFields({ name: '💸 Consolation Prizes', value: 'All other participants have received **100 Crowns**! Thank you for entering!', inline: false });
 		}
-		winnerEmbed.setFooter({ text: 'A new giveaway starts next week!' }).setTimestamp();
+		winnerEmbed.setFooter({ text: 'A new giveaway starts next month!' }).setTimestamp();
 
 		await channel.send({ content: `🎉 Congratulations, <@${winnerId}>! 🎉`, embeds: [winnerEmbed] });
 	}
 	catch (error) {
-		console.error(`[MotW] Error ending giveaway ${messageId}:`, error);
+		console.error(`[MotM] Error ending giveaway ${messageId}:`, error);
 	}
 }
 
@@ -289,7 +301,7 @@ function scheduleGiveawayEnd(client, messageId, endTime) {
 	const delay = endTime.getTime() - now.getTime();
 
 	if (delay <= 0) {
-		endMotwGiveaway(client, messageId);
+		endMonarchGiveaway(client, messageId);
 		return;
 	}
 
@@ -299,7 +311,7 @@ function scheduleGiveawayEnd(client, messageId, endTime) {
 	}
 
 	const timeout = setTimeout(() => {
-		endMotwGiveaway(client, messageId);
+		endMonarchGiveaway(client, messageId);
 		activeGiveawayTimeouts.delete(messageId);
 	}, delay);
 
@@ -308,7 +320,7 @@ function scheduleGiveawayEnd(client, messageId, endTime) {
 
 // Call this function once when the bot is ready to handle missed giveaways
 async function resumeActiveGiveaways(client) {
-	console.log('[MotW] Checking for active giveaways to resume...');
+	console.log('[MonarchGiveaway] Checking for active giveaways to resume...');
 	const activeGiveaways = db.prepare(`
         SELECT message_id, end_time FROM motw_giveaways
         WHERE completed = 0
@@ -316,13 +328,13 @@ async function resumeActiveGiveaways(client) {
 
 	for (const giveaway of activeGiveaways) {
 		const endTime = new Date(giveaway.end_time);
-		console.log(`[MotW] Resuming schedule for giveaway ${giveaway.message_id}, ending at ${endTime.toISOString()}`);
+		console.log(`[MonarchGiveaway] Resuming schedule for giveaway ${giveaway.message_id}, ending at ${endTime.toISOString()}`);
 		scheduleGiveawayEnd(client, giveaway.message_id, endTime);
 	}
 }
 
 module.exports = {
-	createMotwGiveaway,
-	handleMotwEntry,
+	createMonarchGiveaway,
+	handleMonarchEntry,
 	resumeActiveGiveaways,
 };

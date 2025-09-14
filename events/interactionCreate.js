@@ -1,6 +1,6 @@
 // events/interactionCreate.js
 const { Events, EmbedBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits } = require('discord.js');
-const { handleMotwEntry } = require('../utils/handleMotwGiveaway');
+const { handleMonarchEntry } = require('../utils/handleMonarchGiveaway');
 const { scheduleDailyReminder, sendReminder } = require('../tasks/dailyReminder');
 const { updateMultiplier } = require('../utils/handleCrownRewards');
 const sendMessageToChannel = require('../utils/sendMessageToChannel');
@@ -711,11 +711,11 @@ module.exports = {
 
 				else if (interaction.customId === 'motw_enter') {
 					try {
-						await handleMotwEntry(interaction);
-						console.log(`[Execute] Successfully handled MotW entry, requested by ${interaction.user.displayName}`);
+						await handleMonarchEntry(interaction);
+						console.log(`[Execute] Successfully handled Monarch entry, requested by ${interaction.user.displayName}`);
 					}
 					catch (error) {
-						console.error('[Error] MotW entry button interaction error:', error);
+						console.error('[Error] Monarch entry button interaction error:', error);
 					}
 					return;
 				}

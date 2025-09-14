@@ -4,7 +4,6 @@ const { EmbedBuilder } = require('discord.js');
 const updateLeaderboard = require('../utils/updateLeaderboard');
 const sendMessage = require('../utils/sendMessageToChannel');
 const { updateMultiplier } = require('../utils/handleCrownRewards');
-const { createMotwGiveaway } = require('../utils/handleMotwGiveaway');
 const { addXp } = require('../utils/addXp');
 const config = require('../config.json');
 
@@ -216,9 +215,6 @@ function setupWeeklyReset(client) {
 
 			console.log('[weeklyReset] Applying guild compound bonuses');
         	await applyGuildCompoundBonus();
-			// Add this line to start the MotW giveaway
-			console.log('[weeklyReset] Starting Member of the Week giveaway');
-			await createMotwGiveaway(client);
 		}
 		catch (error) {
 			console.error('[weeklyReset] Error during weekly reset:', error);
