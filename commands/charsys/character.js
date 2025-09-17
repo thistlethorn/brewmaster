@@ -506,6 +506,57 @@ async function handleUnequip(interaction) {
 		await interaction.reply({ content: 'An error occurred while trying to unequip this item.', flags: MessageFlags.Ephemeral });
 	}
 }
+
+/**
+ * Handles the /character recover command.
+ * @param {import('discord.js').ChatInputCommandInteraction} interaction
+ */
+async function handleRecover(interaction) {
+	const userId = interaction.user.id;
+	const character = db.prepare('SELECT * FROM characters WHERE user_id = ?').get(userId);
+
+	if (!character) {
+		return interaction.reply({ content: 'You must create a character first.', flags: MessageFlags.Ephemeral });
+	}
+
+	if (['IN_COMBAT', 'DEFEATED', 'RECOVERING_SHORT', 'RECOVERING_LONG'].includes(character.character_status)) {
+		const expiryTime = new Date(character.character_status_expiry_time);
+		const expiryTimestamp = Math.floor(expiryTime.getTime() / 1000);
+		let statusMessage = '';
+		switch (character.character_status) {
+		case 'IN_COMBAT': statusMessage = 'You cannot rest while in combat!'; break;
+		case 'DEFEATED': statusMessage = `You are still dazed from defeat. You can act again <t:${expiryTimestamp}:R>.`; break;
+		default: statusMessage = `You are already recovering. Your rest will be complete <t:${expiryTimestamp}:R>.`; break;
+		}
+		return interaction.reply({ content: statusMessage, flags: MessageFlags.Ephemeral });
+	}
+
+	if (character.current_health === character.max_health && character.current_mana === character.max_mana) {
+		return interaction.reply({ content: 'You are already at full health and mana.', flags: MessageFlags.Ephemeral });
+	}
+
+	const levelTier = Math.floor((character.level - 1) / 5) + 1;
+	const shortRestMinutes = 15 * levelTier;
+	const longRestHours = 2 * levelTier;
+
+	const embed = new EmbedBuilder()
+		.setColor(0x3498DB)
+		.setTitle('Begin Recovery')
+		.setDescription('Choose how you would like to recover. You cannot start adventures or other strenuous activities while recovering. This action can be cancelled, but you will receive no benefits.')
+		.addFields(
+			{ name: 'Tend Wounds (Short Rest)', value: `Restores **50% of missing Health** and **25% of missing Mana**.\nDuration: **${shortRestMinutes} minutes**.` },
+			{ name: 'Rest Up (Long Rest)', value: `Restores **100% of Health and Mana**.\nDuration: **${longRestHours} hours**.` },
+		);
+
+	const row = new ActionRowBuilder().addComponents(
+		new ButtonBuilder().setCustomId(`char_recover_short_${userId}`).setLabel('Tend Wounds').setStyle(ButtonStyle.Primary),
+		new ButtonBuilder().setCustomId(`char_recover_long_${userId}`).setLabel('Rest Up').setStyle(ButtonStyle.Success),
+		new ButtonBuilder().setCustomId(`char_recover_cancelprompt_${userId}`).setLabel('Cancel').setStyle(ButtonStyle.Secondary),
+	);
+
+	await interaction.reply({ embeds: [embed], components: [row], flags: MessageFlags.Ephemeral });
+}
+
 const statProficiencies = {
 	might: {
 		emoji: '⚔️',
@@ -796,6 +847,10 @@ module.exports = {
 				.setDescription('Allocate your unspent stat points from leveling up.'))
 		.addSubcommand(subcommand =>
 			subcommand
+				.setName('recover')
+				.setDescription('Rest to recover health and mana over time.'))
+		.addSubcommand(subcommand =>
+			subcommand
 				.setName('help')
 				.setDescription('Get help and information about the character system.')),
 
@@ -876,6 +931,9 @@ module.exports = {
 			break;
 		case 'spendpoints':
 			await handleSpendPoints(interaction);
+			break;
+		case 'recover':
+			await handleRecover(interaction);
 			break;
 		case 'help':
 			await interaction.reply({ content: 'Character system help guide is under construction!', flags: MessageFlags.Ephemeral });
@@ -1115,7 +1173,46 @@ module.exports = {
 			await interaction.update({ embeds: [updatedEmbed] });
 			return;
 		}
+		if (command === 'recover') {
+			const character = db.prepare('SELECT level FROM characters WHERE user_id = ?').get(userId);
+			if (!character) {
+				return interaction.update({ content: 'Could not find your character data.', components: [], embeds: [] });
+			}
 
+			if (action === 'cancelprompt') {
+				return interaction.update({ content: 'Recovery cancelled.', components: [], embeds: [] });
+			}
+
+			const levelTier = Math.floor((character.level - 1) / 5) + 1;
+			let durationMs;
+			let statusToSet;
+			let durationText;
+
+			if (action === 'short') {
+				durationMs = (15 * levelTier) * 60 * 1000;
+				statusToSet = 'RECOVERING_SHORT';
+				durationText = `${15 * levelTier} minutes`;
+			}
+			else {
+				// long
+				durationMs = (2 * levelTier) * 60 * 60 * 1000;
+				statusToSet = 'RECOVERING_LONG';
+				durationText = `${2 * levelTier} hours`;
+			}
+
+			const expiryTime = new Date(Date.now() + durationMs);
+			const expiryTimestamp = Math.floor(expiryTime.getTime() / 1000);
+
+			db.prepare('UPDATE characters SET character_status = ?, character_status_expiry_time = ? WHERE user_id = ?')
+				.run(statusToSet, expiryTime.toISOString(), userId);
+
+			await interaction.update({
+				content: `✅ You have begun to rest. Your recovery will be complete in **${durationText}** (<t:${expiryTimestamp}:R>).`,
+				components: [],
+				embeds: [],
+			});
+			return;
+		}
 		if (command === 'edit') {
 			const character = db.prepare('SELECT * FROM characters WHERE user_id = ?').get(userId);
 			if (!character) return interaction.reply({ content: 'Could not find your character data.', flags: MessageFlags.Ephemeral });

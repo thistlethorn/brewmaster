@@ -525,6 +525,7 @@ const setupTables = db.transaction(() => {
             -- === Progression & State ===
             level INTEGER DEFAULT 1 CHECK (level >= 1),
             xp INTEGER DEFAULT 0 CHECK (xp >= 0),
+            -- 'IDLE', 'IN_COMBAT', 'DEFEATED', 'RECOVERING_SHORT', 'RECOVERING_LONG'
             character_status TEXT NOT NULL DEFAULT 'IDLE',
             character_status_expiry_time TEXT,
             stat_points_unspent INTEGER DEFAULT 0 CHECK (stat_points_unspent >= 0),

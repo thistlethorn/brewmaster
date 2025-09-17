@@ -96,7 +96,7 @@ module.exports = {
 					return;
 				}
 
-				console.log('50% chance check passed and global cooldown is clear. Checking for triggers...');
+				// console.log('50% chance check passed and global cooldown is clear. Checking for triggers...');
 
 				// 2. Find all possible quotes that could be triggered by the words in the message
 				const tokens = (message.content.toLowerCase().match(/[a-z0-9&]+/gi) || []);
@@ -118,7 +118,7 @@ module.exports = {
 					return (now.getTime() - last.getTime()) >= 15 * 60 * 1000;
 				});
 
-				console.log(`[Tony Quote Trigger] Found ${candidates.length} candidates, ${potentialTriggers.length} valid triggers after cooldown check.`);
+				// console.log(`[Tony Quote Trigger] Found ${candidates.length} candidates, ${potentialTriggers.length} valid triggers after cooldown check.`);
 
 				// 3. If we have any valid, off-cooldown quotes, attempt to send one
 				if (potentialTriggers.length > 0) {
@@ -213,7 +213,7 @@ module.exports = {
 				const activity = db.prepare(`
             SELECT normal_messages FROM user_activity WHERE user_id = ?
         `).get(userId);
-				console.log(`[messageCreate] [CHATLOG] ${message.author.displayName} sent a normal message, totaling [${activity.normal_messages}] today.`);
+				// console.log(`[messageCreate] [CHATLOG] ${message.author.displayName} sent a normal message, totaling [${activity.normal_messages}] today.`);
 
 				const ACTIVE_CHATTER_ROLE = '1382521995656302632';
 				if (!message.member.roles.cache.has(ACTIVE_CHATTER_ROLE)) {

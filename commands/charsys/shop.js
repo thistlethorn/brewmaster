@@ -437,6 +437,30 @@ module.exports = {
 					return interaction.editReply({ content: 'An error occurred. Please try again.', components: [] });
 				}
 
+				// Special handler for the Healer NPC
+				if (vendor.name === 'Sister Elara') {
+					const economy = db.prepare('SELECT crowns FROM user_economy WHERE user_id = ?').get(userId) || { crowns: 0 };
+					const embed = new EmbedBuilder()
+						.setColor(0x2ECC71)
+						.setTitle('Visiting the Sanctuary')
+						.setDescription('"May the light restore you, traveler. For a humble donation, I can mend your wounds and soothe your spirit."')
+						.addFields(
+							{ name: 'Your Status', value: `❤️ HP: \`${character.current_health}/${character.max_health}\`\n👑 Crowns: \`${economy.crowns.toLocaleString()}\`` },
+							{ name: 'Mend Wounds (100 👑)', value: 'Instantly restores **50 HP**.', inline: true },
+							{ name: 'Restore Vitality (1,000 👑)', value: 'Instantly restores **25% of your Max HP**.', inline: true },
+							{ name: 'Full Restoration (5,000 👑)', value: 'Instantly restores **all HP & Mana** and **clears Recovery status**.', inline: true },
+						);
+
+					const row = new ActionRowBuilder().addComponents(
+						new ButtonBuilder().setCustomId(`shop_heal_flat_${vendor.vendor_id}_${userId}`).setLabel('Mend Wounds').setStyle(ButtonStyle.Primary),
+						new ButtonBuilder().setCustomId(`shop_heal_percent_${vendor.vendor_id}_${userId}`).setLabel('Restore Vitality').setStyle(ButtonStyle.Primary),
+						new ButtonBuilder().setCustomId(`shop_heal_full_${vendor.vendor_id}_${userId}`).setLabel('Full Restoration').setStyle(ButtonStyle.Success),
+						new ButtonBuilder().setCustomId(`shop_leave_${vendor.vendor_id}_${userId}`).setLabel('Leave').setStyle(ButtonStyle.Secondary),
+					);
+
+					return interaction.editReply({ embeds: [embed], components: [row] });
+				}
+
 				db.prepare('INSERT INTO character_npc_interactions (user_id, vendor_id) VALUES (?, ?) ON CONFLICT DO NOTHING').run(userId, vendorId);
 				const interactionData = db.prepare('SELECT * FROM character_npc_interactions WHERE user_id = ? AND vendor_id = ?').get(userId, vendorId);
 
@@ -805,6 +829,67 @@ module.exports = {
 			}
 
 			switch (action) {
+			case 'heal': {
+				const healType = parts[2];
+				if (userId !== expectedUserId) return;
+
+				const economy = db.prepare('SELECT crowns FROM user_economy WHERE user_id = ?').get(userId) || { crowns: 0 };
+
+				const costs = { flat: 100, percent: 1000, full: 5000 };
+				const cost = costs[healType];
+
+				if (economy.crowns < cost) {
+					return interaction.followUp({ content: 'You do not have enough Crowns for this service.', flags: MessageFlags.Ephemeral });
+				}
+
+				let healthToRestore = 0;
+				let manaToRestore = 0;
+				let newStatus = character.character_status;
+				let newStatusExpiry = character.character_status_expiry_time;
+
+				switch (healType) {
+				case 'flat':
+					healthToRestore = 50;
+					break;
+				case 'percent':
+					healthToRestore = Math.floor(character.max_health * 0.25);
+					break;
+				case 'full':
+					healthToRestore = character.max_health - character.current_health;
+					manaToRestore = character.max_mana - character.current_mana;
+					if (newStatus.startsWith('RECOVERING')) {
+						newStatus = 'IDLE';
+						newStatusExpiry = null;
+					}
+					break;
+				}
+
+				const newHealth = Math.min(character.max_health, character.current_health + healthToRestore);
+				const newMana = Math.min(character.max_mana, character.current_mana + manaToRestore);
+
+				db.transaction(() => {
+					db.prepare('UPDATE user_economy SET crowns = crowns - ? WHERE user_id = ?').run(cost, userId);
+					db.prepare('UPDATE characters SET current_health = ?, current_mana = ?, character_status = ?, character_status_expiry_time = ? WHERE user_id = ?')
+						.run(newHealth, newMana, newStatus, newStatusExpiry, userId);
+				})();
+
+				await interaction.followUp({ content: `You pay ${cost} Crowns. Sister Elara's blessing restores your vitality! You are now at ${newHealth}/${character.max_health} HP.`, flags: MessageFlags.Ephemeral });
+				// Re-render the healer UI with updated values
+				const updatedCharacter = db.prepare('SELECT * FROM characters WHERE user_id = ?').get(userId);
+				const updatedEconomy = db.prepare('SELECT crowns FROM user_economy WHERE user_id = ?').get(userId);
+				const updatedEmbed = new EmbedBuilder()
+					.setColor(0x2ECC71)
+					.setTitle('Visiting the Sanctuary')
+					.setDescription('"May the light restore you, traveler. For a humble donation, I can mend your wounds and soothe your spirit."')
+					.addFields(
+						{ name: 'Your Status', value: `❤️ HP: \`${updatedCharacter.current_health}/${updatedCharacter.max_health}\`\n👑 Crowns: \`${updatedEconomy.crowns.toLocaleString()}\`` },
+						{ name: 'Mend Wounds (100 👑)', value: 'Instantly restores **50 HP**.', inline: true },
+						{ name: 'Restore Vitality (1,000 👑)', value: 'Instantly restores **25% of your Max HP**.', inline: true },
+						{ name: 'Full Restoration (5,000 👑)', value: 'Instantly restores **all HP & Mana** and **clears Recovery status**.', inline: true },
+					);
+				await interaction.editReply({ embeds: [updatedEmbed] });
+				break;
+			}
 			case 'leave': {
 				const vendors = db.prepare('SELECT vendor_id, name, description FROM npc_vendors ORDER BY name ASC').all();
 				const ui = buildVendorSelectionUI(vendors, userId);

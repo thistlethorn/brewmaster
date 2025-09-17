@@ -40,6 +40,7 @@ const vendorsData = [
 	{ name: 'Sable the Hunter', description: 'A rugged hunter who values trophies from dangerous beasts above all else.', charm_requirement: 12 },
 	{ name: 'Pip the Alchemist', description: 'An eccentric but brilliant alchemist, always bubbling with new ideas.', charm_requirement: 15 },
 	{ name: 'Greg the Oddball', description: 'The familiar, weary dealer also runs a side business in strange and wonderful trinkets.', charm_requirement: 20 },
+	{ name: 'Sister Elara', description: 'A serene acolyte offering restorative services for a donation.', charm_requirement: 5 },
 ];
 
 const vendorStockData = [

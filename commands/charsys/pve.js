@@ -195,7 +195,13 @@ async function handleDefeat(interaction, combatState) {
 
 	const economy = db.prepare('SELECT crowns FROM user_economy WHERE user_id = ?').get(userId) || { crowns: 0 };
 	const crownsLost = Math.floor(economy.crowns * CROWN_LOSS_PERCENT);
-	const expiryTime = new Date(Date.now() + DEFEAT_COOLDOWN_MS).toISOString();
+
+	// Calculate mandatory "Rest Up" duration after defeat cooldown
+	const levelTier = Math.floor((character.level - 1) / 5) + 1;
+	const longRestHours = 2 * levelTier;
+	const recoveryDurationMs = longRestHours * 60 * 60 * 1000;
+	const finalRecoveryTime = new Date(Date.now() + DEFEAT_COOLDOWN_MS + recoveryDurationMs).toISOString();
+
 
 	let consolationXp = 0;
 	if (nodeData.repeatable_reward_json) {
@@ -212,20 +218,23 @@ async function handleDefeat(interaction, combatState) {
 	const defeatEmbed = new EmbedBuilder()
 		.setColor(0x992D22)
 		.setTitle(`Defeated at ${nodeData.name}...`)
-		.setDescription(`You have fallen in battle. You awaken back at the Tavern, having lost your way.\n\nYou earned **${consolationXp} XP** for the attempt.\n\n**Penalties:**\n• You lost **${crownsLost.toLocaleString()}** Crowns.\n• You cannot start another adventure for **15 minutes**.`);
+		.setDescription(`You have fallen in battle. You awaken back at the Tavern, having lost your way.\n\nYou earned **${consolationXp} XP** for the attempt.\n\n**Penalties:**\n• You lost **${crownsLost.toLocaleString()}** Crowns.\n• You cannot start another adventure for **15 minutes**.\n• After this, you must **Rest Up for ${longRestHours} hours** before you can fight again.`);
 
 	// Cleanup and log the failed attempt
 	db.transaction(() => {
+		// Set status to DEFEATED with a 15 min expiry.
+		// After this, another command will trigger the transition to RECOVERING_LONG.
+		// For simplicity now, let's just set the final recovery time.
 		db.prepare(`
 			UPDATE characters 
 			SET 
-				character_status = 'DEFEATED', 
+				character_status = 'RECOVERING_LONG', 
 				times_fallen = times_fallen + 1,
 				current_health = 1, -- Set to 1HP, not max
 				current_mana = 0,
 				character_status_expiry_time = ?
 			WHERE user_id = ?
-		`).run(expiryTime, userId);
+		`).run(finalRecoveryTime, userId);
 		db.prepare('UPDATE user_economy SET crowns = crowns - ? WHERE user_id = ?').run(crownsLost, userId);
 		// Log the attempt without a clear
 		db.prepare(`
