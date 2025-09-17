@@ -39,7 +39,7 @@ async function createMonarchGiveaway(client) {
 			.setColor(0x9B59B6)
 			.setTitle(`👑 ${monthName} ${year}'s Monarch of the Month Giveaway! 👑`)
 			.setDescription(
-				'Join our free monthly raffle to win the **Monarch of the Month** title, a feature on our socials, **300 Crowns**, and a **3X Crown multiplier** for the month! Good luck!',
+				'Join our free monthly raffle to win the **Monarch of the Month** title, a feature on our socials, **5000 Crowns**, and a **3X Crown multiplier** for the month! Good luck!',
 			)
 			.addFields(
 				{ name: 'Ends', value: `<t:${Math.floor(endTime.getTime() / 1000)}:R> (<t:${Math.floor(endTime.getTime() / 1000)}:F>)`, inline: false },
@@ -85,23 +85,6 @@ async function handleMonarchEntry(interaction) {
 
 		if (!giveaway) {
 			return interaction.reply({ content: 'This giveaway has already ended or is invalid.', ephemeral: true });
-		}
-
-		// Prevent last month's winner from entering
-		// this is now YYYY-MM
-		const currentMonthIdentifier = giveaway.week_identifier;
-		const [year, month] = currentMonthIdentifier.split('-').map(Number);
-		// Get previous month
-		const lastMonthDate = new Date(year, month - 2, 1);
-		const lastMonthIdentifier = `${lastMonthDate.getFullYear()}-${(lastMonthDate.getMonth() + 1).toString().padStart(2, '0')}`;
-
-		const lastMonthWinner = db.prepare(`
-			SELECT winner_id FROM motw_giveaways WHERE week_identifier = ?
-		`).get(lastMonthIdentifier)?.winner_id;
-
-
-		if (userId === lastMonthWinner) {
-			return interaction.reply({ content: 'Congratulations on your win last month! You can\'t enter this month to give others a chance.', ephemeral: true });
 		}
 
 		const existingEntry = db.prepare('SELECT 1 FROM motw_entries WHERE giveaway_id = ? AND user_id = ?').get(giveawayId, userId);
@@ -214,7 +197,7 @@ async function endMonarchGiveaway(client, messageId) {
 			if (giveaway.week_identifier === '2025-09') {
 				specialPrize = 10000;
 			}
-			db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(300 + specialPrize, winnerId);
+			db.prepare('UPDATE user_economy SET crowns = crowns + ? WHERE user_id = ?').run(5000 + specialPrize, winnerId);
 			await updateMultiplier(winnerId, channel.guild);
 
 			const reason = '**WON** the __Monarch of the Month__ giveaway hosted in <#1365345890591703080>!';
@@ -242,7 +225,7 @@ async function endMonarchGiveaway(client, messageId) {
 			.setDescription(`Please congratulate ${winnerMember} for being selected! They will be featured on our social media and receive:`)
 			.setThumbnail(winnerMember.user.displayAvatarURL())
 			.addFields(
-				{ name: '👑 Crowns Reward', value: `**${300 + specialPrize} Crowns** have been added to your balance!${specialPrize > 0 ? ' (Includes a special one-time bonus!)' : ''}`, inline: false },
+				{ name: '👑 Crowns Reward', value: `**${5000 + specialPrize} Crowns** have been added to your balance!${specialPrize > 0 ? ' (Includes a special one-time bonus!)' : ''}`, inline: false },
 				{ name: '✨ Multiplier Bonus', value: 'You now have a **3X Crown earnings multiplier** for the month!', inline: false },
 			);
 

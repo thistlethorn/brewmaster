@@ -304,7 +304,7 @@ async function handleView(interaction) {
 	// --- Equipment ---
 	const equipmentDisplay = equipmentSlots.map(slot => {
 		const item = equippedMap.get(slot);
-		const itemName = item ? item.name : weaponHandedness === 'two-handed' ? '[Two-Handed Weapon]' : '[Empty]';
+		const itemName = item ? item.name : weaponHandedness === 'two-handed' ? '[Two-Handed Weapon Is Equipped]' : '[Empty]';
 		const slotName = slot.charAt(0).toUpperCase() + slot.slice(1).replace(/(\d+)/, ' $1');
 		return `**${slotName}:** ${itemName}`;
 	});
