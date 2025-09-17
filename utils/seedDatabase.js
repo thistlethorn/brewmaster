@@ -2,8 +2,8 @@
 const db = require('../database');
 
 const spellsData = [
-	{ name: 'Arcane Bolt', description: 'A simple bolt of raw magical energy.', required_wits: 10, mana_cost: 5, effects_json: '{"damage": "1d8", "damage_type": "Arcane", "target": "single"}' },
-	{ name: 'Minor Heal', description: 'A faint glow that mends minor wounds.', required_wits: 12, mana_cost: 8, effects_json: '{"heal": "1d6", "target": "self"}' },
+	{ name: 'Arcane Bolt', description: 'A simple bolt of raw magical energy.', required_level: 1, spell_school: 'EVOCATION', required_wits: 10, mana_cost: 5, effects_json: '{"damage": "1d8", "damage_type": "Arcane", "target": "single"}' },
+	{ name: 'Minor Heal', description: 'A faint glow that mends minor wounds.', required_level: 1, spell_school: 'RESTORATION', required_wits: 12, mana_cost: 8, effects_json: '{"heal": "1d6", "target": "self"}' },
 ];
 
 const originsData = [
@@ -307,10 +307,12 @@ function seedPveData() {
 	db.transaction(() => {
 		// Prepare all UPSERT statements once for efficiency.
 		const upsertSpell = db.prepare(`
-            INSERT INTO spells (name, description, required_wits, mana_cost, effects_json)
-            VALUES (@name, @description, @required_wits, @mana_cost, @effects_json)
+            INSERT INTO spells (name, description, required_level, spell_school, required_wits, mana_cost, effects_json)
+            VALUES (@name, @description, @required_level, @spell_school, @required_wits, @mana_cost, @effects_json)
             ON CONFLICT(name) DO UPDATE SET
                 description = excluded.description,
+                required_level = excluded.required_level,
+                spell_school = excluded.spell_school,
                 required_wits = excluded.required_wits,
                 mana_cost = excluded.mana_cost,
                 effects_json = excluded.effects_json

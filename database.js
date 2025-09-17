@@ -1069,7 +1069,7 @@ const setupTables = db.transaction(() => {
 
             -- e.g., 'EVOCATION', 'CONJURATION', 'ABJURATION'
             spell_school TEXT,
-            required_level INTEGER NOT NULL CHECK (required_level >= 1),
+            required_level INTEGER NOT NULL DEFAULT 1 CHECK (required_level >= 1),
             required_wits INTEGER DEFAULT 10,
             mana_cost INTEGER NOT NULL DEFAULT 0 CHECK (mana_cost >= 0),
 
@@ -1335,6 +1335,15 @@ const setupTables = db.transaction(() => {
 		if (!spellsColumns.has('required_wits')) {
 			db.prepare('ALTER TABLE spells ADD COLUMN required_wits INTEGER DEFAULT 10').run();
 			console.log('[DB Migration] Added column: spells.required_wits');
+		}
+		if (!spellsColumns.has('spell_school')) {
+			db.prepare('ALTER TABLE spells ADD COLUMN spell_school TEXT').run();
+			console.log('[DB Migration] Added column: spells.spell_school');
+		}
+		if (!spellsColumns.has('required_level')) {
+			// We add a DEFAULT here because the column is NOT NULL.
+			db.prepare('ALTER TABLE spells ADD COLUMN required_level INTEGER NOT NULL DEFAULT 1').run();
+			console.log('[DB Migration] Added column: spells.required_level');
 		}
 		console.log('[DB Migration] Spells schema check complete.');
 	}
