@@ -526,6 +526,7 @@ const setupTables = db.transaction(() => {
             level INTEGER DEFAULT 1 CHECK (level >= 1),
             xp INTEGER DEFAULT 0 CHECK (xp >= 0),
             character_status TEXT NOT NULL DEFAULT 'IDLE',
+            character_status_expiry_time TEXT,
             stat_points_unspent INTEGER DEFAULT 0 CHECK (stat_points_unspent >= 0),
 
             -- === Resource Pools ===
@@ -1069,11 +1070,22 @@ const setupTables = db.transaction(() => {
             -- e.g., 'EVOCATION', 'CONJURATION', 'ABJURATION'
             spell_school TEXT,
             required_level INTEGER NOT NULL CHECK (required_level >= 1),
+            required_wits INTEGER DEFAULT 10,
             mana_cost INTEGER NOT NULL DEFAULT 0 CHECK (mana_cost >= 0),
 
             -- e.g., '[{"item_id": 5, "quantity": 1}]' for a material component
             component_cost_json TEXT CHECK(component_cost_json IS NULL OR json_valid(component_cost_json)),
             effects_json TEXT NOT NULL CHECK(json_valid(effects_json))
+        )
+    `).run();
+
+	db.prepare(`
+        CREATE TABLE IF NOT EXISTS character_spells (
+            user_id TEXT NOT NULL,
+            spell_id INTEGER NOT NULL,
+            PRIMARY KEY (user_id, spell_id),
+            FOREIGN KEY(user_id) REFERENCES characters(user_id) ON DELETE CASCADE,
+            FOREIGN KEY(spell_id) REFERENCES spells(spell_id) ON DELETE CASCADE
         )
     `).run();
 
@@ -1317,7 +1329,19 @@ const setupTables = db.transaction(() => {
     */
 
 	// MIGRATION SCRIPT for Character Sheet v2 - Adds new columns if they don't exist.
-
+	console.log('[DB Migration] Checking schema for spells.required_wits...');
+	try {
+		const spellsColumns = new Set(db.pragma('table_info(spells)').map(c => c.name));
+		if (!spellsColumns.has('required_wits')) {
+			db.prepare('ALTER TABLE spells ADD COLUMN required_wits INTEGER DEFAULT 10').run();
+			console.log('[DB Migration] Added column: spells.required_wits');
+		}
+		console.log('[DB Migration] Spells schema check complete.');
+	}
+	catch (error) {
+		console.error('[DB Migration] Failed to update spells schema for required_wits:', error);
+		throw error;
+	}
 	console.log('[DB Migration] Checking schema for guild_list guild_image...');
 	try {
 		const guildListColumns = new Set(db.pragma('table_info(guild_list)').map(c => c.name));
@@ -1354,6 +1378,10 @@ const setupTables = db.transaction(() => {
 		if (!characterColumns.has('times_fallen')) {
 			db.prepare('ALTER TABLE characters ADD COLUMN times_fallen INTEGER DEFAULT 0').run();
 			console.log('[DB Migration] Added column: characters.times_fallen');
+		}
+		if (!characterColumns.has('character_status_expiry_time')) {
+			db.prepare('ALTER TABLE characters ADD COLUMN character_status_expiry_time TEXT').run();
+			console.log('[DB Migration] Added column: characters.character_status_expiry_time');
 		}
 
 		const pveProgressColumns = new Set(db.pragma('table_info(character_pve_progress)').map(c => c.name));

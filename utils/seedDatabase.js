@@ -1,6 +1,10 @@
 // utils/seedDatabase.js
 const db = require('../database');
 
+const spellsData = [
+	{ name: 'Arcane Bolt', description: 'A simple bolt of raw magical energy.', required_wits: 10, mana_cost: 5, effects_json: '{"damage": "1d8", "damage_type": "Arcane", "target": "single"}' },
+	{ name: 'Minor Heal', description: 'A faint glow that mends minor wounds.', required_wits: 12, mana_cost: 8, effects_json: '{"heal": "1d6", "target": "self"}' },
+];
 
 const originsData = [
 	{ name: 'City Guard', description: 'A watchful protector of the urban expanse.', bonus_stat_1: 'might', bonus_stat_2: 'grit', base_perk_name: 'Watchful Lookout', base_perk_description: 'You get pinged in a specific channel for "thief" events, allowing you to be there first.' },
@@ -302,6 +306,15 @@ const startingEquipmentData = [
 function seedPveData() {
 	db.transaction(() => {
 		// Prepare all UPSERT statements once for efficiency.
+		const upsertSpell = db.prepare(`
+            INSERT INTO spells (name, description, required_wits, mana_cost, effects_json)
+            VALUES (@name, @description, @required_wits, @mana_cost, @effects_json)
+            ON CONFLICT(name) DO UPDATE SET
+                description = excluded.description,
+                required_wits = excluded.required_wits,
+                mana_cost = excluded.mana_cost,
+                effects_json = excluded.effects_json
+        `);
 		const upsertItem = db.prepare(`
             INSERT INTO items (name, description, item_type, item_subtype, rarity, is_stackable, is_tradeable, crown_value, damage_dice, damage_type, handedness, effects_json)
             VALUES (@name, @description, @item_type, @item_subtype, @rarity, @is_stackable, @is_tradeable, @crown_value, @damage_dice, @damage_type, @handedness, @effects_json)
@@ -374,7 +387,10 @@ function seedPveData() {
 		for (const vendor of vendorsData) {
 			upsertVendor.run(vendor);
 		}
-
+		console.log('[DB Seeding] Upserting spells...');
+		for (const spell of spellsData) {
+			upsertSpell.run(spell);
+		}
 		// 2. Resolve IDs for Foreign Key relationships
 		const itemIds = new Map(db.prepare('SELECT item_id, name FROM items').all().map(i => [i.name, i.item_id]));
 		const lootTableIds = new Map(db.prepare('SELECT loot_table_id, name FROM loot_tables').all().map(lt => [lt.name, lt.loot_table_id]));

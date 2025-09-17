@@ -496,6 +496,26 @@ module.exports = {
 					return;
 				}
 			}
+			if (interaction.isStringSelectMenu() && interaction.customId.startsWith('pve_')) {
+				const pveCommand = interaction.client.commands.get('pve');
+				if (pveCommand && typeof pveCommand.menus === 'function') {
+					try {
+						await pveCommand.menus(interaction);
+						return;
+					}
+					catch (error) {
+						console.error('[Error] PvE menu interaction error:', error);
+						if (!interaction.replied && !interaction.deferred) {
+							await interaction.reply({ content: 'An error occurred during combat.', flags: MessageFlags.Ephemeral });
+						}
+						return;
+					}
+				}
+				else if (!interaction.replied && !interaction.deferred) {
+					await interaction.reply({ content: 'PvE is currently unavailable.', flags: MessageFlags.Ephemeral });
+					return;
+				}
+			}
 			if (interaction.isButton() && interaction.customId.startsWith('trade_')) {
 				if (marketCommand && typeof marketCommand.buttons === 'function') {
 					try {

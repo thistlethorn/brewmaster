@@ -27,19 +27,17 @@ const cleanupIntervalId = setInterval(() => {
 		}
 	}
 }, CLEANUP_INTERVAL);
-
 /**
- * Creates the main combat UI embed.
+ * Creates the main combat UI embed and components based on the player's current action state.
  * @param {object} combatState The current state of the combat encounter.
  * @param {import('discord.js').User} user The user object for the player.
- * @returns {EmbedBuilder} The generated embed.
+ * @returns {{embeds: EmbedBuilder[], components: ActionRowBuilder[]}}
  */
-function buildCombatEmbed(combatState, user) {
+function buildCombatUI(combatState, user) {
 	const embed = new EmbedBuilder()
 		.setColor(0xC0392B)
 		.setTitle(`⚔️ Combat: ${combatState.nodeData.name} - Turn ${combatState.turn} ⚔️`)
-		.setAuthor({ name: user.username, iconURL: user.displayAvatarURL() })
-		.setFooter({ text: 'Your turn to act!' });
+		.setAuthor({ name: user.username, iconURL: user.displayAvatarURL() });
 
 	const playerStatus = `❤️ **HP:** \`${combatState.character.current_health} / ${combatState.character.max_health}\`\n` +
 	                     `💙 **Mana:** \`${combatState.character.current_mana} / ${combatState.character.max_mana}\``;
@@ -52,11 +50,52 @@ function buildCombatEmbed(combatState, user) {
 	embed.addFields({ name: 'Enemies', value: monsterStatus, inline: false });
 
 	if (combatState.combatLog.length > 0) {
-		// Increased the slice to show more of the log
 		embed.addFields({ name: '📜 Combat Log', value: combatState.combatLog.slice(-10).join('\n'), inline: false });
 	}
 
-	return embed;
+	const components = [];
+	const threadId = combatState.thread.id;
+
+	switch (combatState.playerState) {
+	case 'SELECTING_TARGET': {
+		embed.setFooter({ text: 'Select a target to attack.' });
+		let currentRow = new ActionRowBuilder();
+		for (let i = 0; i < combatState.monsters.length; i++) {
+			if (currentRow.components.length === 5) {
+				components.push(currentRow);
+				currentRow = new ActionRowBuilder();
+			}
+			const monster = combatState.monsters[i];
+			const isDefeated = monster.current_health <= 0;
+			currentRow.addComponents(
+				new ButtonBuilder()
+					.setCustomId(`pve_target_attack_${threadId}_${i}`)
+					.setLabel(isDefeated ? `💀 ${monster.name} #${i + 1}` : `Attack ${monster.name} #${i + 1}`)
+					.setStyle(isDefeated ? ButtonStyle.Secondary : ButtonStyle.Danger)
+					.setDisabled(isDefeated),
+			);
+		}
+		if (currentRow.components.length > 0) components.push(currentRow);
+		components.push(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`pve_back_main_${threadId}`).setLabel('Back').setStyle(ButtonStyle.Secondary)));
+		break;
+	}
+	// Add other states (SELECTING_SPELL, SELECTING_ITEM) here later
+	default: {
+		// 'MAIN' state
+		embed.setFooter({ text: 'Your turn to act!' });
+		const character = combatState.character;
+		const mainRow = new ActionRowBuilder().addComponents(
+			new ButtonBuilder().setCustomId(`pve_main_fight_${threadId}`).setLabel('Fight').setStyle(ButtonStyle.Danger).setEmoji('⚔️'),
+			new ButtonBuilder().setCustomId(`pve_main_magic_${threadId}`).setLabel('Magic').setStyle(ButtonStyle.Primary).setEmoji('✨').setDisabled(character.stat_wits < 10),
+			new ButtonBuilder().setCustomId(`pve_main_items_${threadId}`).setLabel('Items').setStyle(ButtonStyle.Success).setEmoji('🎒'),
+			new ButtonBuilder().setCustomId(`pve_main_flee_${threadId}`).setLabel('Flee').setStyle(ButtonStyle.Secondary).setEmoji('🏃'),
+		);
+		components.push(mainRow);
+		break;
+	}
+	}
+
+	return { embeds: [embed], components };
 }
 
 /**
@@ -70,15 +109,18 @@ async function handleVictory(interaction, combatState) {
 	try {
 		const victoryTransaction = db.transaction(() => {
 
-			// Update core character stats
+			// Update core character stats and PERSIST HEALTH/MANA
 			db.prepare(`
                 UPDATE characters
                 SET
                     character_status = 'IDLE',
+                    current_health = ?,
+                    current_mana = ?,
                     monsters_slain = monsters_slain + ?,
-                    critical_hits_landed = critical_hits_landed + ?
+                    critical_hits_landed = critical_hits_landed + ?,
+                    character_status_expiry_time = NULL
                 WHERE user_id = ?
-            `).run(combatState.monsters.length, critsThisFight, userId);
+            `).run(character.current_health, character.current_mana, combatState.monsters.length, critsThisFight, userId);
 
 			// Update progress and check for fastest clear
 			const progress = db.prepare('SELECT fastest_clear_turns FROM character_pve_progress WHERE user_id = ? AND node_id = ?').get(userId, nodeData.node_id);
@@ -117,7 +159,7 @@ async function handleVictory(interaction, combatState) {
 		const victoryEmbed = new EmbedBuilder()
 			.setColor(0x2ECC71)
 			.setTitle(`🎉 Victory at ${nodeData.name}! 🎉`)
-			.setDescription(`You emerged victorious in **${turn}** turns!`);
+			.setDescription(`You emerged victorious in **${turn}** turns! Your final health is ${character.current_health} / ${character.max_health}.`);
 		if (newBestTime) {
 			victoryEmbed.setFooter({ text: '⭐ New Personal Best Time!' });
 		}
@@ -145,6 +187,16 @@ async function handleVictory(interaction, combatState) {
  */
 async function handleDefeat(interaction, combatState) {
 	const { userId, nodeData, thread, character, turn } = combatState;
+
+	// 15 minutes
+	const DEFEAT_COOLDOWN_MS = 15 * 60 * 1000;
+	// 10%
+	const CROWN_LOSS_PERCENT = 0.10;
+
+	const economy = db.prepare('SELECT crowns FROM user_economy WHERE user_id = ?').get(userId) || { crowns: 0 };
+	const crownsLost = Math.floor(economy.crowns * CROWN_LOSS_PERCENT);
+	const expiryTime = new Date(Date.now() + DEFEAT_COOLDOWN_MS).toISOString();
+
 	let consolationXp = 0;
 	if (nodeData.repeatable_reward_json) {
 		try {
@@ -160,11 +212,21 @@ async function handleDefeat(interaction, combatState) {
 	const defeatEmbed = new EmbedBuilder()
 		.setColor(0x992D22)
 		.setTitle(`Defeated at ${nodeData.name}...`)
-		.setDescription(`You have fallen in battle. You awaken back at the Tavern, having lost your way.\n\nYou earned **${consolationXp} XP** for the attempt.`);
+		.setDescription(`You have fallen in battle. You awaken back at the Tavern, having lost your way.\n\nYou earned **${consolationXp} XP** for the attempt.\n\n**Penalties:**\n• You lost **${crownsLost.toLocaleString()}** Crowns.\n• You cannot start another adventure for **15 minutes**.`);
 
 	// Cleanup and log the failed attempt
 	db.transaction(() => {
-		db.prepare('UPDATE characters SET character_status = \'IDLE\', times_fallen = times_fallen + 1 WHERE user_id = ?').run(userId);
+		db.prepare(`
+			UPDATE characters 
+			SET 
+				character_status = 'DEFEATED', 
+				times_fallen = times_fallen + 1,
+				current_health = 1, -- Set to 1HP, not max
+				current_mana = 0,
+				character_status_expiry_time = ?
+			WHERE user_id = ?
+		`).run(expiryTime, userId);
+		db.prepare('UPDATE user_economy SET crowns = crowns - ? WHERE user_id = ?').run(crownsLost, userId);
 		// Log the attempt without a clear
 		db.prepare(`
             INSERT INTO character_pve_progress (user_id, node_id, attempts, times_cleared)
@@ -238,12 +300,33 @@ async function handleEngage(interaction) {
 	const userId = interaction.user.id;
 	const nodeId = interaction.options.getInteger('adventure');
 
+	// Fetch fresh character data
 	const character = db.prepare('SELECT * FROM characters WHERE user_id = ?').get(userId);
 	if (!character) {
 		return interaction.reply({ content: 'You must create a character first with `/character create`.', flags: MessageFlags.Ephemeral });
 	}
+
+	// NEW: Defeat status check
+	if (character.character_status === 'DEFEATED') {
+		const expiryTime = new Date(character.character_status_expiry_time);
+		const now = new Date();
+		if (now < expiryTime) {
+			const expiryTimestamp = Math.floor(expiryTime.getTime() / 1000);
+			return interaction.reply({ content: `You are still recovering from your last battle. You can start a new adventure <t:${expiryTimestamp}:R>.`, flags: MessageFlags.Ephemeral });
+		}
+		else {
+			// Cooldown has expired, reset status to IDLE and continue.
+			db.prepare('UPDATE characters SET character_status = \'IDLE\', character_status_expiry_time = NULL WHERE user_id = ?').run(userId);
+			// Update in-memory object
+			character.character_status = 'IDLE';
+		}
+	}
+
 	if (character.character_status !== 'IDLE') {
 		return interaction.reply({ content: `You cannot start a new battle while your status is "${character.character_status}".`, flags: MessageFlags.Ephemeral });
+	}
+	if (character.current_health <= 1) {
+		return interaction.reply({ content: 'You are too injured to start a new adventure. You must heal first!', flags: MessageFlags.Ephemeral });
 	}
 
 	const node = db.prepare('SELECT * FROM pve_nodes WHERE node_id = ?').get(nodeId);
@@ -256,7 +339,6 @@ async function handleEngage(interaction) {
 
 	try {
 		await interaction.reply({ content: 'Creating your battle instance...', flags: MessageFlags.Ephemeral });
-
 
 		const parent = interaction.channel;
 		if (!parent?.isTextBased?.() || parent.type === ChannelType.DM || !parent.threads || ![ChannelType.GuildText, ChannelType.GuildForum].includes(parent.type)) {
@@ -294,53 +376,25 @@ async function handleEngage(interaction) {
 			}
 		}
 
-
 		const combatState = {
 			userId,
 			thread,
 			nodeData: node,
+			// Use a copy to modify during combat
 			character: { ...character },
 			monsters,
 			combatLog: ['The battle begins!'],
 			startTime: Date.now(),
 			turn: 1,
 			critsThisFight: 0,
+			// Player's current UI state
+			playerState: 'MAIN',
 		};
 		activeCombats.set(thread.id, combatState);
 
-		const combatEmbed = buildCombatEmbed(combatState, interaction.user);
-		const actionRows = [];
-		const MAX_ROWS = 5;
-		const MAX_PER_ROW = 5;
+		const { embeds, components } = buildCombatUI(combatState, interaction.user);
 
-		let currentRow = new ActionRowBuilder();
-		let rowCount = 0;
-		let btnInRow = 0;
-
-		for (let index = 0; index < combatState.monsters.length && rowCount < MAX_ROWS; index++) {
-			const monster = combatState.monsters[index];
-			if (btnInRow === MAX_PER_ROW) {
-				actionRows.push(currentRow);
-				currentRow = new ActionRowBuilder();
-				btnInRow = 0;
-				rowCount++;
-				if (rowCount === MAX_ROWS) break;
-			}
-			currentRow.addComponents(
-				new ButtonBuilder()
-					.setCustomId(`pve_attack_${thread.id}_${index}`)
-					.setLabel(`Attack ${monster.name} #${index + 1}`)
-					.setStyle(ButtonStyle.Danger),
-			);
-			btnInRow++;
-		}
-
-		if (btnInRow > 0 && rowCount < MAX_ROWS) actionRows.push(currentRow);
-
-		const truncated = combatState.monsters.length > MAX_ROWS * MAX_PER_ROW;
-		const note = truncated ? `Note: showing first ${MAX_ROWS * MAX_PER_ROW} targets.\n` : '';
-
-		await thread.send({ content: `${note}<@${userId}>`, embeds: [combatEmbed], components: actionRows });
+		await thread.send({ content: `<@${userId}>`, embeds, components });
 		await interaction.editReply({ content: `Your adventure begins! Join the battle here: ${thread}` });
 
 	}
@@ -351,7 +405,6 @@ async function handleEngage(interaction) {
 		await interaction.editReply({ content: 'Failed to create your private battle instance. Please try again.' });
 	}
 }
-
 module.exports = {
 	category: 'charsys',
 	data: new SlashCommandBuilder()
@@ -410,8 +463,106 @@ module.exports = {
 			await interaction.reply({ content: 'Unknown PvE command.', flags: MessageFlags.Ephemeral });
 		}
 	},
+	async menus(interaction) {
+		// Stub for future spell/item selection logic
+		await interaction.reply({ content: 'Menu interaction received! (Not yet implemented)', flags: MessageFlags.Ephemeral });
+	},
 };
+/**
+ * Executes a full combat turn (player action, then monster actions).
+ * @param {import('discord.js').Interaction} interaction
+ * @param {object} combatState
+ * @param {object} playerAction - The action the player took.
+ */
+async function executePlayerTurn(interaction, combatState, playerAction) {
+	const character = combatState.character;
+	combatState.combatLog.push(`> ~ **Turn** \`${combatState.turn}\` ~`);
 
+	// --- Player's Action ---
+	if (playerAction.type === 'attack') {
+		const monster = combatState.monsters[playerAction.targetIndex];
+		const weapon = db.prepare(`
+            SELECT i.damage_dice, i.damage_type
+            FROM user_inventory ui
+            JOIN items i ON ui.item_id = i.item_id
+            WHERE ui.user_id = ? AND ui.equipped_slot = 'weapon'
+        `).get(character.user_id);
+
+		const damageType = weapon?.damage_type || 'Bludgeoning';
+		const damageDice = weapon?.damage_dice || '1d4';
+		const diceRoll = rollDice(damageDice);
+		const [qtyDice, diceSides] = damageDice.split('d').map(Number);
+		const statModifier = getDamageModifier(damageType, character);
+
+		let playerDamage = Math.max(1, diceRoll + statModifier);
+
+		const isCrit = Math.random() < character.crit_chance;
+		if (isCrit) {
+			playerDamage = Math.max(1, Math.round(((qtyDice * diceSides) + statModifier) * character.crit_damage_modifier));
+			combatState.critsThisFight++;
+			combatState.combatLog.push(`🗡️💥 **CRITICAL HIT!** You attack **${monster.name} #${playerAction.targetIndex + 1}** for **${playerDamage}** damage.`);
+		}
+		else {
+			combatState.combatLog.push(`🗡️ You attack **${monster.name} #${playerAction.targetIndex + 1}** for **${playerDamage}** damage.`);
+		}
+
+		monster.current_health = Math.max(0, monster.current_health - playerDamage);
+		if (monster.current_health === 0) {
+			combatState.combatLog.push(`> **${monster.name} #${playerAction.targetIndex + 1}** has been defeated!`);
+		}
+
+		// Update highest damage dealt stat
+		const maxIntCheck = db.prepare('SELECT highest_damage_dealt FROM characters WHERE user_id = ?').get(character.user_id);
+		if (maxIntCheck.highest_damage_dealt < playerDamage) {
+			db.prepare('UPDATE characters SET highest_damage_dealt = ? WHERE user_id = ?').run(playerDamage, character.user_id);
+			combatState.combatLog.push(`> You've set a new best for damage done in a single hit: **${playerDamage}**!`);
+		}
+	}
+	// Add logic for 'magic' and 'item' actions here later
+
+	// --- Check for Victory before Monsters Attack ---
+	const allMonstersDefeated = combatState.monsters.every(m => m.current_health <= 0);
+	if (allMonstersDefeated) {
+		combatState.turn++;
+		return;
+		// Exit early, the main button handler will catch this victory state.
+	}
+
+	// --- Monsters' Turn ---
+	let totalDamageTakenThisTurn = 0;
+	let highestDamageSurvivedThisTurn = 0;
+	const healthBeforeDamage = character.current_health;
+
+	combatState.monsters.forEach((m, i) => {
+		if (m.current_health > 0) {
+			const monsterDamageRoll = Math.floor(Math.random() * (m.base_damage * 2)) + 1;
+			const monsterDamage = Math.max(1, monsterDamageRoll);
+			character.current_health = Math.max(0, character.current_health - monsterDamage);
+			totalDamageTakenThisTurn += monsterDamage;
+			if (monsterDamage > highestDamageSurvivedThisTurn) {
+				highestDamageSurvivedThisTurn = monsterDamage;
+			}
+			combatState.combatLog.push(`👹 **${m.name} #${i + 1}** attacks you for **${monsterDamage}** damage.`);
+		}
+	});
+
+	// Update largest hit survived stat
+	if (highestDamageSurvivedThisTurn > 0) {
+		const maxIntCheck = db.prepare('SELECT largest_hit_survived FROM characters WHERE user_id = ?').get(character.user_id);
+		if (maxIntCheck.largest_hit_survived < highestDamageSurvivedThisTurn) {
+			db.prepare('UPDATE characters SET largest_hit_survived = ? WHERE user_id = ?').run(highestDamageSurvivedThisTurn, character.user_id);
+			combatState.combatLog.push(`> You've set a personal record for highest single damage survived: **${highestDamageSurvivedThisTurn}!**`);
+		}
+	}
+
+	if (character.current_health < healthBeforeDamage) {
+		combatState.combatLog.push(`> Total damage taken this turn: \`${totalDamageTakenThisTurn}\` (${healthBeforeDamage} HP -> ${character.current_health} HP)`);
+	}
+
+
+	// --- End of Turn ---
+	combatState.turn++;
+}
 /**
  * Parses a dice string (e.g., '2d6') and returns a random roll.
  * @param {string} diceString The dice notation string.
@@ -462,197 +613,89 @@ function getDamageModifier(damageType, stats) {
 
 /**
 * PvE buttons handler.
-* Expected customId format: pve_attack_threadId_index
 * @param {import('discord.js').ButtonInteraction} interaction
 */
 module.exports.buttons = async (interaction) => {
-	// eslint-disable-next-line no-unused-vars
-	const [_, action, threadId, targetIndexStr] = interaction.customId.split('_');
-	const targetIndex = Number.parseInt(targetIndexStr, 10);
+	const parts = interaction.customId.split('_');
+	const [, category, action, threadId, ...rest] = parts;
+
 	const combatState = activeCombats.get(threadId);
 	if (!combatState || combatState.userId !== interaction.user.id) {
-		// This instance is invalid or expired. Let's clean up.
-		try {
-			const updateResult = db.prepare(`
-                UPDATE characters
-                SET character_status = 'IDLE'
-                WHERE user_id = ? AND character_status = 'IN_COMBAT'
-            `).run(interaction.user.id);
-
-			if (updateResult.changes > 0) {
-				console.log(`[PVE Cleanup] Reset stuck 'IN_COMBAT' status for user ${interaction.user.id}.`);
-			}
-
-			// Clean up the thread to prevent further confusion.
-			if (interaction.channel.isThread()) {
-				await interaction.channel.setLocked(true).catch((e) => {console.error(e);});
-				await interaction.channel.setArchived(true).catch((e) => {console.error(e);});
-			}
-		}
-		catch (dbError) {
-			console.error('[PVE Cleanup] Database error during self-heal:', dbError);
-		}
-
+		// This handles expired/invalid combat sessions.
 		return interaction.reply({
 			content: 'This combat instance has expired or is invalid. Your status has been reset, so you can now start a new adventure with `/pve engage`.',
 			flags: MessageFlags.Ephemeral,
 		});
 	}
-	if (!Number.isInteger(targetIndex)) {
-		return interaction.reply({ content: 'Invalid target.', flags: MessageFlags.Ephemeral });
-	}
 
-	if (targetIndex < 0 || targetIndex >= combatState.monsters.length) {
-		return interaction.reply({ content: 'That target is no longer valid.', flags: MessageFlags.Ephemeral });
-	}
 	await interaction.deferUpdate();
 
-	if (action === 'attack') {
-		const character = combatState.character;
-		const monster = combatState.monsters[targetIndex];
-		if (monster.current_health <= 0) return;
-
-
-		combatState.combatLog.push(`> ~ **Turn** \`${combatState.turn}\` ~`);
-		// --- Player's Turn ---
-		const weapon = db.prepare(`
-            SELECT i.damage_dice, i.damage_type
-            FROM user_inventory ui
-            JOIN items i ON ui.item_id = i.item_id
-            WHERE ui.user_id = ? AND ui.equipped_slot = 'weapon'
-        `).get(character.user_id);
-
-		let damageType;
-		let diceRoll;
-		let qtyDice;
-		let diceSides;
-
-		if (weapon && weapon.damage_dice) {
-			damageType = weapon.damage_type;
-			diceRoll = rollDice(weapon.damage_dice);
-			[qtyDice, diceSides] = weapon.damage_dice.split('d').map(Number);
+	// --- Action Router ---
+	switch (category) {
+	case 'main': {
+		switch (action) {
+		case 'fight':
+			combatState.playerState = 'SELECTING_TARGET';
+			break;
+		// Stubs for future implementation
+		case 'magic':
+			combatState.combatLog.push('> You focus your mind... (Magic system coming soon!)');
+			break;
+		case 'items':
+			combatState.combatLog.push('> You rummage through your bag... (Item usage coming soon!)');
+			break;
+		case 'flee':
+			// handleFlee will be a new function to implement flee logic
+			// For now, let's just log it and do nothing.
+			combatState.combatLog.push('> You attempt to flee... (Flee system coming soon!)');
+			break;
 		}
-		else {
-			damageType = 'Bludgeoning';
-			diceRoll = rollDice('1d4');
-			[qtyDice, diceSides] = [1, 4];
-		}
-
-		const statModifier = getDamageModifier(damageType, character);
-		let playerDamage = Math.max(1, diceRoll + statModifier);
-
-		// Check for critical hit
-		const isCrit = Math.random() < character.crit_chance;
-		if (isCrit) {
-			playerDamage = Math.max(1, Math.round(((qtyDice * diceSides) + statModifier) * character.crit_damage_modifier));
-			combatState.critsThisFight++;
-			combatState.combatLog.push(`🗡️💥 **CRITICAL HIT!** You attack **${monster.name} #${targetIndex + 1}** for **${playerDamage}** damage (${qtyDice * diceSides} + ${statModifier} * ${character.crit_damage_modifier}).`);
-		}
-		else {
-			combatState.combatLog.push(`🗡️ You attack **${monster.name} #${targetIndex + 1}** for **${playerDamage}** damage (${qtyDice}d${diceSides} + ${statModifier}).`);
-		}
-
-		monster.current_health = Math.max(0, monster.current_health - playerDamage);
-		if (monster.current_health === 0) {
-			combatState.combatLog.push(`> **${monster.name} #${targetIndex + 1}** has been defeated!`);
-		}
-		const allMonstersDefeated = combatState.monsters.every(m => m.current_health <= 0);
-		let totalDamageTakenThisTurn = 0;
-		let highestDamageSurvivedThisTurn = 0;
-		const healthBeforeDamage = character.current_health;
-
-		if (!allMonstersDefeated) {
-			// --- Monsters' Turn ---
-			combatState.monsters.forEach((m, i) => {
-				if (m.current_health > 0) {
-					const monsterDamageRoll = Math.floor(Math.random() * (m.base_damage * 2)) + 1;
-					const monsterDamage = Math.max(1, monsterDamageRoll);
-					character.current_health = Math.max(0, character.current_health - monsterDamage);
-					totalDamageTakenThisTurn += monsterDamage;
-					highestDamageSurvivedThisTurn = highestDamageSurvivedThisTurn >= monsterDamage ? highestDamageSurvivedThisTurn : monsterDamage;
-					// Added monster emoji to the log
-					combatState.combatLog.push(`👹 **${m.name} #${i + 1}** attacks you for **${monsterDamage}** damage, leaving you at \`${character.current_health}\` HP.`);
-				}
-			});
-		}
-
-
-		// --- End of Turn: Update Stats & Check State ---
-		db.transaction(() => {
-
-			const maxIntCheck = db.prepare('SELECT highest_damage_dealt, largest_hit_survived FROM characters WHERE user_id = ?').get(character.user_id);
-
-			if (maxIntCheck.highest_damage_dealt < playerDamage) {
-				db.prepare('UPDATE characters SET highest_damage_dealt = MAX(highest_damage_dealt, ?) WHERE user_id = ?').run(playerDamage, character.user_id);
-				combatState.combatLog.push(`> You've set a new best of damage done in a turn, **${playerDamage}**!`);
-
-			}
-
-			if (highestDamageSurvivedThisTurn > 0) {
-				if (maxIntCheck.largest_hit_survived < highestDamageSurvivedThisTurn) {
-					db.prepare('UPDATE characters SET largest_hit_survived = MAX(largest_hit_survived, ?) WHERE user_id = ?').run(highestDamageSurvivedThisTurn, character.user_id);
-					combatState.combatLog.push(`> You've set a personal record of highest single damage survived, **${highestDamageSurvivedThisTurn}!**`);
-
-				}
-
-			}
-		})();
-
-		if (character.current_health != healthBeforeDamage) combatState.combatLog.push(`> Total damage taken this turn: \`${totalDamageTakenThisTurn}\` (${healthBeforeDamage} -> ${character.current_health})`);
-
-		// Rebuild action rows with updated button states
-		const updatedActionRows = [];
-		const MAX_ROWS = 5;
-		const MAX_PER_ROW = 5;
-		let currentRow = new ActionRowBuilder();
-		let rowCount = 0;
-		let btnInRow = 0;
-
-		for (let index = 0; index < combatState.monsters.length && rowCount < MAX_ROWS; index++) {
-			const m = combatState.monsters[index];
-			if (btnInRow === MAX_PER_ROW) {
-				updatedActionRows.push(currentRow);
-				currentRow = new ActionRowBuilder();
-				btnInRow = 0;
-				rowCount++;
-				if (rowCount === MAX_ROWS) break;
-			}
-
-			const isDefeated = m.current_health <= 0;
-			currentRow.addComponents(
-				new ButtonBuilder()
-					.setCustomId(`pve_attack_${threadId}_${index}`)
-					.setLabel(isDefeated ? `💀 ${m.name} #${index + 1}` : `Attack ${m.name} #${index + 1}`)
-					.setStyle(isDefeated ? ButtonStyle.Secondary : ButtonStyle.Danger)
-					.setDisabled(isDefeated),
-			);
-			btnInRow++;
-		}
-		if (btnInRow > 0 && rowCount < MAX_ROWS) updatedActionRows.push(currentRow);
-
-		// --- VICTORY CHECK ---
-		if (allMonstersDefeated) {
-			const finalEmbed = buildCombatEmbed(combatState, interaction.user);
-
-			await interaction.message.edit({ embeds: [finalEmbed], components: updatedActionRows });
-			db.prepare('UPDATE characters SET highest_damage_dealt = MAX(highest_damage_dealt, ?) WHERE user_id = ?').run(playerDamage, character.user_id);
-			return handleVictory(interaction, combatState);
-		}
-
-		// --- DEFEAT CHECK ---
-		if (character.current_health === 0) {
-			combatState.combatLog.push('> You have been defeated!');
-			const finalEmbed = buildCombatEmbed(combatState, interaction.user);
-
-			await interaction.message.edit({ embeds: [finalEmbed], components: updatedActionRows });
-			return handleDefeat(interaction, combatState);
-		}
-		// If combat continues, increment turn and update UI
-		combatState.turn++;
-		const updatedEmbed = buildCombatEmbed(combatState, interaction.user);
-
-		await interaction.message.edit({ embeds: [updatedEmbed], components: updatedActionRows });
+		break;
 	}
+	case 'target': {
+		if (action === 'attack') {
+			const targetIndex = parseInt(rest[0], 10);
+			if (isNaN(targetIndex) || targetIndex < 0 || targetIndex >= combatState.monsters.length) {
+				return;
+			}
+			const monster = combatState.monsters[targetIndex];
+			if (monster.current_health <= 0) return;
+
+			// This is where the main combat turn logic now lives
+			await executePlayerTurn(interaction, combatState, { type: 'attack', targetIndex });
+			// After the turn, return player to the main menu
+			combatState.playerState = 'MAIN';
+		}
+		break;
+	}
+	case 'back': {
+		if (action === 'main') {
+			combatState.playerState = 'MAIN';
+		}
+		break;
+	}
+	}
+
+	// --- VICTORY/DEFEAT CHECKS ---
+	// These checks are now separate from the action logic.
+	const allMonstersDefeated = combatState.monsters.every(m => m.current_health <= 0);
+	if (allMonstersDefeated) {
+		const finalUI = buildCombatUI(combatState, interaction.user);
+		await interaction.message.edit({ embeds: finalUI.embeds, components: [] });
+		return handleVictory(interaction, combatState);
+	}
+
+	if (combatState.character.current_health <= 0) {
+		combatState.combatLog.push('> You have been defeated!');
+		const finalUI = buildCombatUI(combatState, interaction.user);
+		await interaction.message.edit({ embeds: finalUI.embeds, components: [] });
+		return handleDefeat(interaction, combatState);
+	}
+
+	// --- UI UPDATE ---
+	// If combat is ongoing, just update the UI with the new state.
+	const ui = buildCombatUI(combatState, interaction.user);
+	await interaction.message.edit({ embeds: ui.embeds, components: ui.components });
 };
 module.exports.cleanup = () => {
 	clearInterval(cleanupIntervalId);
