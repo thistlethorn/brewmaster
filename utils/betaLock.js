@@ -19,9 +19,21 @@ const lockedCommands = [
  * @returns {Promise<import('discord.js').GuildMember|null>}
  */
 async function getMember(source, userId) {
-	// Case 1: Source is an Interaction or Message, which has a .member property.
-	if (source?.client) {
-		return source.member;
+	// Case 1: Source is an Interaction or Message.
+	if (source?.guild) {
+		try {
+			// If a specific userId is provided, ALWAYS prioritize fetching that user.
+			// This is crucial for admin commands that target other users.
+			if (userId) {
+				return await source.guild.members.fetch(userId);
+			}
+			// If no specific userId is given, fall back to the person who initiated the action.
+			return source.member;
+		}
+		catch (error) {
+			console.error(`[betaLock.getMember] Failed to fetch member ${userId} from guild:`, error);
+			return null;
+		}
 	}
 
 	// Case 2: Source is the Client itself. We must fetch the member.
@@ -42,7 +54,6 @@ async function getMember(source, userId) {
 	// If the source is unknown or userId is missing for the client, return null.
 	return null;
 }
-
 
 /**
  * A universal function to check for beta-testing locks.

@@ -163,10 +163,10 @@ async function addXp(userId, amount, source, reason, title = null) {
 			await sendLevelUpNotification({ activeClient, userId, embed: levelUpEmbed, source });
 
 			levelUpEmbed.spliceFields(0, 2)
-				.clearDescription()
+				.setDescription(null)
 				.setThumbnail(otherCharData.character_image || null)
 				.addFields(
-					{ name: `__${otherCharData.character_name}__`, value: 'Reached **Level ${level}**!', inline: false },
+					{ name: `__${otherCharData.character_name}__`, value: `Reached **Level ${level}**!`, inline: false },
 					{ name: `[\`${stat_points_unspent} SP\`] Unspent Statpoints`, value: '🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟', inline: false },
 				);
 

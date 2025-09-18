@@ -28,6 +28,39 @@ const cleanupIntervalId = setInterval(() => {
 	}
 }, CLEANUP_INTERVAL);
 /**
+ * Parses a dice/value string (e.g., '2d6+3', '1d8', '10') and returns a numeric result.
+ * @param {string} valueString The dice notation or flat number string.
+ * @returns {number} The result of the roll or the parsed number.
+ */
+function parseEffectValue(valueString) {
+	if (!valueString) return 0;
+	const value = String(valueString);
+
+	// If it's just a number
+	if (/^\d+$/.test(value)) {
+		return parseInt(value, 10);
+	}
+
+	// If it's dice notation (e.g., 1d6, 2d8+4)
+	const diceRegex = /(\d+)d(\d+)(?:\s*\+\s*(\d+))?/;
+	const match = value.match(diceRegex);
+
+	if (match) {
+		const numDice = parseInt(match[1], 10);
+		const numSides = parseInt(match[2], 10);
+		const modifier = match[3] ? parseInt(match[3], 10) : 0;
+
+		let total = 0;
+		for (let i = 0; i < numDice; i++) {
+			total += Math.floor(Math.random() * numSides) + 1;
+		}
+		return total + modifier;
+	}
+
+	// Fallback for invalid strings
+	return 0;
+}
+/**
  * Creates the main combat UI embed and components based on the player's current action state.
  * @param {object} combatState The current state of the combat encounter.
  * @param {import('discord.js').User} user The user object for the player.
@@ -76,6 +109,35 @@ function buildCombatUI(combatState, user) {
 			);
 		}
 		if (currentRow.components.length > 0) components.push(currentRow);
+		components.push(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`pve_back_main_${threadId}`).setLabel('Back').setStyle(ButtonStyle.Secondary)));
+		break;
+	}
+	case 'SELECTING_ITEM': {
+		embed.setFooter({ text: 'Select an item to use from your inventory.' });
+		const consumableItems = db.prepare(`
+            SELECT ui.inventory_id, i.name, i.description, ui.quantity
+            FROM user_inventory ui
+            JOIN items i ON ui.item_id = i.item_id
+            WHERE ui.user_id = ? AND i.item_type = 'CONSUMABLE' AND ui.quantity > 0
+            ORDER BY i.name ASC
+            LIMIT 25
+        `).all(combatState.userId);
+
+		if (consumableItems.length > 0) {
+			const itemMenu = new StringSelectMenuBuilder()
+				.setCustomId(`pve_menu_item_${threadId}`)
+				.setPlaceholder('Choose an item...')
+				.addOptions(consumableItems.map(item => ({
+					label: `${item.name} (x${item.quantity})`,
+					description: item.description.substring(0, 100),
+					value: item.inventory_id.toString(),
+				})));
+			components.push(new ActionRowBuilder().addComponents(itemMenu));
+		}
+		else {
+			embed.setDescription((embed.data.description || '') + '\n\n*You have no consumable items to use.*');
+		}
+
 		components.push(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`pve_back_main_${threadId}`).setLabel('Back').setStyle(ButtonStyle.Secondary)));
 		break;
 	}
@@ -263,7 +325,75 @@ async function handleDefeat(interaction, combatState) {
 		console.error('Failed to cleanup thread after defeat:', error);
 	}
 }
+/**
+ * Handles the successful flee sequence.
+ * @param {import('discord.js').ButtonInteraction} interaction
+ * @param {object} combatState The final state of the combat encounter.
+ */
+async function handleFlee(interaction, combatState) {
+	const { userId, nodeData, thread, character, turn, monsters } = combatState;
+	const monstersSlain = monsters.filter(m => m.current_health <= 0).length;
 
+	try {
+		const fleeTransaction = db.transaction(() => {
+			// Update character status back to IDLE and persist current health/mana
+			db.prepare(`
+                UPDATE characters
+                SET
+                    character_status = 'IDLE',
+                    current_health = ?,
+                    current_mana = ?,
+                    monsters_slain = monsters_slain + ?,
+                    character_status_expiry_time = NULL
+                WHERE user_id = ?
+            `).run(character.current_health, character.current_mana, monstersSlain, userId);
+
+			// Log the attempt without a clear
+			db.prepare(`
+                INSERT INTO character_pve_progress (user_id, node_id, attempts)
+                VALUES (?, ?, 1)
+                ON CONFLICT(user_id, node_id) DO UPDATE SET
+                    attempts = attempts + 1
+            `).run(userId, nodeData.node_id);
+		});
+
+		fleeTransaction();
+
+		// Give a small consolation XP prize for monsters defeated before fleeing
+		let consolationXp = 0;
+		if (monstersSlain > 0 && nodeData.repeatable_reward_json) {
+			const rewards = JSON.parse(nodeData.repeatable_reward_json);
+			if (rewards.xp) {
+				// 15% XP per monster slain
+				consolationXp = Math.floor(rewards.xp * 0.15 * monstersSlain);
+			}
+		}
+
+		if (consolationXp > 0) {
+			const reason = `Successfully fled from ${nodeData.name} after defeating ${monstersSlain} monster(s).`;
+			const title = `Escape from \`${nodeData.name}\``;
+			await addXp(userId, consolationXp, interaction, reason, title);
+		}
+
+
+		const fleeEmbed = new EmbedBuilder()
+			.setColor(0xFFA500)
+			.setTitle(`🏃 You Escaped from ${nodeData.name}!`)
+			.setDescription(`You successfully fled the battle after **${turn}** turns. You catch your breath, but live to fight another day.`);
+
+		await thread.send({ embeds: [fleeEmbed] });
+		await thread.setLocked(true).catch(console.error);
+		await thread.setArchived(true).catch(console.error);
+
+	}
+	catch (error) {
+		console.error('Flee processing error:', error);
+		await thread.send({ content: 'A critical error occurred while processing your escape. Please contact an admin.' });
+	}
+	finally {
+		activeCombats.delete(thread.id);
+	}
+}
 /**
  * Handles the /pve list subcommand.
  * @param {import('discord.js').ChatInputCommandInteraction} interaction
@@ -474,8 +604,48 @@ module.exports = {
 		}
 	},
 	async menus(interaction) {
-		// Stub for future spell/item selection logic
-		await interaction.reply({ content: 'Menu interaction received! (Not yet implemented)', flags: MessageFlags.Ephemeral });
+		const parts = interaction.customId.split('_');
+		// Expects pve_menu_item_threadId
+		const [, category, action, threadId] = parts;
+
+		if (category !== 'menu' || action !== 'item') return;
+
+		const combatState = activeCombats.get(threadId);
+		if (!combatState || combatState.userId !== interaction.user.id) {
+			return interaction.reply({
+				content: 'This combat instance has expired or is invalid.',
+				flags: MessageFlags.Ephemeral,
+			});
+		}
+
+		await interaction.deferUpdate();
+
+		const inventoryId = parseInt(interaction.values[0], 10);
+		if (isNaN(inventoryId)) return;
+
+		await executePlayerTurn(interaction, combatState, { type: 'item', inventoryId });
+
+		// After using the item, return to the main menu
+		combatState.playerState = 'MAIN';
+
+		// --- VICTORY/DEFEAT CHECKS ---
+		const allMonstersDefeated = combatState.monsters.every(m => m.current_health <= 0);
+		if (allMonstersDefeated) {
+			const finalUI = buildCombatUI(combatState, interaction.user);
+			await interaction.message.edit({ embeds: finalUI.embeds, components: [] });
+			return handleVictory(interaction, combatState);
+		}
+
+		if (combatState.character.current_health <= 0) {
+			combatState.combatLog.push('> You have been defeated!');
+			const finalUI = buildCombatUI(combatState, interaction.user);
+			await interaction.message.edit({ embeds: finalUI.embeds, components: [] });
+			return handleDefeat(interaction, combatState);
+		}
+
+		// --- UI UPDATE ---
+		const ui = buildCombatUI(combatState, interaction.user);
+		await interaction.message.edit({ embeds: ui.embeds, components: ui.components });
 	},
 };
 /**
@@ -526,6 +696,54 @@ async function executePlayerTurn(interaction, combatState, playerAction) {
 		if (maxIntCheck.highest_damage_dealt < playerDamage) {
 			db.prepare('UPDATE characters SET highest_damage_dealt = ? WHERE user_id = ?').run(playerDamage, character.user_id);
 			combatState.combatLog.push(`> You've set a new best for damage done in a single hit: **${playerDamage}**!`);
+		}
+	}
+	else if (playerAction.type === 'flee_fail') {
+		combatState.combatLog.push('❌ Your attempt to flee failed! The enemies press their advantage.');
+	}
+	else if (playerAction.type === 'item') {
+		try {
+			const useItemTx = db.transaction(() => {
+				// Verify the player still has the item and it's a consumable
+				const itemData = db.prepare(`
+					SELECT i.name, i.effects_json, ui.quantity
+					FROM user_inventory ui
+					JOIN items i ON ui.item_id = i.item_id
+					WHERE ui.inventory_id = ? AND ui.user_id = ? AND i.item_type = 'CONSUMABLE' AND ui.quantity > 0
+				`).get(playerAction.inventoryId, character.user_id);
+
+				if (!itemData) {
+					throw new Error('Item not found or not usable.');
+				}
+
+				// Decrement or delete the item
+				if (itemData.quantity > 1) {
+					db.prepare('UPDATE user_inventory SET quantity = quantity - 1 WHERE inventory_id = ?').run(playerAction.inventoryId);
+				}
+				else {
+					db.prepare('DELETE FROM user_inventory WHERE inventory_id = ?').run(playerAction.inventoryId);
+				}
+
+				// Apply effects
+				const effects = JSON.parse(itemData.effects_json || '{}');
+				if (effects.heal) {
+					const amountHealed = parseEffectValue(effects.heal);
+					const oldHealth = character.current_health;
+					character.current_health = Math.min(character.max_health, character.current_health + amountHealed);
+					combatState.combatLog.push(`🧪 You use **${itemData.name}** and restore **${character.current_health - oldHealth}** health!`);
+				}
+				// Add other effects like mana restoration here later
+				else {
+					combatState.combatLog.push(`🧪 You use **${itemData.name}**, but it has no discernible effect in combat.`);
+				}
+			});
+
+			useItemTx();
+
+		}
+		catch (error) {
+			console.error('[PvE Item Use] Transaction failed:', error);
+			combatState.combatLog.push('> Your attempt to use an item failed.');
 		}
 	}
 	// Add logic for 'magic' and 'item' actions here later
@@ -647,45 +865,61 @@ module.exports.buttons = async (interaction) => {
 		case 'fight':
 			combatState.playerState = 'SELECTING_TARGET';
 			break;
-		// Stubs for future implementation
+			// Stubs for future implementation
 		case 'magic':
 			combatState.combatLog.push('> You focus your mind... (Magic system coming soon!)');
 			break;
 		case 'items':
-			combatState.combatLog.push('> You rummage through your bag... (Item usage coming soon!)');
+			combatState.playerState = 'SELECTING_ITEM';
 			break;
-		case 'flee':
-			// handleFlee will be a new function to implement flee logic
-			// For now, let's just log it and do nothing.
-			combatState.combatLog.push('> You attempt to flee... (Flee system coming soon!)');
-			break;
-		}
-		break;
-	}
-	case 'target': {
-		if (action === 'attack') {
-			const targetIndex = parseInt(rest[0], 10);
-			if (isNaN(targetIndex) || targetIndex < 0 || targetIndex >= combatState.monsters.length) {
-				return;
+		case 'flee': {
+			const nodeLevel = combatState.nodeData.required_level;
+			const playerFinesse = combatState.character.stat_finesse;
+
+			// Base 50% chance, +/- 2% for each point of Finesse above/below (NodeLevel * 2)
+			const baseChance = 0.50;
+			const finesseAdvantage = (playerFinesse - (nodeLevel * 2)) * 0.02;
+			const fleeChance = Math.max(0.05, Math.min(0.95, baseChance + finesseAdvantage));
+
+			if (Math.random() < fleeChance) {
+				// Success!
+				combatState.combatLog.push(`> You successfully fled the battle! (Chance: ${Math.round(fleeChance * 100)}%)`);
+				const finalUI = buildCombatUI(combatState, interaction.user);
+				await interaction.message.edit({ embeds: finalUI.embeds, components: [] });
+				// Exit combat
+				return handleFlee(interaction, combatState);
 			}
-			const monster = combatState.monsters[targetIndex];
-			if (monster.current_health <= 0) return;
-
-			// This is where the main combat turn logic now lives
-			await executePlayerTurn(interaction, combatState, { type: 'attack', targetIndex });
-			// After the turn, return player to the main menu
-			combatState.playerState = 'MAIN';
+			else {
+				// Failure! Player loses their turn.
+				await executePlayerTurn(interaction, combatState, { type: 'flee_fail' });
+			}
+			break;
 		}
-		break;
-	}
-	case 'back': {
-		if (action === 'main') {
-			combatState.playerState = 'MAIN';
-		}
-		break;
-	}
-	}
+		case 'target': {
+			if (action === 'attack') {
+				const targetIndex = parseInt(rest[0], 10);
+				if (isNaN(targetIndex) || targetIndex < 0 || targetIndex >= combatState.monsters.length) {
+					return;
+				}
+				const monster = combatState.monsters[targetIndex];
+				if (monster.current_health <= 0) return;
 
+				// This is where the main combat turn logic now lives
+				await executePlayerTurn(interaction, combatState, { type: 'attack', targetIndex });
+				// After the turn, return player to the main menu
+				combatState.playerState = 'MAIN';
+			}
+			break;
+		}
+		case 'back': {
+			if (action === 'main') {
+				combatState.playerState = 'MAIN';
+			}
+			break;
+		}
+		}
+	}
+	}
 	// --- VICTORY/DEFEAT CHECKS ---
 	// These checks are now separate from the action logic.
 	const allMonstersDefeated = combatState.monsters.every(m => m.current_health <= 0);
@@ -707,6 +941,7 @@ module.exports.buttons = async (interaction) => {
 	const ui = buildCombatUI(combatState, interaction.user);
 	await interaction.message.edit({ embeds: ui.embeds, components: ui.components });
 };
+
 module.exports.cleanup = () => {
 	clearInterval(cleanupIntervalId);
 };
