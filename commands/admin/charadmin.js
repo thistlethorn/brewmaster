@@ -32,7 +32,58 @@ module.exports = {
 			subcommand
 				.setName('reset')
 				.setDescription('Resets a character to their Level 1, post-Origin state.')
-				.addUserOption(option => option.setName('user').setDescription('The user whose character to reset.').setRequired(true))),
+				.addUserOption(option => option.setName('user').setDescription('The user whose character to reset.').setRequired(true)))
+		.addSubcommand(subcommand =>
+			subcommand
+				.setName('additem')
+				.setDescription('Adds a specific item to a user\'s inventory.')
+				.addUserOption(option =>
+					option.setName('user')
+						.setDescription('The user to give the item to.')
+						.setRequired(true))
+				.addStringOption(option =>
+					option.setName('item')
+						.setDescription('The name of the item to add.')
+						.setRequired(true)
+						.setAutocomplete(true))
+				.addIntegerOption(option =>
+					option.setName('quantity')
+						.setDescription('The quantity of the item to add. Defaults to 1.')
+						.setRequired(false)
+						.setMinValue(1))),
+
+	async autocomplete(interaction) {
+		const subcommand = interaction.options.getSubcommand();
+		if (subcommand !== 'additem') return;
+
+		const focusedOption = interaction.options.getFocused(true);
+		if (focusedOption.name !== 'item') return;
+
+		const focusedValue = focusedOption.value.toLowerCase();
+
+		try {
+			// Query the items table for names that match what the user is typing
+			const items = db.prepare(`
+				SELECT item_id, name 
+				FROM items 
+				WHERE name LIKE ? 
+				ORDER BY name ASC 
+				LIMIT 25
+			`).all(`%${focusedValue}%`);
+
+			// Format the results for Discord's API
+			await interaction.respond(
+				items.map(item => ({
+					name: item.name,
+					value: item.item_id.toString(),
+				})),
+			);
+		}
+		catch (error) {
+			console.error('Item autocomplete error:', error);
+			await interaction.respond([]);
+		}
+	},
 
 	async execute(interaction) {
 		if (interaction.user.id !== config.developerId) {
@@ -157,6 +208,51 @@ module.exports = {
 					embed.setTitle('Character Reset')
 						.setDescription(`Successfully reset ${targetUser.username}'s character to Level 1.`)
 						.addFields({ name: 'Result', value: 'Character is now at Level 1, 0 XP, with 0 unspent points and base stats according to their Origin.' });
+					await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+				}
+				break;
+
+			case 'additem':
+				{
+					const itemIdString = interaction.options.getString('item');
+					const quantity = interaction.options.getInteger('quantity') ?? 1;
+					const finalItemId = parseInt(itemIdString, 10);
+
+					if (isNaN(finalItemId)) {
+						return interaction.reply({ content: 'Invalid item ID provided from autocomplete. Please select a valid item.', flags: MessageFlags.Ephemeral });
+					}
+
+					// Verify item exists and get its properties
+					const itemData = db.prepare('SELECT name, is_stackable FROM items WHERE item_id = ?').get(finalItemId);
+					if (!itemData) {
+						return interaction.reply({ content: 'The selected item does not exist in the database.', flags: MessageFlags.Ephemeral });
+					}
+
+					const addTx = db.transaction(() => {
+						if (itemData.is_stackable) {
+							// Check if the user already has a stack of this item
+							const existingStack = db.prepare('SELECT inventory_id FROM user_inventory WHERE user_id = ? AND item_id = ?').get(targetUser.id, finalItemId);
+							if (existingStack) {
+								db.prepare('UPDATE user_inventory SET quantity = quantity + ? WHERE inventory_id = ?').run(quantity, existingStack.inventory_id);
+							}
+							else {
+								db.prepare('INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, ?)').run(targetUser.id, finalItemId, quantity);
+							}
+						}
+						else {
+							// For non-stackable items, insert one row for each
+							const stmt = db.prepare('INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, 1)');
+							for (let i = 0; i < quantity; i++) {
+								stmt.run(targetUser.id, finalItemId);
+							}
+						}
+					});
+
+					addTx();
+
+					embed.setTitle('Item Added')
+						.setDescription(`Successfully added **${quantity}x ${itemData.name}** to ${targetUser.username}'s inventory.`);
+
 					await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 				}
 				break;

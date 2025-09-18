@@ -138,4 +138,4 @@ async function givePrize(userId, prize, interaction) {
 	}
 }
 
-module.exports = { rollVoucher, givePrize };
+module.exports = { rollVoucher, givePrize, lootPools };

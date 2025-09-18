@@ -141,7 +141,17 @@ function generateXpBar(currentXp, requiredXp) {
  * @param {import('discord.js').ChatInputCommandInteraction} interaction
  */
 async function handleView(interaction) {
-	const targetUser = interaction.options.getUser('user') || interaction.user;
+	let targetUser;
+
+	// Check if the interaction is a command with options
+	if (interaction.isChatInputCommand()) {
+		targetUser = interaction.options.getUser('user') || interaction.user;
+	}
+	else {
+		// If it's a button or menu, the target is always the person who interacted.
+		targetUser = interaction.user;
+	}
+
 	const isSelfView = targetUser.id === interaction.user.id;
 
 	// Fetch all data in parallel
@@ -172,7 +182,9 @@ async function handleView(interaction) {
 
 	if (!characterData) {
 		const content = isSelfView ? 'You have not created a character yet. Use `/character create` to begin!' : `${targetUser.username} has not created a character yet.`;
-		return interaction.reply({ content, flags: MessageFlags.Ephemeral });
+		// For buttons, we need to .update() or .reply()
+		const replyMethod = interaction.isButton() ? 'update' : 'reply';
+		return interaction[replyMethod]({ content, flags: MessageFlags.Ephemeral, embeds: [], components: [] });
 	}
 
 	recalculateStats(targetUser.id);
@@ -337,7 +349,9 @@ async function handleView(interaction) {
 		components.push(editRow1, editRow2);
 	}
 
-	await interaction.reply({ embeds: [sheetEmbed], components: components });
+	// Determine whether to .reply() or .update()
+	const replyMethod = interaction.isButton() ? 'update' : 'reply';
+	await interaction[replyMethod]({ embeds: [sheetEmbed], components: components });
 }
 
 /**

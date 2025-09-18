@@ -6,6 +6,7 @@ const commandFilename = path.basename(__filename);
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, MessageFlags, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const { rarityEmojis, rarityColors } = require('../../utils/constants.js');
 const db = require('../../database');
+const { lootPools } = require('../../utils/voucherLoot.js');
 
 const activeShopSessions = new Map();
 const SHOP_SESSION_TIMEOUT = 15 * 60 * 1000;
@@ -464,8 +465,35 @@ module.exports = {
 				db.prepare('INSERT INTO character_npc_interactions (user_id, vendor_id) VALUES (?, ?) ON CONFLICT DO NOTHING').run(userId, vendorId);
 				const interactionData = db.prepare('SELECT * FROM character_npc_interactions WHERE user_id = ? AND vendor_id = ?').get(userId, vendorId);
 
-				const ui = buildShopUI(vendor, character, interactionData);
-				await interaction.editReply({ embeds: ui.embeds, components: ui.components });
+				const { embeds, components } = buildShopUI(vendor, character, interactionData);
+
+				// If the vendor is Curio, check for voucher stacks and add the new button
+				if (vendor.name === 'Curio the Collector') {
+					const eligibleVouchers = db.prepare(`
+					SELECT 1 FROM user_inventory ui
+					JOIN items i ON ui.item_id = i.item_id
+					WHERE ui.user_id = ? AND i.item_type = 'VOUCHER' AND ui.quantity >= 10
+					LIMIT 1
+				`).get(userId);
+
+					if (eligibleVouchers) {
+						// Create a new button
+						const redeemButton = new ButtonBuilder()
+							.setCustomId(`shop_redeem_start_${vendor.vendor_id}_${userId}`)
+							.setLabel('Redeem 10 Vouchers')
+							.setStyle(ButtonStyle.Primary)
+							.setEmoji('💎');
+
+						// Add the button to the first ActionRowBuilder
+						// This assumes your buildShopUI returns components in an array of ActionRowBuilders
+						if (components.length > 0) {
+							components[0].addComponents(redeemButton);
+						}
+					}
+				}
+
+				// Pass the potentially modified UI to the reply
+				await interaction.editReply({ embeds, components });
 			}
 			// Item selection from the sell dropdown
 			else if (action === 'sellitem') {
@@ -529,6 +557,83 @@ module.exports = {
 
 				const ui = buildBuyConfirmationUI(vendor, itemToBuy, finalBuyPrice, economy);
 				await interaction.editReply({ content: '', embeds: ui.embeds, components: ui.components });
+			}
+			else if (action === 'redeemvoucher') {
+				const [vendorId, expectedUserId] = rest;
+				if (userId !== expectedUserId) return;
+
+				const voucherName = interaction.values[0];
+				const poolData = lootPools[voucherName];
+
+				if (!poolData || poolData.type !== 'item') {
+					return interaction.editReply({ content: 'Could not find a valid loot pool for that voucher.', components: [], embeds: [] });
+				}
+
+				// Build the query to find all possible items
+				const rarities = poolData.pool.map(p => p.value.rarity.toUpperCase());
+				// Handle cases where a type is specified (like 'ARMOR')
+				const itemType = poolData.pool[0].value.type;
+
+				let query = `SELECT item_id, name, rarity FROM items WHERE rarity IN (${rarities.map(() => '?').join(',')})`;
+				const params = [...rarities];
+
+				if (itemType) {
+					query += ' AND item_type = ?';
+					params.push(itemType.toUpperCase());
+				}
+
+				query += ' AND rarity != \'STARTER\' AND item_type != \'VOUCHER\' ORDER BY name ASC';
+
+				const possibleItems = db.prepare(query).all(...params);
+
+				if (possibleItems.length === 0) {
+					return interaction.editReply({ content: 'There are no items available in that loot pool right now.', components: [], embeds: [] });
+				}
+
+				const embed = new EmbedBuilder()
+					.setColor(0x1ABC9C)
+					.setTitle(`Choose Your Reward from: ${voucherName}`)
+					.setDescription('Select the specific item you wish to receive. This will consume 10 vouchers.');
+
+				// Encode voucher name to prevent ID length issues
+				const itemMenu = new StringSelectMenuBuilder()
+					.setCustomId(`shop_menu_redeemitem_${vendorId}_${userId}_${Buffer.from(voucherName).toString('base64')}`)
+					.setPlaceholder('Select your guaranteed item...')
+					.addOptions(possibleItems.slice(0, 25).map(item => ({
+						label: item.name,
+						description: `Rarity: ${item.rarity}`,
+						value: item.item_id.toString(),
+					})));
+
+				await interaction.editReply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(itemMenu)] });
+
+			}
+			else if (action === 'redeemitem') {
+				const [vendorId, expectedUserId, encodedVoucherName] = rest;
+				if (userId !== expectedUserId) return;
+
+				const voucherName = Buffer.from(encodedVoucherName, 'base64').toString('utf8');
+				const itemId = parseInt(interaction.values[0], 10);
+				const item = db.prepare('SELECT name FROM items WHERE item_id = ?').get(itemId);
+
+				const confirmEmbed = new EmbedBuilder()
+					.setColor(0xFEE75C)
+					.setTitle('Confirm Your Choice')
+					.setDescription(`Are you sure you want to redeem **10x ${voucherName}** to receive one **${item.name}**?`)
+					.setFooter({ text: 'This action cannot be undone.' });
+
+				const confirmRow = new ActionRowBuilder().addComponents(
+					new ButtonBuilder()
+						.setCustomId(`shop_redeem_confirm_${vendorId}_${itemId}_${encodedVoucherName}_${userId}`)
+						.setLabel('Confirm & Redeem')
+						.setStyle(ButtonStyle.Success),
+					new ButtonBuilder()
+						.setCustomId(`shop_redeem_start_${vendorId}_${userId}`)
+						.setLabel('Cancel')
+						.setStyle(ButtonStyle.Secondary),
+				);
+
+				await interaction.editReply({ embeds: [confirmEmbed], components: [confirmRow] });
 			}
 		}
 		catch (error) {
@@ -694,14 +799,99 @@ module.exports = {
 
 		// Handle actions that open a modal FIRST, as they cannot be deferred.
 		const isModalAction = ['buycustom', 'sellcustom'].includes(action);
-		if (isModalAction) {
-			// Modal logic will be handled inside the main try-catch
-		}
-		else {
+		if (!isModalAction) {
 			await interaction.deferUpdate();
 		}
 
 		try {
+			if (action === 'redeem' && parts[2] === 'start') {
+				const [vendorId, expectedUserId] = rest;
+				if (userId !== expectedUserId) return interaction.reply('This isn\'t your button!');
+
+				const eligibleVouchers = db.prepare(`
+					SELECT i.name
+					FROM user_inventory ui
+					JOIN items i ON ui.item_id = i.item_id
+					WHERE ui.user_id = ? AND i.item_type = 'VOUCHER' AND ui.quantity >= 10
+				`).all(userId);
+
+				if (eligibleVouchers.length === 0) {
+					return interaction.editReply({ content: 'You no longer have any voucher stacks of 10 or more.', components: [], embeds: [] });
+				}
+
+				const embed = new EmbedBuilder()
+					.setColor(0x9B59B6)
+					.setTitle('💎 Bulk Voucher Redemption')
+					.setDescription('Select a stack of 10 vouchers to redeem for a guaranteed item of your choice from its loot pool.');
+
+				const menu = new StringSelectMenuBuilder()
+					.setCustomId(`shop_menu_redeemvoucher_${vendorId}_${userId}`)
+					.setPlaceholder('Select a voucher type...')
+					.addOptions(eligibleVouchers.map(v => ({
+						label: v.name,
+						// Use the unique item name as the value
+						value: v.name,
+					})));
+
+				const row = new ActionRowBuilder().addComponents(menu);
+				await interaction.editReply({ embeds: [embed], components: [row] });
+				return;
+			}
+			else if (action === 'redeem' && subAction === 'confirm') {
+				const [, itemIdStr, encodedVoucherName, expectedUserId] = rest;
+				if (userId !== expectedUserId) return;
+
+				await interaction.deferUpdate();
+
+				const itemId = parseInt(itemIdStr, 10);
+				const voucherName = Buffer.from(encodedVoucherName, 'base64').toString('utf8');
+				const item = db.prepare('SELECT name FROM items WHERE item_id = ?').get(itemId);
+
+				try {
+					const redeemTx = db.transaction(() => {
+						const voucherInInv = db.prepare(`
+							SELECT ui.inventory_id, ui.quantity 
+							FROM user_inventory ui JOIN items i ON ui.item_id = i.item_id
+							WHERE ui.user_id = ? AND i.name = ?
+						`).get(userId, voucherName);
+
+						if (!voucherInInv || voucherInInv.quantity < 10) {
+							throw new Error('INSUFFICIENT_VOUCHERS');
+						}
+
+						// Consume 10 vouchers
+						if (voucherInInv.quantity > 10) {
+							db.prepare('UPDATE user_inventory SET quantity = quantity - 10 WHERE inventory_id = ?').run(voucherInInv.inventory_id);
+						}
+						else {
+							db.prepare('DELETE FROM user_inventory WHERE inventory_id = ?').run(voucherInInv.inventory_id);
+						}
+
+						// Grant the chosen item
+						db.prepare('INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, 1)').run(userId, itemId);
+					});
+
+					redeemTx();
+
+					const successEmbed = new EmbedBuilder()
+						.setColor(0x2ECC71)
+						.setTitle('💎 Redemption Successful! 💎')
+						.setDescription(`You have successfully redeemed 10x ${voucherName} and received one **${item.name}**! It has been added to your inventory.`);
+
+					await interaction.editReply({ embeds: [successEmbed], components: [] });
+
+				}
+				catch (error) {
+					if (error.message === 'INSUFFICIENT_VOUCHERS') {
+						await interaction.editReply({ content: 'You no longer have enough vouchers to complete this redemption.', embeds: [], components: [] });
+					}
+					else {
+						console.error('Bulk redemption transaction error:', error);
+						await interaction.editReply({ content: 'A database error occurred. Your vouchers were not consumed.', embeds: [], components: [] });
+					}
+				}
+				return;
+			}
 			// --- DYNAMIC ID PARSING ---
 			let vendorId, itemId, expectedUserId, healType;
 
