@@ -315,23 +315,24 @@ async function handleEngage(interaction) {
 		return interaction.reply({ content: 'You must create a character first with `/character create`.', flags: MessageFlags.Ephemeral });
 	}
 
-	// NEW: Defeat status check
-	if (character.character_status === 'DEFEATED') {
+	// Defeat status check
+	if (['DEFEATED', 'RECOVERING_SHORT', 'RECOVERING_LONG'].includes(character.character_status)) {
 		const expiryTime = new Date(character.character_status_expiry_time);
 		const now = new Date();
 		if (now < expiryTime) {
 			const expiryTimestamp = Math.floor(expiryTime.getTime() / 1000);
-			return interaction.reply({ content: `You are still recovering from your last battle. You can start a new adventure <t:${expiryTimestamp}:R>.`, flags: MessageFlags.Ephemeral });
+			return interaction.reply({ content: `You are still recovering. You can start a new adventure <t:${expiryTimestamp}:R>.`, flags: MessageFlags.Ephemeral });
 		}
 		else {
-			// Cooldown has expired, reset status to IDLE and continue.
+			// Recovery has finished! Update status and let them proceed.
 			db.prepare('UPDATE characters SET character_status = \'IDLE\', character_status_expiry_time = NULL WHERE user_id = ?').run(userId);
-			// Update in-memory object
+			// Update the in-memory object so the rest of the function works correctly
 			character.character_status = 'IDLE';
+			await interaction.followUp({ content: 'Your recovery is complete! You feel refreshed and ready for a new adventure.', flags: MessageFlags.Ephemeral });
 		}
 	}
 
-	if (character.character_status !== 'IDLE') {
+	if (character.character_status === 'IN_COMBAT') {
 		return interaction.reply({ content: `You cannot start a new battle while your status is "${character.character_status}".`, flags: MessageFlags.Ephemeral });
 	}
 	if (character.current_health <= 1) {

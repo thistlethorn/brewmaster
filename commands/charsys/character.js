@@ -519,6 +519,15 @@ async function handleRecover(interaction) {
 		return interaction.reply({ content: 'You must create a character first.', flags: MessageFlags.Ephemeral });
 	}
 
+	// NEW: Check for and clear expired statuses first
+	if (['RECOVERING_SHORT', 'RECOVERING_LONG'].includes(character.character_status)) {
+		const expiryTime = new Date(character.character_status_expiry_time);
+		if (new Date() >= expiryTime) {
+			db.prepare('UPDATE characters SET character_status = \'IDLE\', character_status_expiry_time = NULL WHERE user_id = ?').run(userId);
+			character.character_status = 'IDLE';
+		}
+	}
+
 	if (['IN_COMBAT', 'DEFEATED', 'RECOVERING_SHORT', 'RECOVERING_LONG'].includes(character.character_status)) {
 		const expiryTime = new Date(character.character_status_expiry_time);
 		const expiryTimestamp = Math.floor(expiryTime.getTime() / 1000);

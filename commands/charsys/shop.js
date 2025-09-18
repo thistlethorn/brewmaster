@@ -72,7 +72,7 @@ async function startNewShopSession(interaction, isUpdate = false) {
 	const replyOptions = { ...ui, flags: MessageFlags.Ephemeral, content: '' };
 
 	if (isUpdate) {
-		await interaction.editReply(replyOptions);
+		await interaction.update(replyOptions);
 	}
 	else {
 		await interaction.reply(replyOptions);
@@ -666,7 +666,7 @@ module.exports = {
 
 		if (command !== 'shop') return;
 
-		// Handle top-level close button which has no vendorId
+		// Handle non-vendor-specific actions first
 		if (action === 'close') {
 			const expectedUserId = parts[2];
 			if (userId === expectedUserId) {
@@ -676,43 +676,53 @@ module.exports = {
 			}
 			return;
 		}
+		if (action === 'restart' && parts[2] === 'session') {
+			const expectedUserId = parts[3];
+			if (userId === expectedUserId) {
+				activeShopSessions.delete(userId);
+				await startNewShopSession(interaction, true);
+			}
+			return;
+		}
+		if (action === 'cancel' && parts[2] === 'restart') {
+			const expectedUserId = parts[3];
+			if (userId === expectedUserId) {
+				await interaction.update({ content: 'Action cancelled. You can dismiss this message.', embeds: [], components: [] }).catch(e => console.error('Error updating restart prompt reply:', e));
+			}
+			return;
+		}
 
-		// Handle actions that open a modal FIRST. These are unique reply types and cannot be deferred.
+		// Handle actions that open a modal FIRST, as they cannot be deferred.
 		const isModalAction = ['buycustom', 'sellcustom'].includes(action);
-		if (!isModalAction) {
-			// Defer immediately for all other actions that will only update the message.
+		if (isModalAction) {
+			// Modal logic will be handled inside the main try-catch
+		}
+		else {
 			await interaction.deferUpdate();
 		}
-		// *** FIX END ***
 
 		try {
-			if (action === 'restart' && parts[2] === 'session') {
-				const expectedUserId = parts[3];
-				if (userId === expectedUserId) {
-					activeShopSessions.delete(userId);
-					await startNewShopSession(interaction, true);
-				}
-				return;
+			// --- DYNAMIC ID PARSING ---
+			let vendorId, itemId, expectedUserId, healType;
+
+			if (action === 'heal') {
+				// Format: shop_heal_TYPE_VENDORID_USERID
+				healType = parts[2];
+				vendorId = parts[3];
+				expectedUserId = parts[4];
 			}
-
-			if (action === 'cancel' && parts[2] === 'restart') {
-				const expectedUserId = parts[3];
-				if (userId === expectedUserId) {
-					await interaction.deleteReply().catch(e => console.error('Error deleting restart prompt reply:', e));
+			else {
+				// Format: shop_ACTION_VENDORID_...
+				vendorId = parts[2];
+				if (['buy', 'sell', 'talk', 'leave', 'back'].includes(action)) {
+					expectedUserId = parts[3];
 				}
-				return;
-			}
-
-			// Standard variables for vendor-specific actions
-			const vendorId = parts[2];
-			const itemId = parts[3];
-			const expectedUserId = parts[3];
-
-			if (['buy', 'sell', 'talk', 'leave', 'back', 'buyback', 'sellback'].includes(action)) {
-				if (userId !== expectedUserId) {
-					return interaction.editReply({ content: 'This is not for you.' });
+				// For item-specific actions, the 4th part is the itemID
+				if (action.includes('buy') || action.includes('sell')) {
+					itemId = parts[3];
 				}
 			}
+			// --- END DYNAMIC PARSING ---
 
 			activeShopSessions.set(userId, { timestamp: Date.now() });
 
@@ -805,14 +815,11 @@ module.exports = {
 					db.transaction(() => {
 						db.prepare('UPDATE user_economy SET crowns = crowns - ? WHERE user_id = ?').run(totalCost, userId);
 						if (item.is_stackable) {
-							// Check for an existing, unequipped stack of this item.
 							const existingStack = db.prepare('SELECT inventory_id FROM user_inventory WHERE user_id = ? AND item_id = ? AND equipped_slot IS NULL LIMIT 1').get(userId, itemId);
 							if (existingStack) {
-								// If it exists, add to the quantity.
 								db.prepare('UPDATE user_inventory SET quantity = quantity + ? WHERE inventory_id = ?').run(amountToBuy, existingStack.inventory_id);
 							}
 							else {
-								// Otherwise, insert a new row for the new stack.
 								db.prepare('INSERT INTO user_inventory (user_id, item_id, quantity) VALUES (?, ?, ?)').run(userId, itemId, amountToBuy);
 							}
 						}
@@ -828,13 +835,25 @@ module.exports = {
 				return;
 			}
 
+			// Main action router
 			switch (action) {
 			case 'heal': {
-				const healType = parts[2];
 				if (userId !== expectedUserId) return;
 
-				const economy = db.prepare('SELECT crowns FROM user_economy WHERE user_id = ?').get(userId) || { crowns: 0 };
+				// Add checks to prevent healing when not needed
+				if (character.current_health >= character.max_health) {
+					// For flat/percent, if health is full, stop.
+					if (healType === 'flat' || healType === 'percent') {
+						return interaction.followUp({ content: 'Sister Elara smiles warmly. "You appear to be in perfect health, traveler. Save your coin."', flags: MessageFlags.Ephemeral });
+					}
+					// For full restore, check mana and status too.
+					if (healType === 'full' && character.current_mana >= character.max_mana && !character.character_status.startsWith('RECOVERING')) {
+						return interaction.followUp({ content: 'Sister Elara smiles warmly. "Your mind and body are already fully restored. May the light keep you."', flags: MessageFlags.Ephemeral });
+					}
+				}
 
+
+				const economy = db.prepare('SELECT crowns FROM user_economy WHERE user_id = ?').get(userId) || { crowns: 0 };
 				const costs = { flat: 100, percent: 1000, full: 5000 };
 				const cost = costs[healType];
 
@@ -848,12 +867,8 @@ module.exports = {
 				let newStatusExpiry = character.character_status_expiry_time;
 
 				switch (healType) {
-				case 'flat':
-					healthToRestore = 50;
-					break;
-				case 'percent':
-					healthToRestore = Math.floor(character.max_health * 0.25);
-					break;
+				case 'flat': healthToRestore = 50; break;
+				case 'percent': healthToRestore = Math.floor(character.max_health * 0.25); break;
 				case 'full':
 					healthToRestore = character.max_health - character.current_health;
 					manaToRestore = character.max_mana - character.current_mana;
@@ -874,7 +889,7 @@ module.exports = {
 				})();
 
 				await interaction.followUp({ content: `You pay ${cost} Crowns. Sister Elara's blessing restores your vitality! You are now at ${newHealth}/${character.max_health} HP.`, flags: MessageFlags.Ephemeral });
-				// Re-render the healer UI with updated values
+
 				const updatedCharacter = db.prepare('SELECT * FROM characters WHERE user_id = ?').get(userId);
 				const updatedEconomy = db.prepare('SELECT crowns FROM user_economy WHERE user_id = ?').get(userId);
 				const updatedEmbed = new EmbedBuilder()
@@ -928,9 +943,7 @@ module.exports = {
 
 				if (sellableItems.length === 0) {
 					const ui = getFreshUI();
-					// Access the first embed in the array and set its description.
 					ui.embeds[0].setDescription(`You have no unequipped items that ${vendor.name} is interested in right now.`);
-					// Reply with the modified UI, ensuring content is empty.
 					await interaction.editReply({ ...ui, content: '' });
 					return;
 				}
@@ -1007,7 +1020,6 @@ module.exports = {
 		}
 		catch (error) {
 			console.error(`[Shop Button] A critical error occurred for user ${userId} (Action: ${action}):`, error);
-			// Check if the interaction can still be replied to. This is crucial for errors that happen before deferral.
 			if (!interaction.replied && !interaction.deferred) {
 				await interaction.reply({ content: 'A critical server error occurred. Please try again.', flags: MessageFlags.Ephemeral }).catch(e => console.error('Failed to send initial error message to user:', e));
 			}

@@ -67,6 +67,8 @@ module.exports = {
 					interaction.isButton() ? ' [Button]' : ''
 				}${
 					interaction.isAutocomplete() ? ' [Autocomplete]' : ''
+				}${
+					interaction.customId ? ` [customId: ${interaction.customId}]` : ''
 				}`,
 			);
 
