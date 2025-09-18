@@ -1211,7 +1211,7 @@ module.exports = {
 			return;
 		}
 		if (command === 'unseal' && action === 'start') {
-			const unsealCommand = require('../utility/unseal.js');
+			const unsealCommand = require('./unseal.js');
 			if (unsealCommand && typeof unsealCommand.executeUnseal === 'function') {
 				await unsealCommand.executeUnseal(interaction);
 			}

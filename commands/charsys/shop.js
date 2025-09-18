@@ -805,7 +805,8 @@ module.exports = {
 
 		try {
 			if (action === 'redeem' && parts[2] === 'start') {
-				const [vendorId, expectedUserId] = rest;
+				const vendorId = parts[3];
+				const expectedUserId = parts[4];
 				if (userId !== expectedUserId) return interaction.reply('This isn\'t your button!');
 
 				const eligibleVouchers = db.prepare(`
@@ -837,11 +838,10 @@ module.exports = {
 				await interaction.editReply({ embeds: [embed], components: [row] });
 				return;
 			}
-			else if (action === 'redeem' && subAction === 'confirm') {
-				const [, itemIdStr, encodedVoucherName, expectedUserId] = rest;
+			else if (action === 'redeem' && parts[2] === 'confirm') {
+				const [, , , , itemIdStr, encodedVoucherName, expectedUserId] = parts;
 				if (userId !== expectedUserId) return;
 
-				await interaction.deferUpdate();
 
 				const itemId = parseInt(itemIdStr, 10);
 				const voucherName = Buffer.from(encodedVoucherName, 'base64').toString('utf8');
