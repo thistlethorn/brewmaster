@@ -3,7 +3,7 @@
 const path = require('path');
 const { checkBetatestLock } = require(`${global.__utils}/betaLock.js`);
 const commandFilename = path.basename(__filename);
-const { SlashCommandBuilder, EmbedBuilder, MessageFlags, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, MessageFlags, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } = require('discord.js');
 const db = require('../../database');
 const { addXp } = require('../../utils/addXp');
 
@@ -73,7 +73,7 @@ function buildCombatUI(combatState, user) {
 		.setAuthor({ name: user.username, iconURL: user.displayAvatarURL() });
 
 	const playerStatus = `❤️ **HP:** \`${combatState.character.current_health} / ${combatState.character.max_health}\`\n` +
-	                     `💙 **Mana:** \`${combatState.character.current_mana} / ${combatState.character.max_mana}\``;
+                         `💙 **Mana:** \`${combatState.character.current_mana} / ${combatState.character.max_mana}\``;
 	embed.addFields({ name: 'Your Status', value: playerStatus, inline: false });
 
 	const monsterStatus = combatState.monsters.map((monster, index) => {
@@ -112,6 +112,58 @@ function buildCombatUI(combatState, user) {
 		components.push(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`pve_back_main_${threadId}`).setLabel('Back').setStyle(ButtonStyle.Secondary)));
 		break;
 	}
+	case 'SELECTING_SPELL_TARGET': {
+		const spellId = combatState.selectedSpellId;
+		const spell = db.prepare('SELECT name FROM spells WHERE spell_id = ?').get(spellId);
+		embed.setFooter({ text: `Select a target for ${spell.name}.` });
+		let currentRow = new ActionRowBuilder();
+		for (let i = 0; i < combatState.monsters.length; i++) {
+			if (currentRow.components.length === 5) {
+				components.push(currentRow);
+				currentRow = new ActionRowBuilder();
+			}
+			const monster = combatState.monsters[i];
+			const isDefeated = monster.current_health <= 0;
+			currentRow.addComponents(
+				new ButtonBuilder()
+					.setCustomId(`pve_target_spell_${threadId}_${spellId}_${i}`)
+					.setLabel(isDefeated ? `💀 ${monster.name} #${i + 1}` : `Cast on ${monster.name} #${i + 1}`)
+					.setStyle(isDefeated ? ButtonStyle.Secondary : ButtonStyle.Primary)
+					.setDisabled(isDefeated),
+			);
+		}
+		if (currentRow.components.length > 0) components.push(currentRow);
+		components.push(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`pve_back_main_${threadId}`).setLabel('Back').setStyle(ButtonStyle.Secondary)));
+		break;
+	}
+	case 'SELECTING_SPELL': {
+		embed.setFooter({ text: 'Select a spell to cast from your spellbook.' });
+		const knownSpells = db.prepare(`
+            SELECT s.* FROM character_spells cs
+            JOIN spells s ON cs.spell_id = s.spell_id
+            WHERE cs.user_id = ?
+            ORDER BY s.name ASC
+        `).all(combatState.userId);
+
+		const castableSpells = knownSpells.filter(s => s.mana_cost <= combatState.character.current_mana);
+
+		if (castableSpells.length > 0) {
+			const spellMenu = new StringSelectMenuBuilder()
+				.setCustomId(`pve_menu_spell_${threadId}`)
+				.setPlaceholder('Choose a spell...')
+				.addOptions(castableSpells.map(spell => ({
+					label: `${spell.name} (${spell.mana_cost} Mana)`,
+					description: spell.description.substring(0, 100),
+					value: spell.spell_id.toString(),
+				})));
+			components.push(new ActionRowBuilder().addComponents(spellMenu));
+		}
+		else {
+			embed.setDescription((embed.data.description || '') + '\n\n*You don\'t have enough mana or don\'t know any spells.*');
+		}
+		components.push(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`pve_back_main_${threadId}`).setLabel('Back').setStyle(ButtonStyle.Secondary)));
+		break;
+	}
 	case 'SELECTING_ITEM': {
 		embed.setFooter({ text: 'Select an item to use from your inventory.' });
 		const consumableItems = db.prepare(`
@@ -141,7 +193,6 @@ function buildCombatUI(combatState, user) {
 		components.push(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`pve_back_main_${threadId}`).setLabel('Back').setStyle(ButtonStyle.Secondary)));
 		break;
 	}
-	// Add other states (SELECTING_SPELL, SELECTING_ITEM) here later
 	default: {
 		// 'MAIN' state
 		embed.setFooter({ text: 'Your turn to act!' });
@@ -605,10 +656,7 @@ module.exports = {
 	},
 	async menus(interaction) {
 		const parts = interaction.customId.split('_');
-		// Expects pve_menu_item_threadId
 		const [, category, action, threadId] = parts;
-
-		if (category !== 'menu' || action !== 'item') return;
 
 		const combatState = activeCombats.get(threadId);
 		if (!combatState || combatState.userId !== interaction.user.id) {
@@ -620,13 +668,29 @@ module.exports = {
 
 		await interaction.deferUpdate();
 
-		const inventoryId = parseInt(interaction.values[0], 10);
-		if (isNaN(inventoryId)) return;
+		if (category === 'menu' && action === 'item') {
+			const inventoryId = parseInt(interaction.values[0], 10);
+			if (isNaN(inventoryId)) return;
 
-		await executePlayerTurn(interaction, combatState, { type: 'item', inventoryId });
+			await executePlayerTurn(interaction, combatState, { type: 'item', inventoryId });
+			combatState.playerState = 'MAIN';
+		}
+		else if (category === 'menu' && action === 'spell') {
+			const spellId = parseInt(interaction.values[0], 10);
+			if (isNaN(spellId)) return;
 
-		// After using the item, return to the main menu
-		combatState.playerState = 'MAIN';
+			const spell = db.prepare('SELECT effects_json FROM spells WHERE spell_id = ?').get(spellId);
+			const effects = JSON.parse(spell.effects_json);
+
+			if (effects.target === 'single') {
+				combatState.playerState = 'SELECTING_SPELL_TARGET';
+				combatState.selectedSpellId = spellId;
+			}
+			else {
+				await executePlayerTurn(interaction, combatState, { type: 'spell', spellId });
+				combatState.playerState = 'MAIN';
+			}
+		}
 
 		// --- VICTORY/DEFEAT CHECKS ---
 		const allMonstersDefeated = combatState.monsters.every(m => m.current_health <= 0);
@@ -691,11 +755,38 @@ async function executePlayerTurn(interaction, combatState, playerAction) {
 			combatState.combatLog.push(`> **${monster.name} #${playerAction.targetIndex + 1}** has been defeated!`);
 		}
 
-		// Update highest damage dealt stat
 		const maxIntCheck = db.prepare('SELECT highest_damage_dealt FROM characters WHERE user_id = ?').get(character.user_id);
 		if (maxIntCheck.highest_damage_dealt < playerDamage) {
 			db.prepare('UPDATE characters SET highest_damage_dealt = ? WHERE user_id = ?').run(playerDamage, character.user_id);
 			combatState.combatLog.push(`> You've set a new best for damage done in a single hit: **${playerDamage}**!`);
+		}
+	}
+	else if (playerAction.type === 'spell') {
+		const spell = db.prepare('SELECT * FROM spells WHERE spell_id = ?').get(playerAction.spellId);
+		if (!spell || character.current_mana < spell.mana_cost) {
+			combatState.combatLog.push('❌ Your spell fizzles! (Not enough mana or invalid spell)');
+		}
+		else {
+			character.current_mana -= spell.mana_cost;
+			const effects = JSON.parse(spell.effects_json);
+			combatState.combatLog.push(`✨ You cast **${spell.name}**!`);
+
+			if (effects.damage) {
+				const monster = combatState.monsters[playerAction.targetIndex];
+				const damage = parseEffectValue(effects.damage);
+				monster.current_health = Math.max(0, monster.current_health - damage);
+				combatState.combatLog.push(`> It hits **${monster.name} #${playerAction.targetIndex + 1}** for **${damage}** ${effects.damage_type} damage.`);
+				if (monster.current_health === 0) {
+					combatState.combatLog.push(`> **${monster.name} #${playerAction.targetIndex + 1}** has been defeated!`);
+				}
+			}
+
+			if (effects.heal) {
+				const amountHealed = parseEffectValue(effects.heal);
+				const oldHealth = character.current_health;
+				character.current_health = Math.min(character.max_health, character.current_health + amountHealed);
+				combatState.combatLog.push(`> A warm light restores **${character.current_health - oldHealth}** of your health!`);
+			}
 		}
 	}
 	else if (playerAction.type === 'flee_fail') {
@@ -704,19 +795,17 @@ async function executePlayerTurn(interaction, combatState, playerAction) {
 	else if (playerAction.type === 'item') {
 		try {
 			const useItemTx = db.transaction(() => {
-				// Verify the player still has the item and it's a consumable
 				const itemData = db.prepare(`
-					SELECT i.name, i.effects_json, ui.quantity
-					FROM user_inventory ui
-					JOIN items i ON ui.item_id = i.item_id
-					WHERE ui.inventory_id = ? AND ui.user_id = ? AND i.item_type = 'CONSUMABLE' AND ui.quantity > 0
-				`).get(playerAction.inventoryId, character.user_id);
+                    SELECT i.name, i.effects_json, ui.quantity
+                    FROM user_inventory ui
+                    JOIN items i ON ui.item_id = i.item_id
+                    WHERE ui.inventory_id = ? AND ui.user_id = ? AND i.item_type = 'CONSUMABLE' AND ui.quantity > 0
+                `).get(playerAction.inventoryId, character.user_id);
 
 				if (!itemData) {
 					throw new Error('Item not found or not usable.');
 				}
 
-				// Decrement or delete the item
 				if (itemData.quantity > 1) {
 					db.prepare('UPDATE user_inventory SET quantity = quantity - 1 WHERE inventory_id = ?').run(playerAction.inventoryId);
 				}
@@ -724,7 +813,6 @@ async function executePlayerTurn(interaction, combatState, playerAction) {
 					db.prepare('DELETE FROM user_inventory WHERE inventory_id = ?').run(playerAction.inventoryId);
 				}
 
-				// Apply effects
 				const effects = JSON.parse(itemData.effects_json || '{}');
 				if (effects.heal) {
 					const amountHealed = parseEffectValue(effects.heal);
@@ -732,7 +820,21 @@ async function executePlayerTurn(interaction, combatState, playerAction) {
 					character.current_health = Math.min(character.max_health, character.current_health + amountHealed);
 					combatState.combatLog.push(`🧪 You use **${itemData.name}** and restore **${character.current_health - oldHealth}** health!`);
 				}
-				// Add other effects like mana restoration here later
+
+				else if (effects.buff) {
+					const { stat, value, duration_seconds } = effects.buff;
+					const expiresDate = new Date(Date.now() + duration_seconds * 1000);
+					const unixTimestamp = Math.floor(expiresDate.getTime() / 1000);
+    				const expiresAt = expiresDate.toISOString();
+					const buffJson = JSON.stringify({ stat_change: { [stat]: value } });
+
+					db.prepare(`
+                        INSERT INTO character_status_effects (target_user_id, effect_name, effects_json, expires_at)
+                        VALUES (?, ?, ?, ?)
+                    `).run(character.user_id, itemData.name, buffJson, expiresAt);
+
+					combatState.combatLog.push(`🧪 You use **${itemData.name}** and feel your **${stat}** increase by ${value}! (Expires <t:${unixTimestamp}:R>)`);
+				}
 				else {
 					combatState.combatLog.push(`🧪 You use **${itemData.name}**, but it has no discernible effect in combat.`);
 				}
@@ -746,17 +848,13 @@ async function executePlayerTurn(interaction, combatState, playerAction) {
 			combatState.combatLog.push('> Your attempt to use an item failed.');
 		}
 	}
-	// Add logic for 'magic' and 'item' actions here later
 
-	// --- Check for Victory before Monsters Attack ---
 	const allMonstersDefeated = combatState.monsters.every(m => m.current_health <= 0);
 	if (allMonstersDefeated) {
 		combatState.turn++;
 		return;
-		// Exit early, the main button handler will catch this victory state.
 	}
 
-	// --- Monsters' Turn ---
 	let totalDamageTakenThisTurn = 0;
 	let highestDamageSurvivedThisTurn = 0;
 	const healthBeforeDamage = character.current_health;
@@ -774,7 +872,6 @@ async function executePlayerTurn(interaction, combatState, playerAction) {
 		}
 	});
 
-	// Update largest hit survived stat
 	if (highestDamageSurvivedThisTurn > 0) {
 		const maxIntCheck = db.prepare('SELECT largest_hit_survived FROM characters WHERE user_id = ?').get(character.user_id);
 		if (maxIntCheck.largest_hit_survived < highestDamageSurvivedThisTurn) {
@@ -787,8 +884,6 @@ async function executePlayerTurn(interaction, combatState, playerAction) {
 		combatState.combatLog.push(`> Total damage taken this turn: \`${totalDamageTakenThisTurn}\` (${healthBeforeDamage} HP -> ${character.current_health} HP)`);
 	}
 
-
-	// --- End of Turn ---
 	combatState.turn++;
 }
 /**
@@ -849,7 +944,6 @@ module.exports.buttons = async (interaction) => {
 
 	const combatState = activeCombats.get(threadId);
 	if (!combatState || combatState.userId !== interaction.user.id) {
-		// This handles expired/invalid combat sessions.
 		return interaction.reply({
 			content: 'This combat instance has expired or is invalid. Your status has been reset, so you can now start a new adventure with `/pve engage`.',
 			flags: MessageFlags.Ephemeral,
@@ -858,16 +952,14 @@ module.exports.buttons = async (interaction) => {
 
 	await interaction.deferUpdate();
 
-	// --- Action Router ---
 	switch (category) {
 	case 'main': {
 		switch (action) {
 		case 'fight':
 			combatState.playerState = 'SELECTING_TARGET';
 			break;
-			// Stubs for future implementation
 		case 'magic':
-			combatState.combatLog.push('> You focus your mind... (Magic system coming soon!)');
+			combatState.playerState = 'SELECTING_SPELL';
 			break;
 		case 'items':
 			combatState.playerState = 'SELECTING_ITEM';
@@ -876,52 +968,54 @@ module.exports.buttons = async (interaction) => {
 			const nodeLevel = combatState.nodeData.required_level;
 			const playerFinesse = combatState.character.stat_finesse;
 
-			// Base 50% chance, +/- 2% for each point of Finesse above/below (NodeLevel * 2)
 			const baseChance = 0.50;
 			const finesseAdvantage = (playerFinesse - (nodeLevel * 2)) * 0.02;
 			const fleeChance = Math.max(0.05, Math.min(0.95, baseChance + finesseAdvantage));
 
 			if (Math.random() < fleeChance) {
-				// Success!
 				combatState.combatLog.push(`> You successfully fled the battle! (Chance: ${Math.round(fleeChance * 100)}%)`);
 				const finalUI = buildCombatUI(combatState, interaction.user);
 				await interaction.message.edit({ embeds: finalUI.embeds, components: [] });
-				// Exit combat
 				return handleFlee(interaction, combatState);
 			}
 			else {
-				// Failure! Player loses their turn.
 				await executePlayerTurn(interaction, combatState, { type: 'flee_fail' });
 			}
 			break;
 		}
-		case 'target': {
-			if (action === 'attack') {
-				const targetIndex = parseInt(rest[0], 10);
-				if (isNaN(targetIndex) || targetIndex < 0 || targetIndex >= combatState.monsters.length) {
-					return;
-				}
-				const monster = combatState.monsters[targetIndex];
-				if (monster.current_health <= 0) return;
+		}
+		break;
+	}
+	case 'target': {
+		if (action === 'attack') {
+			const targetIndex = parseInt(rest[0], 10);
+			if (isNaN(targetIndex) || targetIndex < 0 || targetIndex >= combatState.monsters.length) return;
+			const monster = combatState.monsters[targetIndex];
+			if (monster.current_health <= 0) return;
 
-				// This is where the main combat turn logic now lives
-				await executePlayerTurn(interaction, combatState, { type: 'attack', targetIndex });
-				// After the turn, return player to the main menu
-				combatState.playerState = 'MAIN';
-			}
-			break;
+			await executePlayerTurn(interaction, combatState, { type: 'attack', targetIndex });
+			combatState.playerState = 'MAIN';
 		}
-		case 'back': {
-			if (action === 'main') {
-				combatState.playerState = 'MAIN';
-			}
-			break;
+		else if (action === 'spell') {
+			const spellId = parseInt(rest[0], 10);
+			const targetIndex = parseInt(rest[1], 10);
+			if (isNaN(spellId) || isNaN(targetIndex) || targetIndex < 0 || targetIndex >= combatState.monsters.length) return;
+			const monster = combatState.monsters[targetIndex];
+			if (monster.current_health <= 0) return;
+
+			await executePlayerTurn(interaction, combatState, { type: 'spell', spellId, targetIndex });
+			combatState.playerState = 'MAIN';
 		}
+		break;
+	}
+	case 'back': {
+		if (action === 'main') {
+			combatState.playerState = 'MAIN';
 		}
+		break;
 	}
 	}
-	// --- VICTORY/DEFEAT CHECKS ---
-	// These checks are now separate from the action logic.
+
 	const allMonstersDefeated = combatState.monsters.every(m => m.current_health <= 0);
 	if (allMonstersDefeated) {
 		const finalUI = buildCombatUI(combatState, interaction.user);
@@ -936,8 +1030,6 @@ module.exports.buttons = async (interaction) => {
 		return handleDefeat(interaction, combatState);
 	}
 
-	// --- UI UPDATE ---
-	// If combat is ongoing, just update the UI with the new state.
 	const ui = buildCombatUI(combatState, interaction.user);
 	await interaction.message.edit({ embeds: ui.embeds, components: ui.components });
 };

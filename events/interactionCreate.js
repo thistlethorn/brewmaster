@@ -26,6 +26,7 @@ module.exports = {
 		const inventoryCommand = interaction.client.commands.get('inventory');
 		const marketCommand = interaction.client.commands.get('market');
 		const shopCommand = interaction.client.commands.get('shop');
+		const unsealCommand = interaction.client.commands.get('unseal');
 
 		try {
 			const subcommand = interaction.options?.getSubcommand(false) || null;
@@ -143,7 +144,21 @@ module.exports = {
 				}
 				return;
 			}
-
+			if (interaction.isStringSelectMenu() && interaction.customId.startsWith('unseal_')) {
+				if (unsealCommand && typeof unsealCommand.menus === 'function') {
+					try {
+						await unsealCommand.menus(interaction);
+						return;
+					}
+					catch (error) {
+						console.error('[Error] Unseal menu error:', error);
+						if (!interaction.replied && !interaction.deferred) {
+							await interaction.reply({ content: 'There was an error processing your selection.', flags: MessageFlags.Ephemeral });
+						}
+					}
+				}
+				return;
+			}
 			if (interaction.isButton() && interaction.customId.startsWith('captcha_verify_')) {
 				const clickedAnswer = interaction.customId.split('_')[2];
 				const messageId = interaction.message.id;

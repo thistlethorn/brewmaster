@@ -41,6 +41,8 @@ const vendorsData = [
 	{ name: 'Pip the Alchemist', description: 'An eccentric but brilliant alchemist, always bubbling with new ideas.', charm_requirement: 15 },
 	{ name: 'Greg the Oddball', description: 'The familiar, weary dealer also runs a side business in strange and wonderful trinkets.', charm_requirement: 20 },
 	{ name: 'Sister Elara', description: 'A serene acolyte offering restorative services for a donation.', charm_requirement: 5 },
+	{ name: 'Curio the Collector', description: 'A peculiar merchant who deals in sealed containers and vouchers of all kinds.', charm_requirement: 18 },
+	{ name: 'Magus Magnus', description: 'A master of the arcane who sells spell scrolls and magical implements for a premium.', charm_requirement: 15 },
 ];
 
 const vendorStockData = [
@@ -88,6 +90,21 @@ const vendorStockData = [
 	{ vendor_name: 'Sable the Hunter', item_name: 'Beast-Hide Jerkin', buy_price: 750 },
 	{ vendor_name: 'Sable the Hunter', item_name: 'Stalker\'s Shortbow', buy_price: 800 },
 	{ vendor_name: 'Sable the Hunter', item_name: 'Cloak of the Shifting Sands', buy_price: 4200 },
+
+	 // --- Curio the Collector's Stock ---
+	{ vendor_name: 'Curio the Collector', item_name: 'Common Armor Voucher', buy_price: 300 },
+	{ vendor_name: 'Curio the Collector', item_name: 'Rare Equipment Voucher', buy_price: 5000 },
+	{ vendor_name: 'Curio the Collector', item_name: 'Epic Spell Scroll Voucher', buy_price: 20000 },
+	// Curio also buys materials, but at a worse rate than specialists
+	{ vendor_name: 'Curio the Collector', item_name: 'Rat Pelt', sell_price: 1 },
+	{ vendor_name: 'Curio the Collector', item_name: 'Goblin Ear', sell_price: 1 },
+	{ vendor_name: 'Curio the Collector', item_name: 'Spider Silk', sell_price: 2 },
+
+	// --- Magus Magnus's Stock ---
+	{ vendor_name: 'Magus Magnus', item_name: 'Scroll of Minor Heal', buy_price: 750 },
+	// Add some magic gear for him to sell
+	{ vendor_name: 'Magus Magnus', item_name: 'Channeler\'s Focus', buy_price: 100 },
+	{ vendor_name: 'Magus Magnus', item_name: 'Acolyte\'s Robes', buy_price: 80 },
 ];
 
 
@@ -128,6 +145,19 @@ const pveItems = [
 	// Armor
 	{ name: 'Crude Iron Helm', description: 'A dented and poorly fitting helmet of orcish make.', item_type: 'ARMOR', rarity: 'COMMON', is_stackable: 0, is_tradeable: 1, crown_value: 40, effects_json: '{"slot": "helmet", "ac_bonus": 1}' },
 
+	// --- VOUCHERS & SCROLLS ---
+	// Purchaseable Vouchers
+	{ name: 'Common Armor Voucher', description: 'Redeem this to receive a random piece of Common-tier armor.', item_type: 'VOUCHER', rarity: 'COMMON', is_stackable: 1, is_tradeable: 1, crown_value: 250 },
+	{ name: 'Rare Equipment Voucher', description: 'Redeem this to receive a random piece of Rare-tier equipment (weapon or armor).', item_type: 'VOUCHER', rarity: 'RARE', is_stackable: 1, is_tradeable: 1, crown_value: 4000 },
+	{ name: 'Epic Spell Scroll Voucher', description: 'A voucher for a random, powerful spell scroll of Epic rarity.', item_type: 'VOUCHER', rarity: 'EPIC', is_stackable: 1, is_tradeable: 1, crown_value: 15000 },
+
+	// Loot-Only Vouchers
+	{ name: 'XP in a Bottle', description: 'A swirling vial of captured experience. Unseal it to gain a small amount of XP.', item_type: 'VOUCHER', rarity: 'UNCOMMON', is_stackable: 1, is_tradeable: 0, crown_value: 0 },
+	{ name: 'Sealed Chest of Crowns', description: 'A magically sealed chest containing a random amount of Crowns.', item_type: 'VOUCHER', rarity: 'COMMON', is_stackable: 1, is_tradeable: 0, crown_value: 0 },
+
+	// Spell Scrolls
+	{ name: 'Scroll of Minor Heal', description: 'A single-use scroll that teaches the Minor Heal spell to a capable user.', item_type: 'SPELL_SCROLL', rarity: 'UNCOMMON', is_stackable: 1, is_tradeable: 1, crown_value: 500, effects_json: '{"teaches_spell_id": 2}' },
+
 
 	// --- ROWAN THE BLACKSMITH'S NEW WARES ---
 	// UNCOMMON
@@ -151,10 +181,10 @@ const pveItems = [
 	{ name: 'Cloak of the Shifting Sands', description: 'A magical cloak that seems to blur your outline, making you harder to hit.', item_type: 'ARMOR', rarity: 'RARE', is_stackable: 0, is_tradeable: 1, crown_value: 3500, effects_json: '{"slot": "chestplate", "ac_bonus": 2, "base_stats": {"finesse": 2, "fortune": 1}, "requirements": {"archetype": "Shifter"}}' },
 
 	// --- PIP THE ALCHEMIST'S NEW POTIONS ---
-	{ name: 'Minor Healing Potion', description: 'A common red liquid that restores a small amount of health.', item_type: 'CONSUMABLE', rarity: 'COMMON', is_stackable: 1, is_tradeable: 1, crown_value: 50 },
-	{ name: 'Healing Potion', description: 'A bubbling red potion that restores a moderate amount of health.', item_type: 'CONSUMABLE', rarity: 'UNCOMMON', is_stackable: 1, is_tradeable: 1, crown_value: 200 },
-	{ name: 'Greater Healing Potion', description: 'A shimmering, potent red elixir that restores a large amount of health.', item_type: 'CONSUMABLE', rarity: 'RARE', is_stackable: 1, is_tradeable: 1, crown_value: 800 },
-	{ name: 'Elixir of Might', description: 'Temporarily boosts your Might stat.', item_type: 'CONSUMABLE', rarity: 'RARE', is_stackable: 1, is_tradeable: 1, crown_value: 1200 },
+	{ name: 'Minor Healing Potion', description: 'A common red liquid that restores a small amount of health.', item_type: 'CONSUMABLE', rarity: 'COMMON', is_stackable: 1, is_tradeable: 1, crown_value: 50, effects_json: '{"heal": "2d4+2"}' },
+	{ name: 'Healing Potion', description: 'A bubbling red potion that restores a moderate amount of health.', item_type: 'CONSUMABLE', rarity: 'UNCOMMON', is_stackable: 1, is_tradeable: 1, crown_value: 200, effects_json: '{"heal": "4d4+4"}' },
+	{ name: 'Greater Healing Potion', description: 'A shimmering, potent red elixir that restores a large amount of health.', item_type: 'CONSUMABLE', rarity: 'RARE', is_stackable: 1, is_tradeable: 1, crown_value: 800, effects_json: '{"heal": "8d4+8"}' },
+	{ name: 'Elixir of Might', description: 'Temporarily boosts your Might stat.', item_type: 'CONSUMABLE', rarity: 'RARE', is_stackable: 1, is_tradeable: 1, crown_value: 1200, effects_json: '{"buff": {"stat": "might", "value": 3, "duration_seconds": 180}}' },
 
 	// --- GREG THE ODDBALL'S NEW STOCK ---
 	// LOOTBOXES & KEYS
@@ -191,6 +221,7 @@ const lootTableEntries = [
 	// Goblin Pouch (Table 2)
 	{ loot_table_id: 2, item_name: 'Goblin Ear', drop_chance: 0.90, min_quantity: 1, max_quantity: 2 },
 	{ loot_table_id: 2, item_name: 'Crude Dagger', drop_chance: 0.15, min_quantity: 1, max_quantity: 1 },
+	{ loot_table_id: 2, item_name: 'Sealed Chest of Crowns', drop_chance: 0.05, min_quantity: 1, max_quantity: 1 },
 	// Spider Sac (Table 3)
 	{ loot_table_id: 3, item_name: 'Spider Silk', drop_chance: 0.60, min_quantity: 1, max_quantity: 3 },
 	{ loot_table_id: 3, item_name: 'Venom Gland', drop_chance: 0.25, min_quantity: 1, max_quantity: 1 },
@@ -199,6 +230,7 @@ const lootTableEntries = [
 	{ loot_table_id: 4, item_name: 'Rusty Shortsword', drop_chance: 0.10, min_quantity: 1, max_quantity: 1 },
 	// Bandit's Belongings (Table 5)
 	{ loot_table_id: 5, item_name: 'Stolen Locket', drop_chance: 0.20, min_quantity: 1, max_quantity: 1 },
+	{ loot_table_id: 5, item_name: 'XP in a Bottle', drop_chance: 0.10, min_quantity: 1, max_quantity: 1 },
 	// Dire Wolf Carcass (Table 6)
 	{ loot_table_id: 6, item_name: 'Wolf Fang', drop_chance: 0.70, min_quantity: 1, max_quantity: 2 },
 	{ loot_table_id: 6, item_name: 'Thick Pelt', drop_chance: 0.40, min_quantity: 1, max_quantity: 1 },

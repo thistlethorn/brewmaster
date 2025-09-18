@@ -6,6 +6,8 @@ const commandFilename = path.basename(__filename);
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, MessageFlags, StringSelectMenuBuilder } = require('discord.js');
 const db = require('../../database');
 const { recalculateStats } = require('../../utils/recalculateStats');
+const { handleSpellbookInteraction } = require('../../utils/handleSpellbook');
+
 // In-memory store for character creation sessions.
 // Key: userId, Value: { step, name, originId, archetypeId, ... }
 const creationSessions = new Map();
@@ -319,9 +321,18 @@ async function handleView(interaction) {
 			new ButtonBuilder().setCustomId(`char_edit_image_${targetUser.id}`).setLabel('Set Image').setStyle(ButtonStyle.Secondary).setEmoji('🖼️'),
 			new ButtonBuilder().setCustomId(`char_edit_alignment_${targetUser.id}`).setLabel('Set Alignment').setStyle(ButtonStyle.Secondary).setEmoji('🧭'),
 		);
+
+		// Add Spellbook button only if character can use magic
+		if (finalCharacterData.stat_wits >= 10) {
+			editRow1.addComponents(
+				new ButtonBuilder().setCustomId(`char_spellbook_open_${targetUser.id}`).setLabel('Spellbook').setStyle(ButtonStyle.Primary).setEmoji('📖'),
+			);
+		}
+
 		const editRow2 = new ActionRowBuilder().addComponents(
 			new ButtonBuilder().setCustomId(`char_edit_backstory_${targetUser.id}`).setLabel('Edit Backstory').setStyle(ButtonStyle.Secondary).setEmoji('📖'),
 			new ButtonBuilder().setCustomId(`char_edit_personality_${targetUser.id}`).setLabel('Edit Personality').setStyle(ButtonStyle.Secondary).setEmoji('🎭'),
+			new ButtonBuilder().setCustomId(`char_unseal_start_${targetUser.id}`).setLabel('Unseal Items').setStyle(ButtonStyle.Success).setEmoji('🔓'),
 		);
 		components.push(editRow1, editRow2);
 	}
@@ -1066,7 +1077,10 @@ module.exports = {
 			}
 			return;
 		}
-
+		if (command === 'spellbook') {
+			await handleSpellbookInteraction(interaction);
+			return;
+		}
 		// Handler for selecting alignment during character creation
 		if (command === 'create' && action === 'alignment') {
 			const session = creationSessions.get(userId);
@@ -1182,6 +1196,13 @@ module.exports = {
 			await interaction.update({ embeds: [updatedEmbed] });
 			return;
 		}
+		if (command === 'unseal' && action === 'start') {
+			const unsealCommand = require('../utility/unseal.js');
+			if (unsealCommand && typeof unsealCommand.executeUnseal === 'function') {
+				await unsealCommand.executeUnseal(interaction);
+			}
+			return;
+		}
 		if (command === 'recover') {
 			const character = db.prepare('SELECT level FROM characters WHERE user_id = ?').get(userId);
 			if (!character) {
@@ -1275,6 +1296,17 @@ module.exports = {
 				return interaction.showModal(modal);
 			}
 			}
+			return;
+		}
+		if (command === 'spellbook') {
+			if (action === 'back') {
+				// Re-render the character sheet
+				await interaction.deferUpdate();
+				await handleView(interaction);
+				return;
+			}
+			// Delegate all other spellbook actions to the handler
+			await handleSpellbookInteraction(interaction);
 			return;
 		}
 
