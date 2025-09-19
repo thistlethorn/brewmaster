@@ -4,6 +4,10 @@ const db = require('../database');
 const spellsData = [
 	{ name: 'Arcane Bolt', description: 'A simple bolt of raw magical energy.', required_level: 1, spell_school: 'EVOCATION', required_wits: 10, mana_cost: 5, effects_json: '{"damage": "1d8", "damage_type": "Arcane", "target": "single"}' },
 	{ name: 'Minor Heal', description: 'A faint glow that mends minor wounds.', required_level: 1, spell_school: 'RESTORATION', required_wits: 12, mana_cost: 8, effects_json: '{"heal": "1d6", "target": "self"}' },
+	{ name: 'Fireblast', description: 'Hurl a ball of fire at a single target.', required_level: 3, spell_school: 'EVOCATION', required_wits: 14, mana_cost: 12, effects_json: '{"damage": "2d6", "damage_type": "Fire", "target": "single"}' },
+	{ name: 'Ice Shard', description: 'Launch a piercing shard of magical ice.', required_level: 3, spell_school: 'EVOCATION', required_wits: 14, mana_cost: 12, effects_json: '{"damage": "1d10", "damage_type": "Ice", "target": "single"}' },
+	{ name: 'Mage Armor', description: 'Surround yourself with a shimmering field of protective magic.', required_level: 5, spell_school: 'ABJURATION', required_wits: 16, mana_cost: 15, effects_json: '{"buff": {"stat": "armor_class", "value": 3, "duration_seconds": 180}, "target": "self"}' },
+	{ name: 'Heal', description: 'A significant pulse of healing energy.', required_level: 5, spell_school: 'RESTORATION', required_wits: 16, mana_cost: 20, effects_json: '{"heal": "3d6+3", "target": "self"}' },
 ];
 
 const originsData = [
@@ -80,9 +84,12 @@ const vendorStockData = [
 	{ vendor_name: 'Pip the Alchemist', item_name: 'Hag\'s Eye', sell_price: 12 },
 
 	{ vendor_name: 'Pip the Alchemist', item_name: 'Minor Healing Potion', buy_price: 75 },
-	{ vendor_name: 'Pip the Alchemist', item_name: 'Healing Potion', buy_price: 275 },
-	{ vendor_name: 'Pip the Alchemist', item_name: 'Greater Healing Potion', buy_price: 1000 },
+	{ vendor_name: 'Pip the Alchemist', item_name: 'Healing Potion', buy_price: 625 },
+	{ vendor_name: 'Pip the Alchemist', item_name: 'Greater Healing Potion', buy_price: 5000 },
 	{ vendor_name: 'Pip the Alchemist', item_name: 'Elixir of Might', buy_price: 1500 },
+	{ vendor_name: 'Pip the Alchemist', item_name: 'Superior Healing Potion', buy_price: 10000 },
+	{ vendor_name: 'Pip the Alchemist', item_name: 'Supreme Healing Potion', buy_price: 20000 },
+	{ vendor_name: 'Pip the Alchemist', item_name: 'Ultimate Healing Potion', buy_price: 625000 },
 
 	// Sable (Hunter) - Buys trophies
 	{ vendor_name: 'Sable the Hunter', item_name: 'Goblin Ear', sell_price: 2 },
@@ -102,6 +109,9 @@ const vendorStockData = [
 
 	// --- Magus Magnus's Stock ---
 	{ vendor_name: 'Magus Magnus', item_name: 'Scroll of Minor Heal', buy_price: 750 },
+	{ vendor_name: 'Magus Magnus', item_name: 'Scroll of Fireblast', buy_price: 1800 },
+	{ vendor_name: 'Magus Magnus', item_name: 'Scroll of Ice Shard', buy_price: 1800 },
+	{ vendor_name: 'Magus Magnus', item_name: 'Scroll of Mage Armor', buy_price: 4000 },
 	// Add some magic gear for him to sell
 	{ vendor_name: 'Magus Magnus', item_name: 'Channeler\'s Focus', buy_price: 100 },
 	{ vendor_name: 'Magus Magnus', item_name: 'Acolyte\'s Robes', buy_price: 80 },
@@ -157,6 +167,9 @@ const pveItems = [
 
 	// Spell Scrolls
 	{ name: 'Scroll of Minor Heal', description: 'A single-use scroll that teaches the Minor Heal spell to a capable user.', item_type: 'SPELL_SCROLL', rarity: 'UNCOMMON', is_stackable: 1, is_tradeable: 1, crown_value: 500, effects_json: '{"teaches_spell_id": 2}' },
+	{ name: 'Scroll of Fireblast', description: 'A single-use scroll that teaches the Fireblast spell.', item_type: 'SPELL_SCROLL', rarity: 'UNCOMMON', is_stackable: 1, is_tradeable: 1, crown_value: 1200, effects_json: '{"teaches_spell_id": 3}' },
+	{ name: 'Scroll of Ice Shard', description: 'A single-use scroll that teaches the Ice Shard spell.', item_type: 'SPELL_SCROLL', rarity: 'UNCOMMON', is_stackable: 1, is_tradeable: 1, crown_value: 1200, effects_json: '{"teaches_spell_id": 4}' },
+	{ name: 'Scroll of Mage Armor', description: 'A single-use scroll that teaches the Mage Armor spell.', item_type: 'SPELL_SCROLL', rarity: 'RARE', is_stackable: 1, is_tradeable: 1, crown_value: 2500, effects_json: '{"teaches_spell_id": 5}' },
 
 
 	// --- ROWAN THE BLACKSMITH'S NEW WARES ---
@@ -181,10 +194,14 @@ const pveItems = [
 	{ name: 'Cloak of the Shifting Sands', description: 'A magical cloak that seems to blur your outline, making you harder to hit.', item_type: 'ARMOR', rarity: 'RARE', is_stackable: 0, is_tradeable: 1, crown_value: 3500, effects_json: '{"slot": "chestplate", "ac_bonus": 2, "base_stats": {"finesse": 2, "fortune": 1}, "requirements": {"archetype": "Shifter"}}' },
 
 	// --- PIP THE ALCHEMIST'S NEW POTIONS ---
-	{ name: 'Minor Healing Potion', description: 'A common red liquid that restores a small amount of health.', item_type: 'CONSUMABLE', rarity: 'COMMON', is_stackable: 1, is_tradeable: 1, crown_value: 50, effects_json: '{"heal": "2d4+2"}' },
-	{ name: 'Healing Potion', description: 'A bubbling red potion that restores a moderate amount of health.', item_type: 'CONSUMABLE', rarity: 'UNCOMMON', is_stackable: 1, is_tradeable: 1, crown_value: 200, effects_json: '{"heal": "4d4+4"}' },
-	{ name: 'Greater Healing Potion', description: 'A shimmering, potent red elixir that restores a large amount of health.', item_type: 'CONSUMABLE', rarity: 'RARE', is_stackable: 1, is_tradeable: 1, crown_value: 800, effects_json: '{"heal": "8d4+8"}' },
-	{ name: 'Elixir of Might', description: 'Temporarily boosts your Might stat.', item_type: 'CONSUMABLE', rarity: 'RARE', is_stackable: 1, is_tradeable: 1, crown_value: 1200, effects_json: '{"buff": {"stat": "might", "value": 3, "duration_seconds": 180}}' },
+	{ name: 'Minor Healing Potion', description: 'A common red liquid that restores a small amount of health (2d4+2).', item_type: 'CONSUMABLE', rarity: 'COMMON', is_stackable: 1, is_tradeable: 1, crown_value: 50, effects_json: '{"heal": "2d4+2"}' },
+	{ name: 'Healing Potion', description: 'A bubbling red potion that restores a moderate amount of health (4d6+4).', item_type: 'CONSUMABLE', rarity: 'UNCOMMON', is_stackable: 1, is_tradeable: 1, crown_value: 500, effects_json: '{"heal": "4d6+4"}' },
+	{ name: 'Greater Healing Potion', description: 'A shimmering, potent red elixir that restores a large amount of health (8d8+8).', item_type: 'CONSUMABLE', rarity: 'RARE', is_stackable: 1, is_tradeable: 1, crown_value: 4000, effects_json: '{"heal": "8d8+8"}' },
+	{ name: 'Elixir of Might', description: 'Temporarily boosts your Might stat by +3 for 3 minutes.', item_type: 'CONSUMABLE', rarity: 'RARE', is_stackable: 1, is_tradeable: 1, crown_value: 1200, effects_json: '{"buff": {"stat": "might", "value": 3, "duration_seconds": 180}}' },
+	{ name: 'Superior Healing Potion', description: 'A rose colored life-giving draught that restores a massive amount of health (10d10+20).', item_type: 'CONSUMABLE', rarity: 'EPIC', is_stackable: 1, is_tradeable: 1, crown_value: 8000, effects_json: '{"heal": "10d10+20"}' },
+	{ name: 'Supreme Healing Potion', description: 'A flask of a multicolored light that restores an enormous amount of health (20d12+40).', item_type: 'CONSUMABLE', rarity: 'EPIC', is_stackable: 1, is_tradeable: 1, crown_value: 16000, effects_json: '{"heal": "20d12+40"}' },
+	{ name: 'Ultimate Healing Potion', description: 'A vial of golden light that can restore your entire health to it\'s maximum.', item_type: 'CONSUMABLE', rarity: 'MYTHIC', is_stackable: 0, is_tradeable: 1, crown_value: 500000, effects_json: '{"heal": "full"}' },
+
 
 	// --- GREG THE ODDBALL'S NEW STOCK ---
 	// LOOTBOXES & KEYS
@@ -194,9 +211,9 @@ const pveItems = [
 	{ name: 'Gilded Key', description: 'A masterfully crafted key, shimmering with a golden hue.', item_type: 'MATERIAL', item_subtype: 'KEY', is_stackable: 1, is_tradeable: 1, crown_value: 1500 },
 
 	// THE PANTHEON ITEMS (MYTHIC)
-	{ name: 'Aegis of the Unbroken', description: '"The last bastion against the encroaching dark. It has never yielded. It never will." - Pantheon Inscription', item_type: 'ARMOR', rarity: 'MYTHIC', is_stackable: 0, is_tradeable: 1, crown_value: 500000, effects_json: '{"slot": "offhand", "ac_bonus": 8, "base_stats": {"grit": 10}, "requirements": {"grit": 35}}' },
-	{ name: 'Whisperwind, the Soulrazor', description: '"It strikes not at the flesh, but at the thread of fate itself." - Pantheon Inscription', item_type: 'WEAPON', rarity: 'MYTHIC', is_stackable: 0, is_tradeable: 1, crown_value: 500000, damage_dice: '1d8', damage_type: 'Piercing', handedness: 'one-handed', effects_json: '{"slot": "weapon", "base_stats": {"finesse": 7, "wits": 7}, "requirements": {"finesse": 30, "wits": 30}}' },
-	{ name: 'Crown of the Mad King', description: '"To know all is to lose all. A worthy price." - Pantheon Inscription', item_type: 'ARMOR', rarity: 'MYTHIC', is_stackable: 0, is_tradeable: 1, crown_value: 450000, effects_json: '{"slot": "helmet", "ac_bonus": 2, "base_stats": {"wits": 10, "charm": 10, "grit": -5}, "requirements": {"alignment": "Evil"}}' },
+	{ name: 'Aegis of the Unbroken', description: '"The last bastion against the encroaching dark. It has never yielded. It never will." - Pantheon Inscription\n\nGrants a massive boost to resilience and allows you to shrug off a fatal blow once per battle.', item_type: 'ARMOR', rarity: 'MYTHIC', is_stackable: 0, is_tradeable: 1, crown_value: 500000, effects_json: '{"slot": "offhand", "ac_bonus": 10, "base_stats": {"grit": 12}, "requirements": {"grit": 35}}' },
+	{ name: 'Whisperwind, the Soulrazor', description: '"It strikes not at the flesh, but at the thread of fate itself." - Pantheon Inscription\n\nEach strike has a chance to permanently lower the target\'s defenses.', item_type: 'WEAPON', rarity: 'MYTHIC', is_stackable: 0, is_tradeable: 1, crown_value: 500000, damage_dice: '2d8', damage_type: 'Slashing', handedness: 'one-handed', effects_json: '{"slot": "weapon", "base_stats": {"finesse": 8, "fortune": 8}, "requirements": {"finesse": 35}}' },
+	{ name: 'Crown of the Mad King', description: '"To know all is to lose all. A worthy price." - Pantheon Inscription\n\nGrants immense intellectual power at the cost of physical resilience. Your spells are devastatingly effective.', item_type: 'ARMOR', rarity: 'MYTHIC', is_stackable: 0, is_tradeable: 1, crown_value: 450000, effects_json: '{"slot": "helmet", "ac_bonus": 2, "base_stats": {"wits": 12, "charm": 10, "grit": -8}, "requirements": {"alignment": "Evil", "wits": 35}}' },
 ];
 
 const lootTables = [
@@ -280,7 +297,7 @@ const standardStartingKitData = [
 
 const startingEquipmentData = [
 	// Channeler
-	{ name: 'Channeler\'s Focus', description: 'A smooth, crystal-tipped wand that hums with latent power.', item_type: 'WEAPON', rarity: 'STARTER', is_stackable: 0, is_tradeable: 0, crown_value: 15, damage_dice: '1d4', damage_type: 'Arcane', handedness: 'one-handed', effects_json: '{"slot": "weapon", "base_stats": {"wits": 1}}' },
+	{ name: 'Channeler\'s Focus', description: 'A smooth, crystal-tipped wand that hums with latent power.', item_type: 'WEAPON', rarity: 'STARTER', is_stackable: 0, is_tradeable: 0, crown_value: 15, damage_dice: '1d4', damage_type: 'Bludgeoning', handedness: 'one-handed', effects_json: '{"slot": "weapon", "base_stats": {"wits": 1}, "spell_damage_bonus": 2}' },
 	{ name: 'Acolyte\'s Robes', description: 'Simple, blessed robes that offer minor mystical protection.', item_type: 'ARMOR', rarity: 'STARTER', is_stackable: 0, is_tradeable: 0, crown_value: 10, effects_json: '{"slot": "chestplate", "ac_bonus": 1}' },
 
 	// Golemancer

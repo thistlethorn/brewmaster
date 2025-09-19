@@ -771,21 +771,49 @@ async function executePlayerTurn(interaction, combatState, playerAction) {
 			const effects = JSON.parse(spell.effects_json);
 			combatState.combatLog.push(`✨ You cast **${spell.name}**!`);
 
+			const weapon = db.prepare(`
+				SELECT i.effects_json
+				FROM user_inventory ui JOIN items i ON ui.item_id = i.item_id
+				WHERE ui.user_id = ? AND ui.equipped_slot IN ('weapon', 'offhand')
+			`).all(character.user_id);
+
+			let spellPowerBonus = 0;
+			weapon.forEach(w => {
+				if (w.effects_json) {
+					try {
+						const weaponEffects = JSON.parse(w.effects_json);
+						spellPowerBonus += weaponEffects.spell_damage_bonus || 0;
+					}
+					catch (e) {console.error(e); }
+				}
+			});
 			if (effects.damage) {
 				const monster = combatState.monsters[playerAction.targetIndex];
-				const damage = parseEffectValue(effects.damage);
-				monster.current_health = Math.max(0, monster.current_health - damage);
-				combatState.combatLog.push(`> It hits **${monster.name} #${playerAction.targetIndex + 1}** for **${damage}** ${effects.damage_type} damage.`);
+				const baseDamage = parseEffectValue(effects.damage);
+				const totalDamage = baseDamage + spellPowerBonus;
+				monster.current_health = Math.max(0, monster.current_health - totalDamage);
+
+				let damageLog = `> It hits **${monster.name} #${playerAction.targetIndex + 1}** for **${totalDamage}** ${effects.damage_type || 'Arcane'} damage.`;
+				if (spellPowerBonus > 0) {
+					damageLog += ` (${baseDamage} + ${spellPowerBonus})`;
+				}
+				combatState.combatLog.push(damageLog);
+
 				if (monster.current_health === 0) {
 					combatState.combatLog.push(`> **${monster.name} #${playerAction.targetIndex + 1}** has been defeated!`);
 				}
 			}
 
 			if (effects.heal) {
-				const amountHealed = parseEffectValue(effects.heal);
+				const baseHeal = parseEffectValue(effects.heal);
+				const totalHeal = baseHeal + spellPowerBonus;
 				const oldHealth = character.current_health;
-				character.current_health = Math.min(character.max_health, character.current_health + amountHealed);
-				combatState.combatLog.push(`> A warm light restores **${character.current_health - oldHealth}** of your health!`);
+				character.current_health = Math.min(character.max_health, character.current_health + totalHeal);
+				let healLog = `> A warm light restores **${character.current_health - oldHealth}** of your health!`;
+				if (spellPowerBonus > 0) {
+					healLog += ` (${baseHeal} + ${spellPowerBonus})`;
+				}
+				combatState.combatLog.push(healLog);
 			}
 		}
 	}
