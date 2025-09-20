@@ -1,13 +1,61 @@
 // utils/seedDatabase.js
 const db = require('../database');
 
+const speciesData = [
+	{ name: 'Humanfolk', description: 'Known for their adaptability and ambition, Humanfolk are the most common sight in the Tavern.', stat_bonus_json: '{"fortune": 2}', base_perk_name: 'Versatility', base_perk_description: 'Gain one extra unspent stat point every 5 levels.' },
+	{ name: 'Primordialfolk', description: 'Beings infused with the raw power of the elements.', stat_bonus_json: null, base_perk_name: 'Elemental Affinity', base_perk_description: 'Your elemental spells and attacks deal slightly increased damage.' },
+	{ name: 'Beastfolk', description: 'A diverse group of humanoids with distinct animalistic features and instincts.', stat_bonus_json: '{"finesse": 1}', base_perk_name: 'Primal Instincts', base_perk_description: 'You have a higher chance to act first in combat.' },
+	{ name: 'Faefolk', description: 'Mysterious and often whimsical beings with a deep connection to nature and magic.', stat_bonus_json: '{"charm": 2}', base_perk_name: 'Fey Ancestry', base_perk_description: 'You have advantage on resisting magical charm effects.' },
+	{ name: 'Dragonfolk', description: 'Proud and powerful humanoids who carry the blood of dragons, granting them immense resilience.', stat_bonus_json: '{"grit": 1, "might": 1}', base_perk_name: 'Draconic Resilience', base_perk_description: 'You take reduced damage from elemental attacks.' },
+	{ name: 'Weirdfolk', description: 'Unconventional beings that defy easy categorization, from mechanical constructs to sentient slimes.', stat_bonus_json: null, base_perk_name: 'Uncanny Nature', base_perk_description: 'You are immune to poison and disease.' },
+	{ name: 'Nightfolk', description: 'Creatures of shadow and twilight, often misunderstood and possessing unique, dark gifts.', stat_bonus_json: null, base_perk_name: 'Nocturnal', base_perk_description: 'You gain a bonus to evasion and critical chance in dark environments.' },
+];
+
+const subspeciesData = [
+	// Primordialfolk
+	{ species_name: 'Primordialfolk', name: 'Ignan (Fire-Elemental)', description: 'Passionate and volatile, with an affinity for all things flame.', stat_bonus_json: '{"might": 2}' },
+	{ species_name: 'Primordialfolk', name: 'Auran (Air-Elemental)', description: 'Quick-witted and free-spirited, as unpredictable as the wind.', stat_bonus_json: '{"finesse": 2}' },
+	{ species_name: 'Primordialfolk', name: 'Aquan (Water-Elemental)', description: 'Calm and adaptable, possessing the patience of the deep oceans.', stat_bonus_json: '{"wits": 2}' },
+	{ species_name: 'Primordialfolk', name: 'Sylvan (Wood-Elemental)', description: 'Patient and resilient, with a deep connection to the forest.', stat_bonus_json: '{"fortune": 2}' },
+	{ species_name: 'Primordialfolk', name: 'Ferran (Iron-Elemental)', description: 'Unyielding and resolute, with a body as tough as metal.', stat_bonus_json: '{"grit": 2}' },
+	// Beastfolk
+	{ species_name: 'Beastfolk', name: 'Vulpine (Fox Hybrid)', description: 'Cunning and agile, known for their sharp minds and reflexes.', stat_bonus_json: '{"wits": 1}' },
+	{ species_name: 'Beastfolk', name: 'Feline (Cat Hybrid)', description: 'Graceful and independent, with keen senses and natural agility.', stat_bonus_json: '{"finesse": 1}' },
+	{ species_name: 'Beastfolk', name: 'Chelonian (Turtle Hybrid)', description: 'Stoic and defensive, protected by natural resilience and patience.', stat_bonus_json: '{"grit": 1}' },
+	{ species_name: 'Beastfolk', name: 'Canine (Dog Hybrid)', description: 'Loyal and tenacious, excelling in teamwork and tracking.', stat_bonus_json: '{"charm": 1}' },
+	{ species_name: 'Beastfolk', name: 'Lapine (Rabbit Hybrid)', description: 'Quick and perceptive, with an uncanny knack for avoiding danger.', stat_bonus_json: '{"fortune": 1}' },
+	// Weirdfolk
+	{ species_name: 'Weirdfolk', name: 'Oozeling', description: 'A sentient, amorphous humanoid slime, capable of squeezing into tight spaces.', stat_bonus_json: '{"grit": 2}' },
+	{ species_name: 'Weirdfolk', name: 'Gearforged', description: 'A steampunk-inspired mechanical being, built for a purpose.', stat_bonus_json: '{"might": 2}' },
+	{ species_name: 'Weirdfolk', name: 'Myconid', description: 'A humanoid fungus, capable of communicating with other fungi.', stat_bonus_json: '{"wits": 2}' },
+	// Nightfolk
+	{ species_name: 'Nightfolk', name: 'Umbra', description: 'A being of pure shadow, hard to see and harder to hit.', stat_bonus_json: '{"finesse": 2}' },
+	{ species_name: 'Nightfolk', name: 'Bloodwraith', description: 'A vampire-esque being that draws strength from the life force of others.', stat_bonus_json: '{"might": 2}' },
+];
+
 const spellsData = [
+	// --- LVL 1 (COMMON) ---
 	{ name: 'Arcane Bolt', description: 'A simple bolt of raw magical energy.', required_level: 1, spell_school: 'EVOCATION', required_wits: 10, mana_cost: 5, effects_json: '{"damage": "1d8", "damage_type": "Arcane", "target": "single"}' },
 	{ name: 'Minor Heal', description: 'A faint glow that mends minor wounds.', required_level: 1, spell_school: 'RESTORATION', required_wits: 12, mana_cost: 8, effects_json: '{"heal": "1d6", "target": "self"}' },
+	{ name: 'Light', description: 'Creates a harmless, floating orb of light. (No combat effect)', required_level: 1, spell_school: 'UTILITY', required_wits: 10, mana_cost: 2, effects_json: '{"utility": "light", "target": "self"}' },
+
+	// --- LVL 3 (UNCOMMON) ---
 	{ name: 'Fireblast', description: 'Hurl a ball of fire at a single target.', required_level: 3, spell_school: 'EVOCATION', required_wits: 14, mana_cost: 12, effects_json: '{"damage": "2d6", "damage_type": "Fire", "target": "single"}' },
 	{ name: 'Ice Shard', description: 'Launch a piercing shard of magical ice.', required_level: 3, spell_school: 'EVOCATION', required_wits: 14, mana_cost: 12, effects_json: '{"damage": "1d10", "damage_type": "Ice", "target": "single"}' },
-	{ name: 'Mage Armor', description: 'Surround yourself with a shimmering field of protective magic.', required_level: 5, spell_school: 'ABJURATION', required_wits: 16, mana_cost: 15, effects_json: '{"buff": {"stat": "armor_class", "value": 3, "duration_seconds": 180}, "target": "self"}' },
+	{ name: 'Shield of Faith', description: 'Bolster your defenses with divine energy.', required_level: 3, spell_school: 'ABJURATION', required_wits: 13, mana_cost: 10, effects_json: '{"buff": {"stat": "armor_class", "value": 2, "duration_seconds": 180}, "target": "self"}' },
+
+	// --- LVL 5 (RARE) ---
 	{ name: 'Heal', description: 'A significant pulse of healing energy.', required_level: 5, spell_school: 'RESTORATION', required_wits: 16, mana_cost: 20, effects_json: '{"heal": "3d6+3", "target": "self"}' },
+	{ name: 'Mage Armor', description: 'Surround yourself with a shimmering field of protective magic.', required_level: 5, spell_school: 'ABJURATION', required_wits: 16, mana_cost: 15, effects_json: '{"buff": {"stat": "armor_class", "value": 3, "duration_seconds": 180}, "target": "self"}' },
+	{ name: 'Enfeeble', description: 'Weaken a target, reducing their damage output.', required_level: 5, spell_school: 'NECROMANCY', required_wits: 17, mana_cost: 18, effects_json: '{"debuff": {"stat": "damage", "multiplier": 0.75, "duration_turns": 3}, "target": "single"}' },
+
+	// --- LVL 10 (EPIC) ---
+	{ name: 'Chain Lightning', description: 'Unleash a bolt of lightning that arcs to nearby foes.', required_level: 10, spell_school: 'EVOCATION', required_wits: 22, mana_cost: 40, effects_json: '{"damage": "4d8", "damage_type": "Lightning", "target": "multi", "hits": 3}' },
+	{ name: 'Stoneskin', description: 'Harden your skin to be as tough as stone, absorbing a significant amount of damage.', required_level: 10, spell_school: 'ABJURATION', required_wits: 20, mana_cost: 35, effects_json: '{"buff": {"stat": "damage_reduction", "value": 10, "duration_turns": 4}, "target": "self"}' },
+
+	// --- LVL 15 (LEGENDARY) ---
+	{ name: 'Meteor Swarm', description: 'Call down a devastating shower of fiery meteors upon your enemies.', required_level: 15, spell_school: 'EVOCATION', required_wits: 30, mana_cost: 75, effects_json: '{"damage": "8d10", "damage_type": "Fire", "target": "all"}' },
+	{ name: 'Restoration', description: 'Fully restore your health and remove all negative effects.', required_level: 15, spell_school: 'RESTORATION', required_wits: 28, mana_cost: 60, effects_json: '{"heal": "full", "cleanse": "all", "target": "self"}' },
 ];
 
 const originsData = [
@@ -99,9 +147,10 @@ const vendorStockData = [
 	{ vendor_name: 'Sable the Hunter', item_name: 'Cloak of the Shifting Sands', buy_price: 4200 },
 
 	 // --- Curio the Collector's Stock ---
-	{ vendor_name: 'Curio the Collector', item_name: 'Common Armor Voucher', buy_price: 300 },
-	{ vendor_name: 'Curio the Collector', item_name: 'Rare Equipment Voucher', buy_price: 5000 },
-	{ vendor_name: 'Curio the Collector', item_name: 'Epic Spell Scroll Voucher', buy_price: 20000 },
+	{ vendor_name: 'Curio the Collector', item_name: '[Common] Armor Voucher', buy_price: 300 },
+	{ vendor_name: 'Curio the Collector', item_name: '[Uncommon] Weapon Voucher', buy_price: 800 },
+	{ vendor_name: 'Curio the Collector', item_name: '[Rare] Equipment Voucher', buy_price: 5000 },
+	{ vendor_name: 'Curio the Collector', item_name: '[Epic] Spell Scroll Voucher', buy_price: 20000 },
 	// Curio also buys materials, but at a worse rate than specialists
 	{ vendor_name: 'Curio the Collector', item_name: 'Rat Pelt', sell_price: 1 },
 	{ vendor_name: 'Curio the Collector', item_name: 'Goblin Ear', sell_price: 1 },
@@ -112,6 +161,10 @@ const vendorStockData = [
 	{ vendor_name: 'Magus Magnus', item_name: 'Scroll of Fireblast', buy_price: 1800 },
 	{ vendor_name: 'Magus Magnus', item_name: 'Scroll of Ice Shard', buy_price: 1800 },
 	{ vendor_name: 'Magus Magnus', item_name: 'Scroll of Mage Armor', buy_price: 4000 },
+	{ vendor_name: 'Magus Magnus', item_name: 'Scroll of Light', buy_price: 300 },
+	{ vendor_name: 'Magus Magnus', item_name: 'Scroll of Shield of Faith', buy_price: 1500 },
+	{ vendor_name: 'Magus Magnus', item_name: 'Scroll of Enfeeble', buy_price: 4000 },
+	{ vendor_name: 'Magus Magnus', item_name: 'Scroll of Chain Lightning', buy_price: 18000 },
 	// Add some magic gear for him to sell
 	{ vendor_name: 'Magus Magnus', item_name: 'Channeler\'s Focus', buy_price: 100 },
 	{ vendor_name: 'Magus Magnus', item_name: 'Acolyte\'s Robes', buy_price: 80 },
@@ -155,22 +208,45 @@ const pveItems = [
 	// Armor
 	{ name: 'Crude Iron Helm', description: 'A dented and poorly fitting helmet of orcish make.', item_type: 'ARMOR', rarity: 'COMMON', is_stackable: 0, is_tradeable: 1, crown_value: 40, effects_json: '{"slot": "helmet", "ac_bonus": 1}' },
 
-	// --- VOUCHERS & SCROLLS ---
-	// Purchaseable Vouchers
-	{ name: 'Common Armor Voucher', description: 'Redeem this to receive a random piece of Common-tier armor.', item_type: 'VOUCHER', rarity: 'COMMON', is_stackable: 1, is_tradeable: 1, crown_value: 250 },
-	{ name: 'Rare Equipment Voucher', description: 'Redeem this to receive a random piece of Rare-tier equipment (weapon or armor).', item_type: 'VOUCHER', rarity: 'RARE', is_stackable: 1, is_tradeable: 1, crown_value: 4000 },
-	{ name: 'Epic Spell Scroll Voucher', description: 'A voucher for a random, powerful spell scroll of Epic rarity.', item_type: 'VOUCHER', rarity: 'EPIC', is_stackable: 1, is_tradeable: 1, crown_value: 15000 },
+	// --- COMPLETE VOUCHER SET ---
+	// ARMOR
+	{ name: '[Common] Armor Voucher', description: 'Redeem for a random piece of Common or Uncommon armor.', item_type: 'VOUCHER', rarity: 'COMMON', is_stackable: 1, is_tradeable: 1, crown_value: 300 },
+	{ name: '[Uncommon] Armor Voucher', description: 'Redeem for a random piece of Uncommon or Rare armor.', item_type: 'VOUCHER', rarity: 'UNCOMMON', is_stackable: 1, is_tradeable: 1, crown_value: 800 },
+	{ name: '[Rare] Armor Voucher', description: 'Redeem for a random piece of Rare or Epic armor.', item_type: 'VOUCHER', rarity: 'RARE', is_stackable: 1, is_tradeable: 1, crown_value: 4000 },
+	{ name: '[Epic] Armor Voucher', description: 'Redeem for a random piece of Epic or Legendary armor.', item_type: 'VOUCHER', rarity: 'EPIC', is_stackable: 1, is_tradeable: 1, crown_value: 15000 },
 
-	// Loot-Only Vouchers
-	{ name: 'XP in a Bottle', description: 'A swirling vial of captured experience. Unseal it to gain a small amount of XP.', item_type: 'VOUCHER', rarity: 'UNCOMMON', is_stackable: 1, is_tradeable: 0, crown_value: 0 },
-	{ name: 'Sealed Chest of Crowns', description: 'A magically sealed chest containing a random amount of Crowns.', item_type: 'VOUCHER', rarity: 'COMMON', is_stackable: 1, is_tradeable: 0, crown_value: 0 },
+	// WEAPON
+	{ name: '[Common] Weapon Voucher', description: 'Redeem for a random Common or Uncommon weapon.', item_type: 'VOUCHER', rarity: 'COMMON', is_stackable: 1, is_tradeable: 1, crown_value: 300 },
+	{ name: '[Uncommon] Weapon Voucher', description: 'Redeem for a random Uncommon or Rare weapon.', item_type: 'VOUCHER', rarity: 'UNCOMMON', is_stackable: 1, is_tradeable: 1, crown_value: 800 },
+	{ name: '[Rare] Weapon Voucher', description: 'Redeem for a random Rare or Epic weapon.', item_type: 'VOUCHER', rarity: 'RARE', is_stackable: 1, is_tradeable: 1, crown_value: 4000 },
+	{ name: '[Epic] Weapon Voucher', description: 'Redeem for a random Epic or Legendary weapon.', item_type: 'VOUCHER', rarity: 'EPIC', is_stackable: 1, is_tradeable: 1, crown_value: 15000 },
+
+	// SPELL SCROLLS
+	{ name: '[Common] Spell Scroll Voucher', description: 'A voucher for a random, simple spell scroll.', item_type: 'VOUCHER', rarity: 'COMMON', is_stackable: 1, is_tradeable: 1, crown_value: 500 },
+	{ name: '[Uncommon] Spell Scroll Voucher', description: 'A voucher for a random spell scroll of moderate power.', item_type: 'VOUCHER', rarity: 'UNCOMMON', is_stackable: 1, is_tradeable: 1, crown_value: 1500 },
+	{ name: '[Rare] Spell Scroll Voucher', description: 'A voucher for a random, powerful spell scroll.', item_type: 'VOUCHER', rarity: 'RARE', is_stackable: 1, is_tradeable: 1, crown_value: 5000 },
+	{ name: '[Epic] Spell Scroll Voucher', description: 'A voucher for a random, truly formidable spell scroll.', item_type: 'VOUCHER', rarity: 'EPIC', is_stackable: 1, is_tradeable: 1, crown_value: 20000 },
+
+	// LOOT-ONLY (expanded)
+	{ name: '[Common] XP in a Bottle', description: 'Contains a small amount of captured experience.', item_type: 'VOUCHER', rarity: 'COMMON', is_stackable: 1, is_tradeable: 0, crown_value: 0 },
+	{ name: '[Uncommon] XP in a Bottle', description: 'Contains a moderate amount of captured experience.', item_type: 'VOUCHER', rarity: 'UNCOMMON', is_stackable: 1, is_tradeable: 0, crown_value: 0 },
+	{ name: '[Rare] XP in a Bottle', description: 'Contains a large amount of captured experience.', item_type: 'VOUCHER', rarity: 'RARE', is_stackable: 1, is_tradeable: 0, crown_value: 0 },
+	{ name: '[Common] Sealed Chest of Crowns', description: 'Contains a small amount of Crowns.', item_type: 'VOUCHER', rarity: 'COMMON', is_stackable: 1, is_tradeable: 0, crown_value: 0 },
+	{ name: '[Uncommon] Sealed Chest of Crowns', description: 'Contains a moderate amount of Crowns.', item_type: 'VOUCHER', rarity: 'UNCOMMON', is_stackable: 1, is_tradeable: 0, crown_value: 0 },
+	{ name: '[Rare] Sealed Chest of Crowns', description: 'Contains a large amount of Crowns.', item_type: 'VOUCHER', rarity: 'RARE', is_stackable: 1, is_tradeable: 0, crown_value: 0 },
 
 	// Spell Scrolls
-	{ name: 'Scroll of Minor Heal', description: 'A single-use scroll that teaches the Minor Heal spell to a capable user.', item_type: 'SPELL_SCROLL', rarity: 'UNCOMMON', is_stackable: 1, is_tradeable: 1, crown_value: 500, effects_json: '{"teaches_spell_id": 2}' },
-	{ name: 'Scroll of Fireblast', description: 'A single-use scroll that teaches the Fireblast spell.', item_type: 'SPELL_SCROLL', rarity: 'UNCOMMON', is_stackable: 1, is_tradeable: 1, crown_value: 1200, effects_json: '{"teaches_spell_id": 3}' },
-	{ name: 'Scroll of Ice Shard', description: 'A single-use scroll that teaches the Ice Shard spell.', item_type: 'SPELL_SCROLL', rarity: 'UNCOMMON', is_stackable: 1, is_tradeable: 1, crown_value: 1200, effects_json: '{"teaches_spell_id": 4}' },
-	{ name: 'Scroll of Mage Armor', description: 'A single-use scroll that teaches the Mage Armor spell.', item_type: 'SPELL_SCROLL', rarity: 'RARE', is_stackable: 1, is_tradeable: 1, crown_value: 2500, effects_json: '{"teaches_spell_id": 5}' },
-
+	{ name: 'Scroll of Minor Heal', description: 'A single-use scroll that teaches the Minor Heal spell to a capable user.', item_type: 'SPELL_SCROLL', rarity: 'UNCOMMON', is_stackable: 1, is_tradeable: 1, crown_value: 500, effects_json: '{"teaches_spell_name": "Minor Heal"}' },
+	{ name: 'Scroll of Fireblast', description: 'A single-use scroll that teaches the Fireblast spell.', item_type: 'SPELL_SCROLL', rarity: 'UNCOMMON', is_stackable: 1, is_tradeable: 1, crown_value: 1200, effects_json: '{"teaches_spell_name": "Fireblast"}' },
+	{ name: 'Scroll of Ice Shard', description: 'A single-use scroll that teaches the Ice Shard spell.', item_type: 'SPELL_SCROLL', rarity: 'UNCOMMON', is_stackable: 1, is_tradeable: 1, crown_value: 1200, effects_json: '{"teaches_spell_name": "Ice Shard"}' },
+	{ name: 'Scroll of Mage Armor', description: 'A single-use scroll that teaches the Mage Armor spell.', item_type: 'SPELL_SCROLL', rarity: 'RARE', is_stackable: 1, is_tradeable: 1, crown_value: 2500, effects_json: '{"teaches_spell_name": "Mage Armor"}' },
+	{ name: 'Scroll of Light', description: 'A single-use scroll that teaches the Light spell.', item_type: 'SPELL_SCROLL', rarity: 'COMMON', is_stackable: 1, is_tradeable: 1, crown_value: 200, effects_json: '{"teaches_spell_name": "Light"}' },
+	{ name: 'Scroll of Shield of Faith', description: 'A single-use scroll that teaches the Shield of Faith spell.', item_type: 'SPELL_SCROLL', rarity: 'UNCOMMON', is_stackable: 1, is_tradeable: 1, crown_value: 1000, effects_json: '{"teaches_spell_name": "Shield of Faith"}' },
+	{ name: 'Scroll of Enfeeble', description: 'A single-use scroll that teaches the Enfeeble spell.', item_type: 'SPELL_SCROLL', rarity: 'RARE', is_stackable: 1, is_tradeable: 1, crown_value: 2800, effects_json: '{"teaches_spell_name": "Enfeeble"}' },
+	{ name: 'Scroll of Chain Lightning', description: 'A single-use scroll that teaches the Chain Lightning spell.', item_type: 'SPELL_SCROLL', rarity: 'EPIC', is_stackable: 1, is_tradeable: 1, crown_value: 12000, effects_json: '{"teaches_spell_name": "Chain Lightning"}' },
+	{ name: 'Scroll of Stoneskin', description: 'A single-use scroll that teaches the Stoneskin spell.', item_type: 'SPELL_SCROLL', rarity: 'EPIC', is_stackable: 1, is_tradeable: 1, crown_value: 11000, effects_json: '{"teaches_spell_name": "Stoneskin"}' },
+	{ name: 'Scroll of Meteor Swarm', description: 'A single-use scroll that teaches the Meteor Swarm spell.', item_type: 'SPELL_SCROLL', rarity: 'LEGENDARY', is_stackable: 1, is_tradeable: 1, crown_value: 50000, effects_json: '{"teaches_spell_name": "Meteor Swarm"}' },
+	{ name: 'Scroll of Restoration', description: 'A single-use scroll that teaches the Restoration spell.', item_type: 'SPELL_SCROLL', rarity: 'LEGENDARY', is_stackable: 1, is_tradeable: 1, crown_value: 45000, effects_json: '{"teaches_spell_name": "Restoration"}' },
 
 	// --- ROWAN THE BLACKSMITH'S NEW WARES ---
 	// UNCOMMON
@@ -345,6 +421,51 @@ const startingEquipmentData = [
 	{ name: 'Enforcer\'s Cudgel', description: 'A heavy, reliable club used for maintaining order and protecting the innocent.', item_type: 'WEAPON', rarity: 'STARTER', is_stackable: 0, is_tradeable: 0, crown_value: 10, damage_dice: '1d6', damage_type: 'Bludgeoning', handedness: 'one-handed', effects_json: '{"slot": "weapon", "base_stats": {"might": 1}}' },
 ];
 
+function seedSpeciesData() {
+	db.transaction(() => {
+		const upsertSpecies = db.prepare(`
+            INSERT INTO species (name, description, stat_bonus_json, base_perk_name, base_perk_description)
+            VALUES (@name, @description, @stat_bonus_json, @base_perk_name, @base_perk_description)
+            ON CONFLICT(name) DO UPDATE SET
+                description = excluded.description,
+                stat_bonus_json = excluded.stat_bonus_json,
+                base_perk_name = excluded.base_perk_name,
+                base_perk_description = excluded.base_perk_description
+        `);
+
+		const upsertSubspecies = db.prepare(`
+            INSERT INTO subspecies (species_id, name, description, stat_bonus_json)
+            VALUES (@species_id, @name, @description, @stat_bonus_json)
+            ON CONFLICT(name) DO UPDATE SET
+                species_id = excluded.species_id,
+                description = excluded.description,
+                stat_bonus_json = excluded.stat_bonus_json
+        `);
+
+		console.log('[DB Seeding] Upserting species...');
+		for (const species of speciesData) {
+			upsertSpecies.run(species);
+		}
+
+		const speciesIds = new Map(db.prepare('SELECT species_id, name FROM species').all().map(s => [s.name, s.species_id]));
+
+		console.log('[DB Seeding] Upserting subspecies...');
+		for (const subspecies of subspeciesData) {
+			const speciesId = speciesIds.get(subspecies.species_name);
+			if (speciesId) {
+				upsertSubspecies.run({
+					species_id: speciesId,
+					name: subspecies.name,
+					description: subspecies.description,
+					stat_bonus_json: subspecies.stat_bonus_json,
+				});
+			}
+			else {
+				console.warn(`[DB Seeding] Could not find species "${subspecies.species_name}" for subspecies "${subspecies.name}".`);
+			}
+		}
+	})();
+}
 
 /**
  * Seeds all PvE-related data idempotently.
@@ -525,6 +646,7 @@ function seedDatabase() {
 	try {
 		seedOrigins();
 		seedArchetypes();
+		seedSpeciesData();
 		seedPveData();
 		return true;
 	}

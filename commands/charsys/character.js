@@ -1315,7 +1315,6 @@ module.exports = {
 		if (command === 'spellbook') {
 			if (action === 'back') {
 				// Re-render the character sheet
-				await interaction.deferUpdate();
 				await handleView(interaction);
 				return;
 			}

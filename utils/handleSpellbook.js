@@ -120,31 +120,33 @@ async function handleSpellbookInteraction(interaction) {
 		if (action === 'scrollselect') {
 			const inventoryId = parseInt(interaction.values[0], 10);
 
-			// Use a transaction to ensure atomicity
 			try {
 				let spellName;
 				const learnTx = db.transaction(() => {
 					const scroll = db.prepare(`
-                        SELECT i.name, i.effects_json, s.spell_id, s.name as learned_spell_name, s.required_wits
-                        FROM user_inventory ui
-                        JOIN items i ON ui.item_id = i.item_id
-                        LEFT JOIN spells s ON json_extract(i.effects_json, '$.teaches_spell_id') = s.spell_id
-                        WHERE ui.inventory_id = ? AND ui.user_id = ?
-                    `).get(inventoryId, userId);
+                SELECT i.name, i.effects_json
+                FROM user_inventory ui JOIN items i ON ui.item_id = i.item_id
+                WHERE ui.inventory_id = ? AND ui.user_id = ?
+            `).get(inventoryId, userId);
 
 					if (!scroll) throw new Error('NOT_FOUND');
 
-					const character = db.prepare('SELECT stat_wits FROM characters WHERE user_id = ?').get(userId);
-					if (character.stat_wits < scroll.required_wits) throw new Error('LOW_WITS');
+					const effects = JSON.parse(scroll.effects_json);
+					const spellToLearnName = effects.teaches_spell_name;
+					if (!spellToLearnName) throw new Error('INVALID_SCROLL');
 
-					const alreadyKnown = db.prepare('SELECT 1 FROM character_spells WHERE user_id = ? AND spell_id = ?').get(userId, scroll.spell_id);
+					const spell = db.prepare('SELECT spell_id, name, required_wits FROM spells WHERE name = ?').get(spellToLearnName);
+					if (!spell) throw new Error('SPELL_NOT_FOUND');
+
+					const character = db.prepare('SELECT stat_wits FROM characters WHERE user_id = ?').get(userId);
+					if (character.stat_wits < spell.required_wits) throw new Error('LOW_WITS');
+
+					const alreadyKnown = db.prepare('SELECT 1 FROM character_spells WHERE user_id = ? AND spell_id = ?').get(userId, spell.spell_id);
 					if (alreadyKnown) throw new Error('ALREADY_KNOWN');
 
-					// Consume scroll
 					db.prepare('DELETE FROM user_inventory WHERE inventory_id = ?').run(inventoryId);
-					// Learn spell
-					db.prepare('INSERT INTO character_spells (user_id, spell_id) VALUES (?, ?)').run(userId, scroll.spell_id);
-					spellName = scroll.learned_spell_name;
+					db.prepare('INSERT INTO character_spells (user_id, spell_id) VALUES (?, ?)').run(userId, spell.spell_id);
+					spellName = spell.name;
 				});
 
 				learnTx();
@@ -164,6 +166,8 @@ async function handleSpellbookInteraction(interaction) {
 			catch (error) {
 				let message = 'An error occurred while learning this spell.';
 				if (error.message === 'NOT_FOUND') message = 'You no longer have that scroll.';
+				if (error.message === 'INVALID_SCROLL') message = 'This scroll is corrupted and teaches nothing.';
+				if (error.message === 'SPELL_NOT_FOUND') message = 'The spell this scroll teaches is unknown to the world.';
 				if (error.message === 'LOW_WITS') message = 'Your Wits are not high enough to comprehend this scroll.';
 				if (error.message === 'ALREADY_KNOWN') message = 'You already know this spell.';
 				await interaction.update({ content: `❌ ${message}`, embeds: [], components: [] });

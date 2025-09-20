@@ -509,7 +509,7 @@ async function handleEngage(interaction) {
 			db.prepare('UPDATE characters SET character_status = \'IDLE\', character_status_expiry_time = NULL WHERE user_id = ?').run(userId);
 			// Update the in-memory object so the rest of the function works correctly
 			character.character_status = 'IDLE';
-			await interaction.followUp({ content: 'Your recovery is complete! You feel refreshed and ready for a new adventure.', flags: MessageFlags.Ephemeral });
+			await interaction.channel.send({ content: 'Your recovery is complete! You feel refreshed and ready for a new adventure.' });
 		}
 	}
 

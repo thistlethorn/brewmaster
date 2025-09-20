@@ -494,6 +494,30 @@ const setupTables = db.transaction(() => {
     `).run();
 
 
+	// "Character Species System" via /commands/charsys/ @ [character.js]
+
+	db.prepare(`
+        CREATE TABLE IF NOT EXISTS species (
+            species_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            description TEXT,
+            stat_bonus_json TEXT CHECK(stat_bonus_json IS NULL OR json_valid(stat_bonus_json)),
+            base_perk_name TEXT,
+            base_perk_description TEXT
+        )
+    `).run();
+
+	db.prepare(`
+        CREATE TABLE IF NOT EXISTS subspecies (
+            subspecies_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            species_id INTEGER NOT NULL,
+            name TEXT NOT NULL UNIQUE,
+            description TEXT,
+            stat_bonus_json TEXT CHECK(stat_bonus_json IS NULL OR json_valid(stat_bonus_json)),
+            FOREIGN KEY(species_id) REFERENCES species(species_id) ON DELETE CASCADE
+        )
+    `).run();
+
 	// "MASTER CHARACTER SYSTEM" for /main/brewmaster/ @ [WHOLE REPO]
 	// BEGIN CHARACTER SUPERSYSTEM TABLES
 
@@ -505,6 +529,8 @@ const setupTables = db.transaction(() => {
             user_id TEXT PRIMARY KEY,
             origin_id INTEGER NOT NULL,
             archetype_id INTEGER NOT NULL,
+            species_id INTEGER,
+            subspecies_id INTEGER,
 
             -- === Player Set Role-Playing Fields  ===
             character_name TEXT NOT NULL,
@@ -1393,7 +1419,16 @@ const setupTables = db.transaction(() => {
 			db.prepare('ALTER TABLE characters ADD COLUMN character_status_expiry_time TEXT').run();
 			console.log('[DB Migration] Added column: characters.character_status_expiry_time');
 		}
+		if (!characterColumns.has('species_id')) {
+			db.prepare('ALTER TABLE characters ADD COLUMN species_id INTEGER').run();
+			console.log('[DB Migration] Added column: characters.species_id');
+		}
+		if (!characterColumns.has('subspecies_id')) {
+			db.prepare('ALTER TABLE characters ADD COLUMN subspecies_id INTEGER').run();
+			console.log('[DB Migration] Added column: characters.subspecies_id');
+		}
 
+		console.log('[DB Migration] Character Species schema check complete.');
 		const pveProgressColumns = new Set(db.pragma('table_info(character_pve_progress)').map(c => c.name));
 		if (!pveProgressColumns.has('fastest_clear_turns')) {
 			db.prepare('ALTER TABLE character_pve_progress ADD COLUMN fastest_clear_turns INTEGER').run();
