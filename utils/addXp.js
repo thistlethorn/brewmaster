@@ -65,7 +65,7 @@ async function addXp(userId, amount, source, reason, title = null) {
 	else {
 		throw new Error('Invalid source passed to addXp');
 	}
-	const character = db.prepare('SELECT level, xp, stat_points_unspent FROM characters WHERE user_id = ?').get(userId);
+	const character = db.prepare('SELECT * FROM characters WHERE user_id = ?').get(userId);
 	const otherCharData = db.prepare('SELECT character_name, character_image FROM characters WHERE user_id = ?').get(userId);
 	const charLogChannel = await activeClient.channels.fetch(CHAR_LOG_CHANNEL_ID);
 	const user = await activeClient.users.fetch(userId);
@@ -144,48 +144,109 @@ async function addXp(userId, amount, source, reason, title = null) {
 		xpToNextLevel = Math.floor(100 * (level ** 1.5));
 	}
 
-	try {
-		db.prepare('UPDATE characters SET level = ?, xp = ?, stat_points_unspent = ? WHERE user_id = ?')
-			.run(level, xp, stat_points_unspent, userId);
+	db.transaction(() => {
+		const statGains = { might: 0, finesse: 0, wits: 0, grit: 0, charm: 0, fortune: 0 };
+		const bonusMessages = [];
 
-		if (levelsGained > 0) {
-			const pointsGained = levelsGained * 2;
-			const levelUpEmbed = new EmbedBuilder()
-				.setColor(0x75146a)
-				.setTitle('🌟 LEVEL GAINED! 🌟')
-				.setDescription(`Congratulations, you have reached **Level ${level}**!`)
-				.addFields(
-					{ name: 'Stat Points Gained', value: `You gained **${pointsGained}** unspent stat points.`, inline: true },
-					{ name: 'Total Unspent Points', value: `You now have **${stat_points_unspent}** points available.`, inline: true },
-				)
-				.setFooter({ text: 'Use /character spendpoints to improve your stats!' });
+		if (levelsGained > 0 && character.species_id) {
+			const species = db.prepare('SELECT name, stat_bonus_json FROM species WHERE species_id = ?').get(character.species_id);
 
-			await sendLevelUpNotification({ activeClient, userId, embed: levelUpEmbed, source });
+			const processBonus = (bonusJson, sourceName) => {
+				if (!bonusJson) return;
+				const bonuses = JSON.parse(bonusJson);
+				for (const [stat, value] of Object.entries(bonuses)) {
+					// Primordialfolk High-Risk/Reward Logic
+					if (species.name === 'Primordialfolk') {
+						// 75% chance for +3, 25% for -1. (3 * 0.75) + (-1 * 0.25) = 2.25 - 0.25 = 2.0 average gain.
+						const roll = Math.random();
+						const gain = roll < 0.75 ? 3 : -1;
+						statGains[stat] += gain;
+						bonusMessages.push(`**${gain > 0 ? `+${gain}` : gain}** ${stat.charAt(0).toUpperCase() + stat.slice(1)} (from ${sourceName}) ${gain > 0 ? '✨' : '💢'}`);
+					}
+					else {
+						statGains[stat] += (value * levelsGained);
+					}
+				}
+			};
 
-			levelUpEmbed.spliceFields(0, 2)
-				.setDescription(null)
+			processBonus(species.stat_bonus_json, species.name);
+
+			if (character.subspecies_id) {
+				const subspecies = db.prepare('SELECT name, stat_bonus_json FROM subspecies WHERE subspecies_id = ?').get(character.subspecies_id);
+				processBonus(subspecies.stat_bonus_json, subspecies.name);
+			}
+
+			// Add non-Primordialfolk bonuses to the message list
+			if (species.name !== 'Primordialfolk') {
+				for (const [stat, value] of Object.entries(statGains)) {
+					if (value > 0) {
+						bonusMessages.push(`**+${value}** ${stat.charAt(0).toUpperCase() + stat.slice(1)}`);
+					}
+				}
+			}
+		}
+
+		// Prepare the dynamic part of the UPDATE query
+		const statUpdateClauses = Object.keys(statGains).map(stat => `stat_${stat} = stat_${stat} + ?`).join(', ');
+		const statUpdateValues = Object.values(statGains);
+
+		const finalUpdateQuery = `
+            UPDATE characters 
+            SET 
+                level = ?, xp = ?, stat_points_unspent = ?, 
+                ${statUpdateClauses}
+            WHERE user_id = ?
+        `;
+
+		try {
+			db.prepare(finalUpdateQuery).run(level, xp, stat_points_unspent, ...statUpdateValues, userId);
+
+			if (levelsGained > 0) {
+				const pointsGained = levelsGained * 2;
+				const levelUpEmbed = new EmbedBuilder()
+					.setColor(0x75146a)
+					.setTitle('🌟 LEVEL GAINED! 🌟')
+					.setDescription(`Congratulations, you have reached **Level ${level}**!`)
+					.addFields(
+						{ name: 'Unspent Stat Points', value: `You gained **${pointsGained}** points to spend. You now have **${stat_points_unspent}** total.`, inline: false },
+					)
+					.setFooter({ text: 'Use /character spendpoints to improve your stats!' });
+
+				if (bonusMessages.length > 0) {
+					levelUpEmbed.addFields({ name: 'Automatic Species Bonuses', value: bonusMessages.join('\n'), inline: false });
+				}
+
+				sendLevelUpNotification({ activeClient, userId, embed: levelUpEmbed, source });
+
+				const logEmbed = new EmbedBuilder()
+					.setColor(0x75146a)
+					.setTitle('🌟 LEVEL GAINED! 🌟')
+					.setThumbnail(otherCharData.character_image || null)
+					.addFields(
+						{ name: `__${otherCharData.character_name}__`, value: `Reached **Level ${level}**!`, inline: false },
+						{ name: `[\`${stat_points_unspent} SP\`] Unspent Statpoints`, value: '🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟', inline: false },
+					);
+				if (bonusMessages.length > 0) {
+					logEmbed.addFields({ name: 'Automatic Species Bonuses', value: bonusMessages.join('\n'), inline: false });
+				}
+				charLogChannel.send({ embeds: [logEmbed] });
+			}
+			const xpRewardEmbed = new EmbedBuilder()
+				.setColor(0xF1C40F)
+				.setTitle('💠 XP Gained! 💠')
 				.setThumbnail(otherCharData.character_image || null)
 				.addFields(
-					{ name: `__${otherCharData.character_name}__`, value: `Reached **Level ${level}**!`, inline: false },
-					{ name: `[\`${stat_points_unspent} SP\`] Unspent Statpoints`, value: '🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟', inline: false },
-				);
-
-			await charLogChannel.send({ embeds: [levelUpEmbed] });
+					{ name: `${title ? title : `__${otherCharData.character_name}__`}`, value: `${reason}`, inline: false },
+					{ name: `[\`${amount} XP\`] Earned`, value: '💠💠💠💠💠💠💠💠💠💠💠', inline: false },
+				)
+				.setFooter({ text: 'To view your character, their XP, and your progress, use /character view!' });
+			charLogChannel.send({ embeds: [xpRewardEmbed] });
 		}
-		const xpRewardEmbed = new EmbedBuilder()
-			.setColor(0xF1C40F)
-			.setTitle('💠 XP Gained! 💠')
-			.setThumbnail(otherCharData.character_image || null)
-			.addFields(
-				{ name: `${title ? title : `__${otherCharData.character_name}__`}`, value: `${reason}`, inline: false },
-				{ name: `[\`${amount} XP\`] Earned`, value: '💠💠💠💠💠💠💠💠💠💠💠', inline: false },
-			)
-			.setFooter({ text: 'To view your character, their XP, and your progress, use /character view!' });
-		await charLogChannel.send({ embeds: [xpRewardEmbed] });
-	}
-	catch (error) {
-		console.error(`[addXp] Failed to update character data for user ${userId}:`, error);
-	}
+		catch (error) {
+			console.error(`[addXp] Failed to update character data for user ${userId}:`, error);
+			throw error;
+		}
+	})();
 }
 
 module.exports = { addXp };

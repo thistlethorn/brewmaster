@@ -157,10 +157,17 @@ async function handleView(interaction) {
 	// Fetch all data in parallel
 	const [characterData, economyData, guildData, pveHistory] = await Promise.all([
 		db.prepare(`
-            SELECT c.*, o.name as origin_name, a.name as archetype_name
+            SELECT 
+                c.*, 
+                o.name as origin_name, 
+                a.name as archetype_name,
+                s.name as species_name,
+                ss.name as subspecies_name
             FROM characters c
             JOIN origins o ON c.origin_id = o.id
             JOIN archetypes a ON c.archetype_id = a.id
+            LEFT JOIN species s ON c.species_id = s.species_id
+            LEFT JOIN subspecies ss ON c.subspecies_id = ss.subspecies_id
             WHERE c.user_id = ?
         `).get(targetUser.id),
 		db.prepare('SELECT crowns FROM user_economy WHERE user_id = ?').get(targetUser.id),
@@ -222,6 +229,13 @@ async function handleView(interaction) {
 
 
 	// --- Affiliation ---
+	let speciesString = '**Species:** *Not yet chosen.*';
+	if (finalCharacterData.species_name) {
+		speciesString = `**Species:** ${finalCharacterData.species_name}`;
+		if (finalCharacterData.subspecies_name) {
+			speciesString += ` (${finalCharacterData.subspecies_name})`;
+		}
+	}
 	let affiliationString = '**Affiliation:** Guildless';
 	let roleString = '**Role:** Lone Wolf';
 	if (guildData) {
@@ -230,7 +244,7 @@ async function handleView(interaction) {
 		else if (guildData.vice_gm) roleString = '**Role:** Vice-GM';
 		else roleString = `**Role:** ${guildData.guildmember_title}`;
 	}
-	sheetEmbed.addFields({ name: '📜 Character Info', value: `**Origin:** ${finalCharacterData.origin_name}\n${affiliationString}\n${roleString}`, inline: false });
+	sheetEmbed.addFields({ name: '📜 Character Info', value: `**Origin:** ${finalCharacterData.origin_name}\n${speciesString}\n${affiliationString}\n${roleString}`, inline: false });
 
 	// --- Base Stats ---
 	const equippedItemsEffects = db.prepare(`
@@ -346,6 +360,19 @@ async function handleView(interaction) {
 			new ButtonBuilder().setCustomId(`char_edit_personality_${targetUser.id}`).setLabel('Edit Personality').setStyle(ButtonStyle.Secondary).setEmoji('🎭'),
 			new ButtonBuilder().setCustomId(`char_unseal_start_${targetUser.id}`).setLabel('Unseal Items').setStyle(ButtonStyle.Success).setEmoji('🔓'),
 		);
+
+		// NEW: Button for existing characters to select a species
+		if (!finalCharacterData.species_id) {
+			const speciesRow = new ActionRowBuilder().addComponents(
+				new ButtonBuilder()
+					.setCustomId(`char_select_species_${targetUser.id}`)
+					.setLabel('Choose Your Species')
+					.setStyle(ButtonStyle.Success)
+					.setEmoji('🌿'),
+			);
+			components.push(speciesRow);
+		}
+
 		components.push(editRow1, editRow2);
 	}
 
@@ -1118,9 +1145,18 @@ module.exports = {
 		if (interaction.user.id !== userId) {
 			return interaction.reply({ content: 'This interaction is not for you.', flags: MessageFlags.Ephemeral });
 		}
+
+		// NEW: Retrofit species selection for existing characters
+		if (command === 'select' && action === 'species') {
+			const session = creationSessions.get(userId) || { step: 'retro_species', timestamp: Date.now(), userId: userId };
+			creationSessions.set(userId, session);
+			await showSpeciesSelection(interaction, session);
+			return;
+		}
+
 		// REFACTORED: New handler for spend points buttons
 		if (command === 'spendpoints') {
-			// Handle the new "start new session" prompt
+		// Handle the new "start new session" prompt
 			if (action === 'restart') {
 				spendPointsSessions.delete(userId);
 				await startNewSpendPointsSession(interaction, true);
@@ -1161,13 +1197,13 @@ module.exports = {
 					try {
 						const spendTx = db.transaction(() => {
 							db.prepare(`
-                                UPDATE characters SET
-                                    stat_might = stat_might + ?, stat_finesse = stat_finesse + ?,
-                                    stat_wits = stat_wits + ?, stat_grit = stat_grit + ?,
-                                    stat_charm = stat_charm + ?, stat_fortune = stat_fortune + ?,
-                                    stat_points_unspent = stat_points_unspent - ?
-                                WHERE user_id = ?
-                            `).run(
+                            UPDATE characters SET
+                                stat_might = stat_might + ?, stat_finesse = stat_finesse + ?,
+                                stat_wits = stat_wits + ?, stat_grit = stat_grit + ?,
+                                stat_charm = stat_charm + ?, stat_fortune = stat_fortune + ?,
+								stat_points_unspent = stat_points_unspent - ?
+                            WHERE user_id = ?
+                        `).run(
 								session.pointsToAdd.might, session.pointsToAdd.finesse, session.pointsToAdd.wits,
 								session.pointsToAdd.grit, session.pointsToAdd.charm, session.pointsToAdd.fortune,
 								totalSpent, userId,
@@ -1238,7 +1274,7 @@ module.exports = {
 				durationText = `${15 * levelTier} minutes`;
 			}
 			else {
-				// long
+			// long
 				durationMs = (2 * levelTier) * 60 * 60 * 1000;
 				statusToSet = 'RECOVERING_LONG';
 				durationText = `${2 * levelTier} hours`;
@@ -1281,7 +1317,7 @@ module.exports = {
 					.setCustomId(`char_edit_alignment_${userId}`)
 					.setPlaceholder('Select your character\'s alignment')
 					.addOptions(
-						// UPDATED OPTIONS
+					// UPDATED OPTIONS
 						{ label: 'Lawful Good', value: 'Lawful Good' },
 						{ label: 'True Good', value: 'True Good' },
 						{ label: 'Chaotic Good', value: 'Chaotic Good' },
@@ -1314,7 +1350,7 @@ module.exports = {
 		}
 		if (command === 'spellbook') {
 			if (action === 'back') {
-				// Re-render the character sheet
+			// Re-render the character sheet
 				await handleView(interaction);
 				return;
 			}
@@ -1331,7 +1367,7 @@ module.exports = {
 		session.timestamp = Date.now();
 
 		if (command === 'create') {
-			// --- Origin Flow ---
+		// --- Origin Flow ---
 			if (action === 'select' && subject === 'origin') {
 				const originId = parts[4];
 				await showOriginInfo(interaction, session, originId);
@@ -1355,8 +1391,208 @@ module.exports = {
 			else if (action === 'confirm' && subject === 'archetype') {
 				session.archetypeId = session.tempArchetypeId;
 				delete session.tempArchetypeId;
-				session.step = 'rp';
+				await showSpeciesSelection(interaction, session);
+			}
+			// --- Species Flow ---
+			else if (action === 'select' && subject === 'species') {
+				const speciesId = parts[4];
+				await showSpeciesInfo(interaction, session, speciesId);
+			}
+			else if (action === 'back' && subject === 'species') {
+				await showArchetypeSelection(interaction, session);
+			}
+			else if (action === 'confirm' && subject === 'species') {
+				session.speciesId = session.tempSpeciesId;
+				session.subspeciesId = null;
+				delete session.tempSpeciesId;
 
+				// --- UPDATED: Handle Retrofit with Backlog Calculation & Detailed Feedback ---
+				if (session.step === 'retro_species') {
+					try {
+						const character = db.prepare('SELECT level FROM characters WHERE user_id = ?').get(session.userId);
+						const species = db.prepare('SELECT name, stat_bonus_json FROM species WHERE species_id = ?').get(session.speciesId);
+						const bonuses = { might: 0, finesse: 0, wits: 0, grit: 0, charm: 0, fortune: 0 };
+						const feedbackParts = [];
+
+						// 1. Apply initial base bonus
+						if (species.stat_bonus_json) {
+							const speciesBonuses = JSON.parse(species.stat_bonus_json);
+							for (const [stat, value] of Object.entries(speciesBonuses)) {
+								bonuses[stat] += value;
+							}
+						}
+
+						// 2. Calculate and apply backlog for level-ups (Level 2 through current level)
+						const levelsGained = character.level - 1;
+						if (levelsGained > 0) {
+							// Humanfolk Perk: "+1 unspent stat point every 5 levels"
+							if (species.name === 'Humanfolk') {
+								const bonusPoints = Math.floor(character.level / 5) - Math.floor(1 / 5);
+								// Points earned from levels 2-current
+								if (bonusPoints > 0) {
+									db.prepare('UPDATE characters SET stat_points_unspent = stat_points_unspent + ? WHERE user_id = ?')
+										.run(bonusPoints, session.userId);
+									feedbackParts.push(`**+${bonusPoints} Unspent Stat Points** (from Versatility)`);
+								}
+							}
+						}
+
+						// 3. Build the final feedback message from the total calculated bonuses
+						for (const [stat, value] of Object.entries(bonuses)) {
+							if (value !== 0) {
+								const sign = value > 0 ? '+' : '';
+								feedbackParts.push(`**${sign}${value} ${stat.charAt(0).toUpperCase() + stat.slice(1)}**`);
+							}
+						}
+
+						const feedbackString = feedbackParts.length > 0 ? `\n\n**Retroactive Bonuses Applied:** ${feedbackParts.join(', ')}` : '';
+
+						// 4. Atomically update the character in the database
+						db.prepare(`
+							UPDATE characters SET 
+								species_id = ?, 
+								subspecies_id = ?,
+								stat_might = stat_might + ?,
+								stat_finesse = stat_finesse + ?,
+								stat_wits = stat_wits + ?,
+								stat_grit = stat_grit + ?,
+								stat_charm = stat_charm + ?,
+								stat_fortune = stat_fortune + ?
+							WHERE user_id = ?
+						`).run(
+							session.speciesId, null,
+							bonuses.might, bonuses.finesse, bonuses.wits,
+							bonuses.grit, bonuses.charm, bonuses.fortune,
+							session.userId,
+						);
+
+						recalculateStats(session.userId);
+						creationSessions.delete(session.userId);
+
+						await interaction.update({
+							content: `✅ Your species has been set to **${species.name}**! Your stats have been updated to reflect your new heritage.${feedbackString}`,
+							components: [],
+							embeds: [],
+						});
+						setTimeout(() => handleView(interaction), 3000);
+					}
+					catch (e) {
+						await interaction.update({ content: 'Error updating your species.', components: [], embeds: [] });
+						console.error(e);
+					}
+					return;
+				}
+				// --- END of Retrofit Handling ---
+
+				// (This part for new character creation remains the same)
+				session.step = 'rp';
+				const rpModal = new ModalBuilder()
+					.setCustomId(`char_create_rp_${userId}`)
+					.setTitle('Character Creation: Role-Playing Details');
+				rpModal.addComponents(
+					new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('rp_ideals').setLabel('What are your character\'s ideals?').setStyle(TextInputStyle.Paragraph).setRequired(false).setMaxLength(500)),
+					new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('rp_backstory').setLabel('Character Backstory').setStyle(TextInputStyle.Paragraph).setRequired(false).setMaxLength(2000)),
+				);
+				await interaction.showModal(rpModal);
+			}
+			// --- Subspecies Flow ---
+			else if (action === 'select' && subject === 'subspecies') {
+				const speciesId = parts[4];
+				const subspeciesId = parts[5];
+				session.tempSpeciesId = speciesId;
+				await showSubspeciesInfo(interaction, session, subspeciesId);
+			}
+			else if (action === 'back' && subject === 'subspecies') {
+				const speciesId = parts[4];
+				await showSpeciesInfo(interaction, session, speciesId);
+			}
+			else if (action === 'confirm' && subject === 'subspecies') {
+				session.speciesId = session.tempSpeciesId;
+				session.subspeciesId = session.tempSubspeciesId;
+				delete session.tempSpeciesId;
+				delete session.tempSubspeciesId;
+
+				// --- UPDATED: Handle Retrofit with Backlog Calculation & Detailed Feedback ---
+				if (session.step === 'retro_species') {
+					try {
+						const character = db.prepare('SELECT level FROM characters WHERE user_id = ?').get(session.userId);
+						const species = db.prepare('SELECT name, stat_bonus_json FROM species WHERE species_id = ?').get(session.speciesId);
+						const subspecies = db.prepare('SELECT name, stat_bonus_json FROM subspecies WHERE subspecies_id = ?').get(session.subspeciesId);
+						const bonuses = { might: 0, finesse: 0, wits: 0, grit: 0, charm: 0, fortune: 0 };
+						const feedbackParts = [];
+
+						// 1. Apply initial base bonuses from both species and subspecies
+						const applyBaseBonuses = (bonusJson) => {
+							if (!bonusJson) return;
+							const parsed = JSON.parse(bonusJson);
+							for (const [stat, value] of Object.entries(parsed)) {
+								bonuses[stat] += value;
+							}
+						};
+						applyBaseBonuses(species.stat_bonus_json);
+						applyBaseBonuses(subspecies.stat_bonus_json);
+
+						// 2. Calculate and apply backlog for level-ups
+						const levelsGained = character.level - 1;
+						if (levelsGained > 0) {
+							if (species.name === 'Primordialfolk' && subspecies.stat_bonus_json) {
+								// Primordialfolk bonus comes from the subspecies choice
+								const primordialBonuses = JSON.parse(subspecies.stat_bonus_json);
+								for (const [stat] of Object.entries(primordialBonuses)) {
+									for (let i = 0; i < levelsGained; i++) {
+										const roll = Math.random();
+										const gain = roll < 0.75 ? 3 : -1;
+										bonuses[stat] += gain;
+									}
+								}
+							}
+						}
+
+						// 3. Build final feedback message
+						for (const [stat, value] of Object.entries(bonuses)) {
+							if (value !== 0) {
+								const sign = value > 0 ? '+' : '';
+								feedbackParts.push(`**${sign}${value} ${stat.charAt(0).toUpperCase() + stat.slice(1)}**`);
+							}
+						}
+
+						const feedbackString = feedbackParts.length > 0 ? `\n\n**Retroactive Bonuses Applied:** ${feedbackParts.join(', ')}` : '';
+
+						// 4. Atomically update the database
+						db.prepare(`
+							UPDATE characters SET 
+								species_id = ?, subspecies_id = ?,
+								stat_might = stat_might + ?, stat_finesse = stat_finesse + ?,
+								stat_wits = stat_wits + ?, stat_grit = stat_grit + ?,
+								stat_charm = stat_charm + ?, stat_fortune = stat_fortune + ?
+							WHERE user_id = ?
+						`).run(
+							session.speciesId, session.subspeciesId,
+							bonuses.might, bonuses.finesse, bonuses.wits,
+							bonuses.grit, bonuses.charm, bonuses.fortune,
+							session.userId,
+						);
+
+						recalculateStats(session.userId);
+						creationSessions.delete(session.userId);
+
+						await interaction.update({
+							content: `✅ Your species has been set to **${species.name} (${subspecies.name})**! Your stats have been updated to reflect your new heritage.${feedbackString}`,
+							components: [],
+							embeds: [],
+						});
+						setTimeout(() => handleView(interaction), 3000);
+					}
+					catch (e) {
+						await interaction.update({ content: 'Error updating your species.', components: [], embeds: [] });
+						console.error(e);
+					}
+					return;
+				}
+				// --- END of Retrofit Handling ---
+
+				// (This part for new character creation remains the same)
+				session.step = 'rp';
 				const rpModal = new ModalBuilder()
 					.setCustomId(`char_create_rp_${userId}`)
 					.setTitle('Character Creation: Role-Playing Details');
@@ -1373,24 +1609,55 @@ module.exports = {
 					const origin = db.prepare('SELECT bonus_stat_1, bonus_stat_2 FROM origins WHERE id = ?').get(session.originId);
 					const archetype = db.prepare('SELECT name FROM archetypes WHERE id = ?').get(session.archetypeId);
 
+					// --- FIX START: Fetch Species & Subspecies stat bonuses ---
+					const species = db.prepare('SELECT stat_bonus_json FROM species WHERE species_id = ?').get(session.speciesId);
+					const subspecies = session.subspeciesId ? db.prepare('SELECT stat_bonus_json FROM subspecies WHERE subspecies_id = ?').get(session.subspeciesId) : null;
+					// --- FIX END ---
+
+
 					const createCharacterTx = db.transaction(() => {
 						const stats = { might: 5, finesse: 5, wits: 5, grit: 5, charm: 5, fortune: 5 };
 						const validStats = ['might', 'finesse', 'wits', 'grit', 'charm', 'fortune'];
+
+						// Apply Origin bonuses
 						if (validStats.includes(origin.bonus_stat_1)) stats[origin.bonus_stat_1]++;
 						if (validStats.includes(origin.bonus_stat_2)) stats[origin.bonus_stat_2]++;
 
+						// --- Apply Species & Subspecies bonuses ---
+						const applyBonuses = (bonusJson) => {
+							if (!bonusJson) return;
+							try {
+								const bonuses = JSON.parse(bonusJson);
+								for (const [stat, value] of Object.entries(bonuses)) {
+									if (validStats.includes(stat)) {
+										stats[stat] += Number(value) || 0;
+									}
+								}
+							}
+							catch (e) {
+								console.error('[Character Creation] Failed to parse stat bonus JSON:', bonusJson, e);
+							}
+						};
+
+						applyBonuses(species.stat_bonus_json);
+						if (subspecies) {
+							applyBonuses(subspecies.stat_bonus_json);
+						}
+
+
 						db.prepare(`
-							INSERT INTO characters (
-								user_id, character_name, origin_id, archetype_id, character_backstory,
-								character_alignment, character_ideals, stat_might, stat_finesse,
-								stat_wits, stat_grit, stat_charm, stat_fortune
-							) VALUES (
-								@user_id, @character_name, @origin_id, @archetype_id, @character_backstory,
-								@character_alignment, @character_ideals, @stat_might, @stat_finesse,
-								@stat_wits, @stat_grit, @stat_charm, @stat_fortune
-							)
-						`).run({
+						INSERT INTO characters (
+							user_id, character_name, origin_id, archetype_id, species_id, subspecies_id, character_backstory,
+							character_alignment, character_ideals, stat_might, stat_finesse,
+							stat_wits, stat_grit, stat_charm, stat_fortune
+						) VALUES (
+							@user_id, @character_name, @origin_id, @archetype_id, @species_id, @subspecies_id, @character_backstory,
+							@character_alignment, @character_ideals, @stat_might, @stat_finesse,
+							@stat_wits, @stat_grit, @stat_charm, @stat_fortune
+						)
+					`).run({
 							user_id: userId, character_name: session.name, origin_id: session.originId, archetype_id: session.archetypeId,
+							species_id: session.speciesId, subspecies_id: session.subspeciesId,
 							character_backstory: session.backstory || '', character_alignment: session.alignment || 'Unaligned',
 							character_ideals: session.ideals || '', stat_might: stats.might, stat_finesse: stats.finesse,
 							stat_wits: stats.wits, stat_grit: stats.grit, stat_charm: stats.charm, stat_fortune: stats.fortune,
@@ -1437,6 +1704,7 @@ module.exports = {
 						}
 					});
 					createCharacterTx();
+					recalculateStats(userId);
 					creationSessions.delete(userId);
 					const successEmbed = new EmbedBuilder()
 						.setColor(0x2ECC71).setTitle('🎉 Character Created! 🎉')
@@ -1574,7 +1842,105 @@ async function showArchetypeInfo(interaction, session, archetypeId) {
 
 	await interaction.update({ embeds: [embed], components: [actionRow] });
 }
+/**
+ * Displays the list of all available Species for selection.
+ * @param {import('discord.js').Interaction} interaction The interaction object.
+ * @param {object} session The user's creation session object.
+ */
+async function showSpeciesSelection(interaction, session) {
+	session.step = 'species';
+	const speciesList = db.prepare('SELECT species_id as id, name FROM species ORDER BY name ASC').all();
+	const embed = new EmbedBuilder()
+		.setColor(0x3498DB)
+		.setTitle('Step 4: Choose a Species')
+		.setDescription('Your Species grants inherent traits and stat bonuses. **Click a button to learn more.**');
 
+	const rows = createButtonRows(speciesList, 'char_create_select_species', session.userId);
+	await interaction.update({ embeds: [embed], components: rows });
+}
+
+/**
+ * Displays detailed information about a single, selected Species and its subspecies if available.
+ * @param {import('discord.js').Interaction} interaction The interaction object.
+ * @param {object} session The user's creation session object.
+ * @param {string} speciesId The ID of the species to display.
+ */
+async function showSpeciesInfo(interaction, session, speciesId) {
+	session.step = 'species_info';
+	session.tempSpeciesId = speciesId;
+
+	const species = db.prepare('SELECT * FROM species WHERE species_id = ?').get(speciesId);
+	const subspeciesList = db.prepare('SELECT subspecies_id as id, name FROM subspecies WHERE species_id = ? ORDER BY name ASC').all(speciesId);
+
+	let statBonusString = '*None*';
+	if (species.stat_bonus_json) {
+		const bonuses = JSON.parse(species.stat_bonus_json);
+		statBonusString = Object.entries(bonuses).map(([stat, val]) => `\`+${val} ${stat}\``).join(', ');
+	}
+
+	const embed = new EmbedBuilder()
+		.setColor(0x1ABC9C)
+		.setTitle(`Species: ${species.name}`)
+		.setDescription(species.description)
+		.addFields(
+			{ name: 'Stat Bonuses', value: statBonusString, inline: false },
+			{ name: `Perk: ${species.base_perk_name}`, value: species.base_perk_description, inline: false },
+		);
+
+	const components = [];
+	if (subspeciesList.length > 0) {
+		embed.addFields({ name: 'Subspecies', value: 'This species has variations. Please select one below to view its details.' });
+		const subRows = createButtonRows(subspeciesList, `char_create_select_subspecies_${speciesId}`, session.userId);
+		components.push(...subRows);
+	}
+	else {
+		// No subspecies, so add a confirm button here
+		const confirmRow = new ActionRowBuilder().addComponents(
+			new ButtonBuilder().setCustomId(`char_create_confirm_species_${session.userId}`).setLabel('Confirm Species').setStyle(ButtonStyle.Success),
+		);
+		components.push(confirmRow);
+	}
+
+	// Always add the "Go Back" button
+	const backRow = new ActionRowBuilder().addComponents(
+		new ButtonBuilder().setCustomId(`char_create_back_species_${session.userId}`).setLabel('Go Back').setStyle(ButtonStyle.Secondary),
+	);
+	components.push(backRow);
+
+	await interaction.update({ embeds: [embed], components });
+}
+
+/**
+ * Displays detailed information about a single, selected Subspecies.
+ * @param {import('discord.js').Interaction} interaction The interaction object.
+ * @param {object} session The user's creation session object.
+ * @param {string} subspeciesId The ID of the subspecies to display.
+ */
+async function showSubspeciesInfo(interaction, session, subspeciesId) {
+	session.step = 'subspecies_info';
+	session.tempSubspeciesId = subspeciesId;
+
+	const subspecies = db.prepare('SELECT * FROM subspecies WHERE subspecies_id = ?').get(subspeciesId);
+
+	let statBonusString = '*None*';
+	if (subspecies.stat_bonus_json) {
+		const bonuses = JSON.parse(subspecies.stat_bonus_json);
+		statBonusString = Object.entries(bonuses).map(([stat, val]) => `\`+${val} ${stat}\``).join(', ');
+	}
+
+	const embed = new EmbedBuilder()
+		.setColor(0x2ECC71)
+		.setTitle(`Subspecies: ${subspecies.name}`)
+		.setDescription(subspecies.description || 'A unique variation of its parent species.')
+		.addFields({ name: 'Additional Stat Bonuses', value: statBonusString, inline: false });
+
+	const actionRow = new ActionRowBuilder().addComponents(
+		new ButtonBuilder().setCustomId(`char_create_confirm_subspecies_${session.userId}`).setLabel('Confirm Selection').setStyle(ButtonStyle.Success),
+		new ButtonBuilder().setCustomId(`char_create_back_subspecies_${session.tempSpeciesId}_${session.userId}`).setLabel('Go Back').setStyle(ButtonStyle.Secondary),
+	);
+
+	await interaction.update({ embeds: [embed], components: [actionRow] });
+}
 /**
  * Displays the final character confirmation screen before creation.
  * @param {import('discord.js').Interaction} interaction The interaction object.
