@@ -1148,7 +1148,8 @@ module.exports = {
 
 		// NEW: Retrofit species selection for existing characters
 		if (command === 'select' && action === 'species') {
-			const session = creationSessions.get(userId) || { step: 'retro_species', timestamp: Date.now(), userId: userId };
+			const session = creationSessions.get(userId) || { timestamp: Date.now(), userId: userId };
+			session.isRetrofit = true;
 			creationSessions.set(userId, session);
 			await showSpeciesSelection(interaction, session);
 			return;
@@ -1399,7 +1400,12 @@ module.exports = {
 				await showSpeciesInfo(interaction, session, speciesId);
 			}
 			else if (action === 'back' && subject === 'species') {
-				await showArchetypeSelection(interaction, session);
+				if (session.isRetrofit) {
+					await showSpeciesSelection(interaction, session);
+				}
+				else {
+					await showArchetypeSelection(interaction, session);
+				}
 			}
 			else if (action === 'confirm' && subject === 'species') {
 				session.speciesId = session.tempSpeciesId;
@@ -1407,7 +1413,7 @@ module.exports = {
 				delete session.tempSpeciesId;
 
 				// --- UPDATED: Handle Retrofit with Backlog Calculation & Detailed Feedback ---
-				if (session.step === 'retro_species') {
+				if (session.isRetrofit) {
 					try {
 						const character = db.prepare('SELECT level FROM characters WHERE user_id = ?').get(session.userId);
 						const species = db.prepare('SELECT name, stat_bonus_json FROM species WHERE species_id = ?').get(session.speciesId);
@@ -1513,7 +1519,7 @@ module.exports = {
 				delete session.tempSubspeciesId;
 
 				// --- UPDATED: Handle Retrofit with Backlog Calculation & Detailed Feedback ---
-				if (session.step === 'retro_species') {
+				if (session.isRetrofit) {
 					try {
 						const character = db.prepare('SELECT level FROM characters WHERE user_id = ?').get(session.userId);
 						const species = db.prepare('SELECT name, stat_bonus_json FROM species WHERE species_id = ?').get(session.speciesId);
