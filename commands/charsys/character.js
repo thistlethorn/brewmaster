@@ -15,6 +15,7 @@ const SESSION_TIMEOUT = 30 * 60 * 1000;
 
 // In-memory store for spend points sessions.
 const spendPointsSessions = new Map();
+const statEmoji = ['⚔️ ', '🏹 ', '🧠 ', '💪 ', '😊 ', '🍀 '];
 
 const alignmentExplanation = `
 \`\`\`
@@ -705,7 +706,6 @@ function buildSpendPointsEmbed(session) {
 		.setDescription('Review the benefits and upcoming milestones for each stat below. Use the buttons to assign your points.');
 
 	const statOrder = ['might', 'finesse', 'wits', 'grit', 'charm', 'fortune'];
-	const statEmoji = ['⚔️ ', '🏹 ', '🧠 ', '💪 ', '😊 ', '🍀 '];
 
 	let everyTwoFieldsSplitCounter = 0;
 	// --- Informational Top Half ---
@@ -793,17 +793,24 @@ async function startNewSpendPointsSession(interaction, isUpdate = false) {
 		timestamp: Date.now(),
 	};
 	spendPointsSessions.set(userId, session);
-
+	const emojiIndices = {
+		might: '⚔️',
+		finesse:  '🏹',
+		wits:  '🧠',
+		grit: '💪',
+		charm: '😊',
+		fortune: '🍀',
+	};
 	const embed = buildSpendPointsEmbed(session);
 	const row1 = new ActionRowBuilder().addComponents(
-		new ButtonBuilder().setCustomId(`char_spendpoints_add_might_${userId}`).setLabel('+1 Might').setStyle(ButtonStyle.Secondary),
-		new ButtonBuilder().setCustomId(`char_spendpoints_add_finesse_${userId}`).setLabel('+1 Finesse').setStyle(ButtonStyle.Secondary),
-		new ButtonBuilder().setCustomId(`char_spendpoints_add_wits_${userId}`).setLabel('+1 Wits').setStyle(ButtonStyle.Secondary),
+		new ButtonBuilder().setCustomId(`char_spendpoints_add_might_${userId}`).setLabel('+1 Might').setStyle(ButtonStyle.Secondary).setEmoji(`${emojiIndices.might}`),
+		new ButtonBuilder().setCustomId(`char_spendpoints_add_finesse_${userId}`).setLabel('+1 Finesse').setStyle(ButtonStyle.Secondary).setEmoji(`${emojiIndices.finesse}`),
+		new ButtonBuilder().setCustomId(`char_spendpoints_add_wits_${userId}`).setLabel('+1 Wits').setStyle(ButtonStyle.Secondary).setEmoji(`${emojiIndices.wits}`),
 	);
 	const row2 = new ActionRowBuilder().addComponents(
-		new ButtonBuilder().setCustomId(`char_spendpoints_add_grit_${userId}`).setLabel('+1 Grit').setStyle(ButtonStyle.Secondary),
-		new ButtonBuilder().setCustomId(`char_spendpoints_add_charm_${userId}`).setLabel('+1 Charm').setStyle(ButtonStyle.Secondary),
-		new ButtonBuilder().setCustomId(`char_spendpoints_add_fortune_${userId}`).setLabel('+1 Fortune').setStyle(ButtonStyle.Secondary),
+		new ButtonBuilder().setCustomId(`char_spendpoints_add_grit_${userId}`).setLabel('+1 Grit').setStyle(ButtonStyle.Secondary).setEmoji(`${emojiIndices.grit}`),
+		new ButtonBuilder().setCustomId(`char_spendpoints_add_charm_${userId}`).setLabel('+1 Charm').setStyle(ButtonStyle.Secondary).setEmoji(`${emojiIndices.charm}`),
+		new ButtonBuilder().setCustomId(`char_spendpoints_add_fortune_${userId}`).setLabel('+1 Fortune').setStyle(ButtonStyle.Secondary).setEmoji(`${emojiIndices.fortune}`),
 	);
 	const row3 = new ActionRowBuilder().addComponents(
 		new ButtonBuilder().setCustomId(`char_spendpoints_undo_${userId}`).setLabel('Undo').setStyle(ButtonStyle.Primary).setEmoji('↩️'),
@@ -1800,8 +1807,8 @@ async function showOriginInfo(interaction, session, originId) {
 		);
 
 	const actionRow = new ActionRowBuilder().addComponents(
-		new ButtonBuilder().setCustomId(`char_create_confirm_origin_${session.userId}`).setLabel('Confirm Origin').setStyle(ButtonStyle.Success),
-		new ButtonBuilder().setCustomId(`char_create_back_origin_${session.userId}`).setLabel('Go Back').setStyle(ButtonStyle.Secondary),
+		new ButtonBuilder().setCustomId(`char_create_confirm_origin_${session.userId}`).setLabel('Confirm Origin').setStyle(ButtonStyle.Success).setEmoji('✅'),
+		new ButtonBuilder().setCustomId(`char_create_back_origin_${session.userId}`).setLabel('Go Back').setStyle(ButtonStyle.Secondary).setEmoji('↩️'),
 	);
 
 	await interaction.update({ embeds: [embed], components: [actionRow] });
@@ -1842,8 +1849,8 @@ async function showArchetypeInfo(interaction, session, archetypeId) {
 		.addFields({ name: 'Primary Stats', value: `\`${archetype.primary_stat_1}\` & \`${archetype.primary_stat_2}\``, inline: false });
 
 	const actionRow = new ActionRowBuilder().addComponents(
-		new ButtonBuilder().setCustomId(`char_create_confirm_archetype_${session.userId}`).setLabel('Confirm Archetype').setStyle(ButtonStyle.Success),
-		new ButtonBuilder().setCustomId(`char_create_back_archetype_${session.userId}`).setLabel('Go Back').setStyle(ButtonStyle.Secondary),
+		new ButtonBuilder().setCustomId(`char_create_confirm_archetype_${session.userId}`).setLabel('Confirm Archetype').setStyle(ButtonStyle.Success).setEmoji('✅'),
+		new ButtonBuilder().setCustomId(`char_create_back_archetype_${session.userId}`).setLabel('Go Back').setStyle(ButtonStyle.Secondary).setEmoji('↩️'),
 	);
 
 	await interaction.update({ embeds: [embed], components: [actionRow] });
@@ -1941,8 +1948,8 @@ async function showSubspeciesInfo(interaction, session, subspeciesId) {
 		.addFields({ name: 'Additional Stat Bonuses', value: statBonusString, inline: false });
 
 	const actionRow = new ActionRowBuilder().addComponents(
-		new ButtonBuilder().setCustomId(`char_create_confirm_subspecies_${session.userId}`).setLabel('Confirm Selection').setStyle(ButtonStyle.Success),
-		new ButtonBuilder().setCustomId(`char_create_back_subspecies_${session.tempSpeciesId}_${session.userId}`).setLabel('Go Back').setStyle(ButtonStyle.Secondary),
+		new ButtonBuilder().setCustomId(`char_create_confirm_subspecies_${session.userId}`).setLabel('Confirm Selection').setStyle(ButtonStyle.Success).setEmoji('✅'),
+		new ButtonBuilder().setCustomId(`char_create_back_subspecies_${session.tempSpeciesId}_${session.userId}`).setLabel('Go Back').setStyle(ButtonStyle.Secondary).setEmoji('↩️'),
 	);
 
 	await interaction.update({ embeds: [embed], components: [actionRow] });
@@ -1974,8 +1981,8 @@ async function showFinalConfirmation(interaction, session) {
 		);
 
 	const confirmRow = new ActionRowBuilder().addComponents(
-		new ButtonBuilder().setCustomId(`char_create_confirm_final_${session.userId}`).setLabel('Confirm & Create').setStyle(ButtonStyle.Success),
-		new ButtonBuilder().setCustomId(`char_create_cancel_${session.userId}`).setLabel('Cancel').setStyle(ButtonStyle.Danger),
+		new ButtonBuilder().setCustomId(`char_create_confirm_final_${session.userId}`).setLabel('Confirm & Create').setStyle(ButtonStyle.Success).setEmoji('✅'),
+		new ButtonBuilder().setCustomId(`char_create_cancel_${session.userId}`).setLabel('Cancel').setStyle(ButtonStyle.Danger).setEmoji('❌'),
 	);
 	await interaction.update({ embeds: [confirmEmbed], components: [confirmRow] });
 }
