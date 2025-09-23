@@ -143,13 +143,13 @@ async function addXp(userId, amount, source, reason, title = null) {
 		stat_points_unspent += 2;
 		xpToNextLevel = Math.floor(100 * (level ** 1.5));
 	}
-
+	let species;
 	db.transaction(() => {
 		const statGains = { might: 0, finesse: 0, wits: 0, grit: 0, charm: 0, fortune: 0 };
 		const bonusMessages = [];
 
 		if (levelsGained > 0 && character.species_id) {
-			const species = db.prepare('SELECT name, stat_bonus_json FROM species WHERE species_id = ?').get(character.species_id);
+			species = db.prepare('SELECT name, stat_bonus_json FROM species WHERE species_id = ?').get(character.species_id);
 
 			const processBonus = (bonusJson, sourceName) => {
 				if (!bonusJson) return;
@@ -201,6 +201,17 @@ async function addXp(userId, amount, source, reason, title = null) {
 		try {
 			db.prepare(finalUpdateQuery).run(level, xp, stat_points_unspent, ...statUpdateValues, userId);
 
+			const xpRewardEmbed = new EmbedBuilder()
+				.setColor(0xF1C40F)
+				.setTitle('💠 XP Gained! 💠')
+				.setThumbnail(otherCharData.character_image || null)
+				.addFields(
+					{ name: `${title ? title : `__${otherCharData.character_name}__`}`, value: `${reason}`, inline: false },
+					{ name: `[\`${amount} XP\`] Earned`, value: '💠💠💠💠💠💠💠💠💠💠💠', inline: false },
+				)
+				.setFooter({ text: 'To view your character, their XP, and your progress, use /character view!' });
+			charLogChannel.send({ embeds: [xpRewardEmbed] });
+
 			if (levelsGained > 0) {
 				const pointsGained = levelsGained * 2;
 				const levelUpEmbed = new EmbedBuilder()
@@ -213,7 +224,7 @@ async function addXp(userId, amount, source, reason, title = null) {
 					.setFooter({ text: 'Use /character spendpoints to improve your stats!' });
 
 				if (bonusMessages.length > 0) {
-					levelUpEmbed.addFields({ name: 'Automatic Species Bonuses', value: bonusMessages.join('\n'), inline: false });
+					levelUpEmbed.addFields({ name: `${species ? `[${species.name}] ` : ''}Automatic Species Bonuses`, value: bonusMessages.join('\n'), inline: false });
 				}
 
 				sendLevelUpNotification({ activeClient, userId, embed: levelUpEmbed, source });
@@ -227,20 +238,10 @@ async function addXp(userId, amount, source, reason, title = null) {
 						{ name: `[\`${stat_points_unspent} SP\`] Unspent Statpoints`, value: '🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟', inline: false },
 					);
 				if (bonusMessages.length > 0) {
-					logEmbed.addFields({ name: 'Automatic Species Bonuses', value: bonusMessages.join('\n'), inline: false });
+					logEmbed.addFields({ name: `${species ? `[${species.name}] ` : ''}Automatic Species Bonuses`, value: bonusMessages.join('\n'), inline: false });
 				}
 				charLogChannel.send({ embeds: [logEmbed] });
 			}
-			const xpRewardEmbed = new EmbedBuilder()
-				.setColor(0xF1C40F)
-				.setTitle('💠 XP Gained! 💠')
-				.setThumbnail(otherCharData.character_image || null)
-				.addFields(
-					{ name: `${title ? title : `__${otherCharData.character_name}__`}`, value: `${reason}`, inline: false },
-					{ name: `[\`${amount} XP\`] Earned`, value: '💠💠💠💠💠💠💠💠💠💠💠', inline: false },
-				)
-				.setFooter({ text: 'To view your character, their XP, and your progress, use /character view!' });
-			charLogChannel.send({ embeds: [xpRewardEmbed] });
 		}
 		catch (error) {
 			console.error(`[addXp] Failed to update character data for user ${userId}:`, error);

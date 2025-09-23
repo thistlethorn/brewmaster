@@ -17,6 +17,32 @@ const SESSION_TIMEOUT = 30 * 60 * 1000;
 const spendPointsSessions = new Map();
 const statEmoji = ['⚔️ ', '🏹 ', '🧠 ', '💪 ', '😊 ', '🍀 '];
 
+const originEmojiMap = {
+	'City Guard': '🛡️', 'Tinker': '🛠️', 'Farmer': '🌾', 'Hedge Mage': '🌿',
+	'Urchin': '🐀', 'Noble Scion': '👑', 'Hermit': '🛖', 'Entertainer': '🎭',
+	'Street Magician': '🎩', 'Acolyte': '🙏', 'Hunter': '🎯', 'Blacksmith': '🔨',
+};
+
+const archetypeEmojiMap = {
+	'Channeler': '✨', 'Golemancer': '🤖', 'Justicar': '⚖️', 'Slayer': '🗡️',
+	'Shifter': '🎲', 'Reaper': '💀', 'Ascetic': '🧘', 'Saboteur': '💣',
+	'Scholar': '📜', 'Artisan': '🎨', 'Zealot': '🔥', 'Warden': '🏰',
+};
+
+const speciesEmojiMap = {
+	'Humanfolk': '🧑', 'Primordialfolk': '🌀', 'Beastfolk': '🐾', 'Faefolk': '🦋',
+	'Dragonfolk': '🐲', 'Weirdfolk': '❓', 'Nightfolk': '🌙',
+};
+
+const subspeciesEmojiMap = {
+	'Ignan (Fire-Elemental)': '🔥', 'Auran (Air-Elemental)': '💨', 'Aquan (Water-Elemental)': '💧',
+	'Sylvan (Wood-Elemental)': '🌳', 'Ferran (Iron-Elemental)': '⚙️',
+	'Vulpine (Fox Hybrid)': '🦊', 'Feline (Cat Hybrid)': '🐱', 'Chelonian (Turtle Hybrid)': '🐢',
+	'Canine (Dog Hybrid)': '🐶', 'Lapine (Rabbit Hybrid)': '🐰',
+	'Oozeling': '🟢', 'Gearforged': '🔩', 'Myconid': '🍄',
+	'Umbra': '🌑', 'Bloodwraith': '🩸',
+};
+
 const alignmentExplanation = `
 \`\`\`
 LAWFUL GOOD     |   TRUE GOOD      | CHAOTIC GOOD
@@ -1744,10 +1770,11 @@ module.exports = {
 * @param {Array<{id:number|string,name:string}>} items
 * @param {string} customIdPrefix e.g., 'char_create_origin'
 * @param {string} userId appended as the last segment in customIds
+* @param {object} [emojiMap={}] A map where keys are item names and values are emojis.
 * @param {number} [maxRows=5] hard cap of rows to render (buttons capped at maxRows*5)
 * @returns {import('discord.js').ActionRowBuilder[]}
 */
-function createButtonRows(items, customIdPrefix, userId, maxRows = 5) {
+function createButtonRows(items, customIdPrefix, userId, emojiMap = {}, maxRows = 5) {
 	const rows = [];
 	let currentRow = new ActionRowBuilder();
 
@@ -1757,12 +1784,17 @@ function createButtonRows(items, customIdPrefix, userId, maxRows = 5) {
 			if (rows.length >= maxRows) break;
 			currentRow = new ActionRowBuilder();
 		}
-		currentRow.addComponents(
-			new ButtonBuilder()
-				.setCustomId(`${customIdPrefix}_${item.id}_${userId}`)
-				.setLabel(item.name)
-				.setStyle(ButtonStyle.Secondary),
-		);
+		const button = new ButtonBuilder()
+			.setCustomId(`${customIdPrefix}_${item.id}_${userId}`)
+			.setLabel(item.name)
+			.setStyle(ButtonStyle.Secondary);
+
+		const emoji = emojiMap[item.name];
+		if (emoji) {
+			button.setEmoji(emoji);
+		}
+
+		currentRow.addComponents(button);
 	}
 	if (currentRow.components.length > 0) {
 		rows.push(currentRow);
@@ -1782,7 +1814,7 @@ async function showOriginSelection(interaction, session) {
 		.setTitle(`Step 2: Choose an Origin for ${session.name}`)
 		.setDescription('Your Origin defines your background, granting you starting stat bonuses and a unique perk. **Click a button to learn more about it.**');
 
-	const rows = createButtonRows(origins, 'char_create_select_origin', session.userId);
+	const rows = createButtonRows(origins, 'char_create_select_origin', session.userId, originEmojiMap);
 	await interaction.update({ embeds: [embed], components: rows });
 }
 
@@ -1827,7 +1859,7 @@ async function showArchetypeSelection(interaction, session) {
 		.setTitle('Step 3: Choose an Archetype')
 		.setDescription('Your Archetype is your class, defining your primary stats and future abilities. **Click a button to learn more about it.**');
 
-	const rows = createButtonRows(archetypes, 'char_create_select_archetype', session.userId);
+	const rows = createButtonRows(archetypes, 'char_create_select_archetype', session.userId, archetypeEmojiMap);
 	await interaction.update({ embeds: [embed], components: rows });
 }
 
@@ -1868,7 +1900,7 @@ async function showSpeciesSelection(interaction, session) {
 		.setTitle('Step 4: Choose a Species')
 		.setDescription('Your Species grants inherent traits and stat bonuses. **Click a button to learn more.**');
 
-	const rows = createButtonRows(speciesList, 'char_create_select_species', session.userId);
+	const rows = createButtonRows(speciesList, 'char_create_select_species', session.userId, speciesEmojiMap);
 	await interaction.update({ embeds: [embed], components: rows });
 }
 
@@ -1903,20 +1935,20 @@ async function showSpeciesInfo(interaction, session, speciesId) {
 	const components = [];
 	if (subspeciesList.length > 0) {
 		embed.addFields({ name: 'Subspecies', value: 'This species has variations. Please select one below to view its details.' });
-		const subRows = createButtonRows(subspeciesList, `char_create_select_subspecies_${speciesId}`, session.userId);
+		const subRows = createButtonRows(subspeciesList, `char_create_select_subspecies_${speciesId}`, session.userId, subspeciesEmojiMap);
 		components.push(...subRows);
 	}
 	else {
 		// No subspecies, so add a confirm button here
 		const confirmRow = new ActionRowBuilder().addComponents(
-			new ButtonBuilder().setCustomId(`char_create_confirm_species_${session.userId}`).setLabel('Confirm Species').setStyle(ButtonStyle.Success),
+			new ButtonBuilder().setCustomId(`char_create_confirm_species_${session.userId}`).setLabel('Confirm Species').setStyle(ButtonStyle.Success).setEmoji('✅'),
 		);
 		components.push(confirmRow);
 	}
 
 	// Always add the "Go Back" button
 	const backRow = new ActionRowBuilder().addComponents(
-		new ButtonBuilder().setCustomId(`char_create_back_species_${session.userId}`).setLabel('Go Back').setStyle(ButtonStyle.Secondary),
+		new ButtonBuilder().setCustomId(`char_create_back_species_${session.userId}`).setLabel('Go Back').setStyle(ButtonStyle.Secondary).setEmoji('↩️'),
 	);
 	components.push(backRow);
 

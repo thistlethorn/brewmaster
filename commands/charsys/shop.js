@@ -236,6 +236,42 @@ function buildBuyListUI(vendor, character, itemsForSale, economy) {
 	return { content: '', embeds: [embed], components: [row1, row2] };
 }
 
+function shopOptionsSelection(vendorData) {
+	const vendorSpecialtyMap = {
+		'Blacksmith': 'Weapons & Armor',
+		'Hunter': 'Trophies & Parts',
+		'alchemist': 'Potions & Reagents',
+		'Oddball': 'Oddities & Curios',
+		'Collector': 'Sealed Treasures & Vouchers',
+		'Magus': 'Scrolls & Arcane',
+		'Sister': 'Healing & Restoration',
+	};
+
+
+	const visibleVendors = vendorData.slice(0, 25);
+
+	return visibleVendors.map(v => {
+		let shopType = 'General Goods';
+
+
+		const lowerCaseName = v.name.toLowerCase();
+
+
+		for (const key of Object.keys(vendorSpecialtyMap)) {
+			if (lowerCaseName.includes(key.toLowerCase())) {
+				shopType = vendorSpecialtyMap[key];
+				break;
+			}
+		}
+
+		return {
+			label: `${v.name}`,
+			description: `Specializes in: ${shopType}`,
+			value: v.vendor_id.toString(),
+		};
+	});
+}
+
 /**
  * Builds the initial vendor selection UI.
  * @param {Array<object>} vendors - List of vendor data from the database.
@@ -251,17 +287,7 @@ function buildVendorSelectionUI(vendors, userId) {
 	const menu = new StringSelectMenuBuilder()
 		.setCustomId(`shop_menu_select_${userId}`)
 		.setPlaceholder('Choose a vendor to visit...')
-		.addOptions(vendors.map(v => {
-			const shopType = v.name.includes('Blacksmith') ? 'Weapons & Armor' :
-				v.name.includes('Hunter') ? 'Trophies & Parts' :
-					v.name.includes('Alchemist') ? 'Potions & Reagents' :
-						'Oddities & Curios';
-			return {
-				label: `${v.name}`,
-				description: `Specializes in: ${shopType}`,
-				value: v.vendor_id.toString(),
-			};
-		}));
+		.addOptions(shopOptionsSelection(vendors));
 
 	const row1 = new ActionRowBuilder().addComponents(menu);
 	const row2 = new ActionRowBuilder().addComponents(
