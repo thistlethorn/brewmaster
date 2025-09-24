@@ -50,37 +50,88 @@ module.exports = {
 					option.setName('quantity')
 						.setDescription('The quantity of the item to add. Defaults to 1.')
 						.setRequired(false)
-						.setMinValue(1))),
+						.setMinValue(1)))
+		.addSubcommand(subcommand =>
+			subcommand
+				.setName('givelanguage')
+				.setDescription('Grants a character fluency in a language.')
+				.addUserOption(option =>
+					option.setName('user')
+						.setDescription('The user to grant the language to.')
+						.setRequired(true))
+				.addStringOption(option =>
+					option.setName('language')
+						.setDescription('The language to grant.')
+						.setRequired(true)
+						.setAutocomplete(true)))
+		.addSubcommand(subcommand =>
+			subcommand
+				.setName('removelanguage')
+				.setDescription('Removes a language from a character.')
+				.addUserOption(option =>
+					option.setName('user')
+						.setDescription('The user to remove the language from.')
+						.setRequired(true))
+				.addStringOption(option =>
+					option.setName('language')
+						.setDescription('The language to remove.')
+						.setRequired(true)
+						.setAutocomplete(true))),
 
 	async autocomplete(interaction) {
 		const subcommand = interaction.options.getSubcommand();
-		if (subcommand !== 'additem') return;
-
 		const focusedOption = interaction.options.getFocused(true);
-		if (focusedOption.name !== 'item') return;
-
 		const focusedValue = focusedOption.value.toLowerCase();
+		const targetUser = interaction.options.getUser('user');
 
 		try {
-			// Query the items table for names that match what the user is typing
-			const items = db.prepare(`
-				SELECT item_id, name 
-				FROM items 
-				WHERE name LIKE ? 
-				ORDER BY name ASC 
-				LIMIT 25
-			`).all(`%${focusedValue}%`);
+			if (subcommand === 'additem' && focusedOption.name === 'item') {
+				const items = db.prepare(`
+					SELECT item_id, name 
+					FROM items 
+					WHERE name LIKE ? 
+					ORDER BY name ASC 
+					LIMIT 25
+				`).all(`%${focusedValue}%`);
 
-			// Format the results for Discord's API
-			await interaction.respond(
-				items.map(item => ({
-					name: item.name,
-					value: item.item_id.toString(),
-				})),
-			);
+				await interaction.respond(
+					items.map(item => ({ name: item.name, value: item.item_id.toString() })),
+				);
+			}
+			else if (subcommand === 'givelanguage' && focusedOption.name === 'language') {
+				// Show languages the user does NOT already know fluently
+				const languages = db.prepare(`
+					SELECT l.language_id, l.name FROM languages l
+					WHERE l.name LIKE ? AND NOT EXISTS (
+						SELECT 1 FROM character_languages cl 
+						WHERE cl.user_id = ? AND cl.language_id = l.language_id AND cl.fluency_points = 100
+					)
+					ORDER BY l.name ASC
+					LIMIT 25
+				`).all(`%${focusedValue}%`, targetUser.id);
+
+				await interaction.respond(
+					languages.map(lang => ({ name: lang.name, value: lang.language_id.toString() })),
+				);
+			}
+			else if (subcommand === 'removelanguage' && focusedOption.name === 'language') {
+				// Show only languages the user knows
+				const languages = db.prepare(`
+					SELECT l.language_id, l.name
+					FROM languages l
+					JOIN character_languages cl ON l.language_id = cl.language_id
+					WHERE cl.user_id = ? AND l.name LIKE ?
+					ORDER BY l.name ASC
+					LIMIT 25
+				`).all(targetUser.id, `%${focusedValue}%`);
+
+				await interaction.respond(
+					languages.map(lang => ({ name: lang.name, value: lang.language_id.toString() })),
+				);
+			}
 		}
 		catch (error) {
-			console.error('Item autocomplete error:', error);
+			console.error(`Autocomplete error for /charadmin ${subcommand}:`, error);
 			await interaction.respond([]);
 		}
 	},
@@ -140,7 +191,7 @@ module.exports = {
 
 					db.prepare('UPDATE characters SET level = ?, xp = ?, stat_points_unspent = ? WHERE user_id = ?')
 						.run(newLevel, newXp, newStatPoints, targetUser.id);
-					await recalculateStats(targetUser.id);
+					recalculateStats(targetUser.id);
 					embed.setTitle('XP Removed')
 						.setDescription(`Successfully removed **${amount}** XP from ${targetUser.username}.`)
 						.addFields(
@@ -157,7 +208,7 @@ module.exports = {
 					const newStatPoints = (level - 1) * 2;
 					db.prepare('UPDATE characters SET level = ?, xp = 0, stat_points_unspent = ? WHERE user_id = ?')
 						.run(level, newStatPoints, targetUser.id);
-					await recalculateStats(targetUser.id);
+					recalculateStats(targetUser.id);
 					embed.setTitle('Level Set')
 						.setDescription(`Successfully set ${targetUser.username}'s character to Level **${level}**.`)
 						.addFields(
@@ -204,7 +255,7 @@ module.exports = {
 						);
 					});
 					resetTransaction();
-					await recalculateStats(targetUser.id);
+					recalculateStats(targetUser.id);
 					embed.setTitle('Character Reset')
 						.setDescription(`Successfully reset ${targetUser.username}'s character to Level 1.`)
 						.addFields({ name: 'Result', value: 'Character is now at Level 1, 0 XP, with 0 unspent points and base stats according to their Origin.' });
@@ -252,6 +303,64 @@ module.exports = {
 
 					embed.setTitle('Item Added')
 						.setDescription(`Successfully added **${quantity}x ${itemData.name}** to ${targetUser.username}'s inventory.`);
+
+					await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+				}
+				break;
+			case 'givelanguage':
+				{
+					const languageIdString = interaction.options.getString('language');
+					const languageId = parseInt(languageIdString, 10);
+
+					if (isNaN(languageId)) {
+						return interaction.reply({ content: 'Invalid language ID provided.', flags: MessageFlags.Ephemeral });
+					}
+
+					const language = db.prepare('SELECT name FROM languages WHERE language_id = ?').get(languageId);
+					if (!language) {
+						return interaction.reply({ content: 'The selected language does not exist.', flags: MessageFlags.Ephemeral });
+					}
+
+					// This will insert a new row or update an existing one to have 100 fluency.
+					db.prepare(`
+						INSERT INTO character_languages (user_id, language_id, fluency_points)
+						VALUES (?, ?, 100)
+						ON CONFLICT(user_id, language_id) DO UPDATE SET
+							fluency_points = 100
+					`).run(targetUser.id, languageId);
+
+					embed.setTitle('Language Granted')
+						.setDescription(`Successfully granted fluency in **${language.name}** to ${targetUser.username}.`);
+
+					await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+				}
+				break;
+
+			case 'removelanguage':
+				{
+					const languageIdString = interaction.options.getString('language');
+					const languageId = parseInt(languageIdString, 10);
+
+					if (isNaN(languageId)) {
+						return interaction.reply({ content: 'Invalid language ID provided.', flags: MessageFlags.Ephemeral });
+					}
+
+					const language = db.prepare('SELECT name FROM languages WHERE language_id = ?').get(languageId);
+					if (!language) {
+						return interaction.reply({ content: 'The selected language does not exist.', flags: MessageFlags.Ephemeral });
+					}
+
+					const result = db.prepare('DELETE FROM character_languages WHERE user_id = ? AND language_id = ?').run(targetUser.id, languageId);
+
+					if (result.changes > 0) {
+						embed.setTitle('Language Removed')
+							.setDescription(`Successfully removed **${language.name}** from ${targetUser.username}.`);
+					}
+					else {
+						embed.setColor(0xE74C3C)
+							.setTitle('Language Not Found')
+							.setDescription(`${targetUser.username} did not have the **${language.name}** language to remove.`);
+					}
 
 					await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 				}

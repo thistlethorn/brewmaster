@@ -1,5 +1,5 @@
 // events/interactionCreate.js
-const { Events, EmbedBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits } = require('discord.js');
+const { Events, EmbedBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const { handleMonarchEntry } = require('../utils/handleMonarchGiveaway');
 const { scheduleDailyReminder, sendReminder } = require('../tasks/dailyReminder');
 const { updateMultiplier } = require('../utils/handleCrownRewards');
@@ -341,7 +341,206 @@ module.exports = {
 				}
 				return;
 			}
+			if ((interaction.isButton() || interaction.isModalSubmit()) && interaction.customId.startsWith('speak_')) {
+			// Scrambling logic now lives here, as it's only used for the translation UI
+				const scrambleMessage = (content, type) => {
+					switch (type.toUpperCase()) {
 
+					case 'PIG_LATIN':
+						return content.split(' ').map(w => w.length < 2 ? w : `${w.slice(1)}${w[0]}ay`).join(' ');
+
+					case 'SYMBOL_SUB':
+						return content.replace(/a/gi, '@').replace(/e/gi, '3').replace(/i/gi, '!').replace(/o/gi, '0').replace(/s/gi, '$');
+
+					case 'REVERSE':
+						return content.split('').reverse().join('');
+
+					case 'SCRAMBLE_VOWELS':
+						return content.split(' ').map(w => {
+							const v = w.match(/[aeiou]/gi) || [];
+							const sV = v.sort(() => Math.random() - 0.5); let i = 0;
+							return w.replace(/[aeiou]/gi, () => sV[i++]);
+						}).join(' ');
+
+					case 'INTERLEAVE':
+						return content.split('').map((c, i) => (i % 2 === 1 && content[i - 1] !== ' ') ? content[i - 1] : (i % 2 === 0 && content[i + 1] !== ' ') ? content[i + 1] : c).join('');
+
+					case 'WAVY_TEXT':
+						return content.split('').map((c, i) => i % 2 === 0 ? c.toLowerCase() : c.toUpperCase()).join('');
+
+					case 'NONE':
+					default:
+						return content;
+					}
+				};
+
+
+				const parts = interaction.customId.split('_');
+				const [, action, subAction, messageId] = parts;
+
+				const spokenMessage = db.prepare('SELECT * FROM spoken_messages WHERE message_id = ?').get(messageId);
+				if (!spokenMessage) { return interaction.reply({ content: 'This message is too old to be translated.', flags: MessageFlags.Ephemeral }); }
+				if (interaction.user.id === spokenMessage.speaker_user_id) { return interaction.reply({ content: `You wrote the message: ${spokenMessage.original_content}`, flags: MessageFlags.Ephemeral }); }
+
+				// --- Initial "Translate Message" Button ---
+				if (action === 'translate' && subAction === 'init') {
+					const language = db.prepare('SELECT name, avatar_url, scramble_type FROM languages WHERE language_id = ?').get(spokenMessage.language_id);
+					const scrambledContent = scrambleMessage(spokenMessage.original_content, language.scramble_type);
+
+					const translationEmbed = new EmbedBuilder()
+						.setColor(0x95A5A6)
+						.setTitle(`Translate message in ${language.name}`)
+						.setThumbnail(language.avatar_url)
+						.setDescription(`The message appears to be scrambled nonsense:\n>>> ${scrambledContent}\n\nChoose a method to interpret its meaning.`);
+
+					const row = new ActionRowBuilder().addComponents(
+						new ButtonBuilder().setCustomId(`speak_translate_direct_${messageId}`).setLabel(`Read The Message [Req. ${language.name}]`).setStyle(ButtonStyle.Primary).setEmoji('📖'),
+						new ButtonBuilder().setCustomId(`speak_translate_fortune_${messageId}`).setLabel('Interpret by Luck [FORTUNE]').setStyle(ButtonStyle.Secondary).setEmoji('🍀'),
+						new ButtonBuilder().setCustomId(`speak_translate_charm_${messageId}`).setLabel('Interpret by Experience [CHARM]').setStyle(ButtonStyle.Secondary).setEmoji('😊'),
+						new ButtonBuilder().setCustomId(`speak_translate_wits_${messageId}`).setLabel('Interpret by Skill [WITS]').setStyle(ButtonStyle.Secondary).setEmoji('🧠'),
+					);
+
+					return interaction.reply({ embeds: [translationEmbed], components: [row], flags: MessageFlags.Ephemeral });
+				}
+
+				// --- Translation Method Handlers ---
+				const translatorCharacter = db.prepare('SELECT * FROM characters WHERE user_id = ?').get(interaction.user.id);
+				if (!translatorCharacter) { return interaction.reply({ content: 'You need a character to attempt a translation.', flags: MessageFlags.Ephemeral }); }
+
+				const updateFluency = (points) => {
+					const result = db.prepare(`
+					INSERT INTO character_languages (user_id, language_id, fluency_points) VALUES (?, ?, ?)
+					ON CONFLICT(user_id, language_id) DO UPDATE SET
+						fluency_points = MIN(100, fluency_points + excluded.fluency_points)
+					RETURNING fluency_points
+				`).get(interaction.user.id, spokenMessage.language_id, points);
+					return result.fluency_points;
+				};
+
+				if (action === 'translate') {
+					switch (subAction) {
+					case 'direct': {
+						const fluency = db.prepare('SELECT fluency_points FROM character_languages WHERE user_id = ? AND language_id = ?').get(interaction.user.id, spokenMessage.language_id);
+						if (fluency && fluency.fluency_points >= 100) {
+							const embed = new EmbedBuilder()
+								.setColor(0x2ECC71)
+								.setTitle('📖 Direct Translation: Success!')
+								.setDescription(`You read the message clearly:\n>>> ${spokenMessage.original_content}`);
+							await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+						}
+						else {
+							const embed = new EmbedBuilder()
+								.setColor(0xE74C3C)
+								.setTitle('📖 Direct Translation: Failed')
+								.setDescription('You do not know this language well enough to read it directly. Try another method!');
+							await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+						}
+						break;
+					}
+					case 'fortune': {
+						const roll = (Math.random() * 100) + (translatorCharacter.stat_fortune / 2);
+						const words = spokenMessage.original_content.split(' ');
+						let revealedContent = '';
+						if (roll >= 95) {
+							revealedContent = spokenMessage.original_content;
+						}
+						else if (roll >= 70) {
+							revealedContent = words.map(w => Math.random() < 0.6 ? w : '...').join(' ');
+						}
+						else if (roll >= 40) {
+							revealedContent = words.map(w => Math.random() < 0.3 ? w : '...').join(' ');
+						}
+						else {
+							revealedContent = 'Your guess is entirely wrong and nonsensical.';
+						}
+						updateFluency(1);
+						const embed = new EmbedBuilder()
+							.setColor(0x9B59B6)
+							.setTitle('🍀 Interpretation by Fortune')
+							.setDescription(`You try your luck at guessing the meaning...\n>>> ${revealedContent}`)
+							.setFooter({ text: `Roll: ${roll.toFixed(0)} | +1 Fluency Point` });
+						await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+						break;
+					}
+					case 'charm': {
+						const successChance = 0.25 + (translatorCharacter.stat_charm * 0.015);
+						if (Math.random() < successChance) {
+							const points = 5 + Math.floor(translatorCharacter.stat_charm / 4);
+							const newFluency = updateFluency(points);
+
+							const embed = new EmbedBuilder()
+								.setColor(0x2ECC71)
+								.setTitle('😊 Interpretation by Charm: Success!')
+								.setDescription(`You grasp the intent through context and social cues.\n>>> ${spokenMessage.original_content}`)
+								.setFooter({ text: `+${points} Fluency Points` });
+
+							if (newFluency >= 100) {
+								const language = db.prepare('SELECT name FROM languages WHERE language_id = ?').get(spokenMessage.language_id);
+								embed.addFields({ name: '🎉 Language Learned!', value: `You have become fluent in **${language.name}**!` });
+							}
+							await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+						}
+						else {
+							const embed = new EmbedBuilder()
+								.setColor(0xE74C3C)
+								.setTitle('😊 Interpretation by Charm: Failed')
+								.setDescription('You try to grasp the meaning through social cues but fail to understand.');
+							await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+						}
+						break;
+					}
+					case 'wits': {
+						const words = spokenMessage.original_content.split(' ');
+						const slice = words.length > 10 ? words.slice(0, 10) : words;
+						const shuffled = [...slice].sort(() => Math.random() - 0.5).join(' ');
+
+						const modal = new ModalBuilder()
+							.setCustomId(`speak_modal_wits_${messageId}`)
+							.setTitle('Unscramble the Message');
+
+						modal.addComponents(new ActionRowBuilder().addComponents(
+							new TextInputBuilder()
+								.setCustomId('unscrambled_text')
+								.setLabel(shuffled)
+								.setPlaceholder('Type the unscrambled words here...')
+								.setStyle(TextInputStyle.Short)
+								.setRequired(true),
+						));
+						await interaction.showModal(modal);
+						break;
+					}
+					}
+				}
+				else if (action === 'modal' && subAction === 'wits') {
+					const originalSlice = spokenMessage.original_content.split(' ').slice(0, 10).join(' ');
+					const userInput = interaction.fields.getTextInputValue('unscrambled_text');
+
+					if (userInput.toLowerCase().trim() === originalSlice.toLowerCase().trim()) {
+						const points = 3 + Math.floor(translatorCharacter.stat_wits / 8);
+						const newFluency = updateFluency(points);
+
+						const embed = new EmbedBuilder()
+							.setColor(0x2ECC71)
+							.setTitle('🧠 Interpretation by Wits: Success!')
+							.setDescription(`You successfully decoded the message!\n>>> ${spokenMessage.original_content}`)
+							.setFooter({ text: `+${points} Fluency Points` });
+
+						if (newFluency >= 100) {
+							const language = db.prepare('SELECT name FROM languages WHERE language_id = ?').get(spokenMessage.language_id);
+							embed.addFields({ name: '🎉 Language Learned!', value: `You have become fluent in **${language.name}**!` });
+						}
+						await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+					}
+					else {
+						const embed = new EmbedBuilder()
+							.setColor(0xE74C3C)
+							.setTitle('🧠 Interpretation by Wits: Failed')
+							.setDescription('That doesn\'t seem right. The meaning is lost on you.');
+						await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+					}
+				}
+				return;
+			}
 			if (interaction.isModalSubmit() && interaction.customId.startsWith('trade_')) {
 				if (marketCommand && typeof marketCommand.modals === 'function') {
 					try {

@@ -1117,6 +1117,39 @@ const setupTables = db.transaction(() => {
     `).run();
 
 	db.prepare(`
+        CREATE TABLE IF NOT EXISTS languages (
+            language_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            description TEXT,
+            avatar_url TEXT,
+            scramble_type TEXT NOT NULL DEFAULT 'PIG_LATIN'
+        )
+    `).run();
+
+	db.prepare(`
+        CREATE TABLE IF NOT EXISTS character_languages (
+            user_id TEXT NOT NULL,
+            language_id INTEGER NOT NULL,
+            fluency_points INTEGER DEFAULT 0 CHECK (fluency_points >= 0 AND fluency_points <= 100),
+            PRIMARY KEY (user_id, language_id),
+            FOREIGN KEY(user_id) REFERENCES characters(user_id) ON DELETE CASCADE,
+            FOREIGN KEY(language_id) REFERENCES languages(language_id) ON DELETE CASCADE
+        )
+    `).run();
+
+	db.prepare(`
+        CREATE TABLE IF NOT EXISTS spoken_messages (
+            message_id TEXT PRIMARY KEY,
+            original_content TEXT NOT NULL,
+            language_id INTEGER NOT NULL,
+            speaker_user_id TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(language_id) REFERENCES languages(language_id),
+            FOREIGN KEY(speaker_user_id) REFERENCES characters(user_id) ON DELETE CASCADE
+        )
+    `).run();
+
+	db.prepare(`
         CREATE TABLE IF NOT EXISTS character_location (
 
             user_id TEXT PRIMARY KEY,
@@ -1507,6 +1540,8 @@ const setupTables = db.transaction(() => {
 
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_captcha_expiry ON captcha_sessions(expires_at)').run();
 
+	db.prepare('CREATE INDEX IF NOT EXISTS idx_character_languages_user ON character_languages(user_id)').run();
+	db.prepare('CREATE INDEX IF NOT EXISTS idx_spoken_messages_speaker ON spoken_messages(speaker_user_id)').run();
 
 	// All of the unique indexes
 	// NOTE: Uniqueness for quotes is GLOBAL, not per-user. The same quote/trigger cannot exist twice

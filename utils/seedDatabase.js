@@ -607,6 +607,32 @@ function seedPveData() {
 	})();
 }
 
+function seedLanguageData() {
+	const languages = [
+		{ name: 'Axal (Common)', scramble_type: 'NONE', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
+		{ name: 'Draedic', scramble_type: 'SYMBOL_SUB', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
+		{ name: 'Caeric', scramble_type: 'PIG_LATIN', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
+		{ name: 'Primordial', scramble_type: 'REVERSE', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
+		{ name: 'Ignic', scramble_type: 'SCRAMBLE_VOWELS', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
+		{ name: 'Auric', scramble_type: 'INTERLEAVE', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
+		{ name: 'Aquic', scramble_type: 'WAVY_TEXT', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
+		// Add more languages as needed
+	];
+
+	db.transaction(() => {
+		const upsert = db.prepare(`
+            INSERT INTO languages (name, scramble_type, avatar_url)
+            VALUES (@name, @scramble_type, @avatar_url)
+            ON CONFLICT(name) DO UPDATE SET
+                scramble_type = excluded.scramble_type,
+                avatar_url = excluded.avatar_url
+        `);
+		console.log('[DB Seeding] Upserting languages...');
+		for (const lang of languages) {
+			upsert.run(lang);
+		}
+	})();
+}
 
 function seedDatabase() {
 	// REFACTOR NOTE: The logic for Origins and Archetypes was already idempotent,
@@ -648,6 +674,7 @@ function seedDatabase() {
 		seedArchetypes();
 		seedSpeciesData();
 		seedPveData();
+		seedLanguageData();
 		return true;
 	}
 	catch (error) {

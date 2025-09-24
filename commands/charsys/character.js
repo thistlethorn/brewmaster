@@ -587,6 +587,85 @@ async function handleUnequip(interaction) {
 }
 
 /**
+ * Grants a character their starting languages based on species and subspecies.
+ * @param {string} userId The user's ID.
+ * @param {number} speciesId The chosen species ID.
+ * @param {number|null} subspeciesId The chosen subspecies ID, if any.
+ */
+function grantStartingLanguages(userId, speciesId, subspeciesId) {
+	const species = db.prepare('SELECT name FROM species WHERE species_id = ?').get(speciesId);
+	const subspecies = subspeciesId ? db.prepare('SELECT name FROM subspecies WHERE subspecies_id = ?').get(subspeciesId) : null;
+
+	const allLanguages = new Map(db.prepare('SELECT language_id, name FROM languages').all().map(l => [l.name, l.language_id]));
+	const languagesToGrant = new Set();
+	const grantedNames = new Set();
+
+	// Rule 1: Everyone gets Axal (Common)
+	const axalId = allLanguages.get('Axal (Common)');
+	if (axalId) {
+		languagesToGrant.add(axalId);
+		grantedNames.add('Axal (Common)');
+	}
+
+	// Determine the character's language path
+	if (species.name === 'Humanfolk') {
+		// Humans: Axal + 2 random
+		const randomLangs = db.prepare(`
+            SELECT language_id FROM languages 
+            WHERE name != 'Axal (Common)'
+            ORDER BY RANDOM() LIMIT 2
+        `).all();
+		randomLangs.forEach(lang => languagesToGrant.add(lang.language_id));
+
+	}
+	else if (subspecies) {
+		// Species with Subspecies: Axal + Species Lang + Subspecies Lang
+		if (species.name === 'Primordialfolk') {
+			const primordialId = allLanguages.get('Primordial');
+			if (primordialId) {
+				languagesToGrant.add(primordialId);
+				grantedNames.add('Primordial');
+			}
+			if (subspecies.name.includes('Ignan')) languagesToGrant.add(allLanguages.get('Ignic'));
+			if (subspecies.name.includes('Auran')) languagesToGrant.add(allLanguages.get('Auric'));
+			if (subspecies.name.includes('Aquan')) languagesToGrant.add(allLanguages.get('Aquic'));
+		}
+		// Add other species with subspecies logic here if they exist
+
+	}
+	else {
+		// Species without Subspecies: Axal + Species Lang + 1 random
+		let speciesLangId = null;
+		if (species.name === 'Dragonfolk') speciesLangId = allLanguages.get('Draedic');
+		if (species.name === 'Faefolk') speciesLangId = allLanguages.get('Caeric');
+		// Add other base species languages here
+
+		if (speciesLangId) {
+			languagesToGrant.add(speciesLangId);
+			grantedNames.add(db.prepare('SELECT name FROM languages WHERE language_id = ?').get(speciesLangId).name);
+		}
+
+		// Get one random language that hasn't been granted yet
+		const grantedNamesForQuery = Array.from(grantedNames);
+		const placeholders = grantedNamesForQuery.map(() => '?').join(',');
+		const randomLang = db.prepare(`
+            SELECT language_id FROM languages 
+            WHERE name NOT IN (${placeholders})
+            ORDER BY RANDOM() LIMIT 1
+        `).get(...grantedNamesForQuery);
+
+		if (randomLang) languagesToGrant.add(randomLang.language_id);
+	}
+
+	const insertStmt = db.prepare('INSERT OR IGNORE INTO character_languages (user_id, language_id, fluency_points) VALUES (?, ?, 100)');
+	db.transaction(() => {
+		for (const langId of languagesToGrant) {
+			if (langId) insertStmt.run(userId, langId);
+		}
+	})();
+}
+
+/**
  * Handles the /character recover command.
  * @param {import('discord.js').ChatInputCommandInteraction} interaction
  */
@@ -1701,6 +1780,7 @@ module.exports = {
 							character_ideals: session.ideals || '', stat_might: stats.might, stat_finesse: stats.finesse,
 							stat_wits: stats.wits, stat_grit: stats.grit, stat_charm: stats.charm, stat_fortune: stats.fortune,
 						});
+						grantStartingLanguages(userId, session.speciesId, session.subspeciesId);
 						const standardItems = ['Simple Dagger', 'Worn Buckler', 'Traveler\'s Hood', 'Traveler\'s Tunic', 'Traveler\'s Trousers', 'Worn Leather Boots', 'Simple Iron Band', 'Frayed Rope Amulet'];
 						const archetypeItems = {
 							'Channeler': ['Channeler\'s Focus', 'Acolyte\'s Robes'], 'Golemancer': ['Tinkerer\'s Hammer', 'Reinforced Apron'], 'Justicar': ['Candor\'s Mace', 'Vow Keeper\'s Sigil'],
