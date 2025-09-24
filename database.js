@@ -1150,6 +1150,17 @@ const setupTables = db.transaction(() => {
     `).run();
 
 	db.prepare(`
+        CREATE TABLE IF NOT EXISTS translation_attempts (
+            message_id TEXT NOT NULL,
+            translator_user_id TEXT NOT NULL,
+            attempt_method TEXT NOT NULL,
+            attempt_time TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (message_id, translator_user_id),
+            FOREIGN KEY(message_id) REFERENCES spoken_messages(message_id) ON DELETE CASCADE
+        )
+    `).run();
+
+	db.prepare(`
         CREATE TABLE IF NOT EXISTS character_location (
 
             user_id TEXT PRIMARY KEY,
@@ -1542,6 +1553,7 @@ const setupTables = db.transaction(() => {
 
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_character_languages_user ON character_languages(user_id)').run();
 	db.prepare('CREATE INDEX IF NOT EXISTS idx_spoken_messages_speaker ON spoken_messages(speaker_user_id)').run();
+	db.prepare('CREATE INDEX IF NOT EXISTS idx_translation_attempts_user ON translation_attempts(translator_user_id)').run();
 
 	// All of the unique indexes
 	// NOTE: Uniqueness for quotes is GLOBAL, not per-user. The same quote/trigger cannot exist twice

@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const db = require('../../database');
+const { scrambleMessage } = require('../../utils/translateText');
 
 module.exports = {
 	category: 'charsys',
@@ -53,7 +54,7 @@ module.exports = {
 				const messageContent = message.content;
 				await message.delete();
 
-				const language = db.prepare('SELECT name FROM languages WHERE language_id = ?').get(languageId);
+				const language = db.prepare('SELECT name, scramble_type FROM languages WHERE language_id = ?').get(languageId);
 
 				const webhook = await interaction.channel.createWebhook({
 					name: 'Tavernborne Messenger',
@@ -63,8 +64,13 @@ module.exports = {
 					return webhooks.find(wh => wh.owner.id === interaction.client.user.id && wh.name === 'Tavernborne Messenger') || await interaction.channel.createWebhook({ name: 'Tavernborne Messenger' });
 				});
 
+				// Scramble/translate the message if the language is not the common tongue
+				const contentToSend = language.name === 'Axal (Common)'
+					? messageContent
+					: scrambleMessage(messageContent, language.scramble_type);
+
 				const webhookMessage = await webhook.send({
-					content: messageContent,
+					content: contentToSend,
 					username: character.character_name,
 					avatarURL: character.character_image || interaction.user.displayAvatarURL(),
 					threadId: interaction.channel.isThread() ? interaction.channel.id : null,
@@ -85,7 +91,7 @@ module.exports = {
 							.setStyle(ButtonStyle.Secondary)
 							.setEmoji('📜'),
 					);
-					await interaction.channel.send({ components: [row] });
+					await webhookMessage.channel.send({ components: [row] });
 				}
 
 			}

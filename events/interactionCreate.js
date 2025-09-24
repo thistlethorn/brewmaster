@@ -1,11 +1,12 @@
 // events/interactionCreate.js
-const { Events, EmbedBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
+const { Events, EmbedBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits } = require('discord.js');
 const { handleMonarchEntry } = require('../utils/handleMonarchGiveaway');
 const { scheduleDailyReminder, sendReminder } = require('../tasks/dailyReminder');
 const { updateMultiplier } = require('../utils/handleCrownRewards');
 const sendMessageToChannel = require('../utils/sendMessageToChannel');
 const config = require('../config.json');
 const db = require('../database');
+const { scrambleMessage } = require('../utils/translateText');
 const BOT_COMMANDS_CHANNEL_ID = config?.discord?.botCommandsId || '1354187940246327316';
 
 
@@ -342,48 +343,20 @@ module.exports = {
 				return;
 			}
 			if ((interaction.isButton() || interaction.isModalSubmit()) && interaction.customId.startsWith('speak_')) {
-			// Scrambling logic now lives here, as it's only used for the translation UI
-				const scrambleMessage = (content, type) => {
-					switch (type.toUpperCase()) {
-
-					case 'PIG_LATIN':
-						return content.split(' ').map(w => w.length < 2 ? w : `${w.slice(1)}${w[0]}ay`).join(' ');
-
-					case 'SYMBOL_SUB':
-						return content.replace(/a/gi, '@').replace(/e/gi, '3').replace(/i/gi, '!').replace(/o/gi, '0').replace(/s/gi, '$');
-
-					case 'REVERSE':
-						return content.split('').reverse().join('');
-
-					case 'SCRAMBLE_VOWELS':
-						return content.split(' ').map(w => {
-							const v = w.match(/[aeiou]/gi) || [];
-							const sV = v.sort(() => Math.random() - 0.5); let i = 0;
-							return w.replace(/[aeiou]/gi, () => sV[i++]);
-						}).join(' ');
-
-					case 'INTERLEAVE':
-						return content.split('').map((c, i) => (i % 2 === 1 && content[i - 1] !== ' ') ? content[i - 1] : (i % 2 === 0 && content[i + 1] !== ' ') ? content[i + 1] : c).join('');
-
-					case 'WAVY_TEXT':
-						return content.split('').map((c, i) => i % 2 === 0 ? c.toLowerCase() : c.toUpperCase()).join('');
-
-					case 'NONE':
-					default:
-						return content;
-					}
-				};
-
-
 				const parts = interaction.customId.split('_');
 				const [, action, subAction, messageId] = parts;
 
 				const spokenMessage = db.prepare('SELECT * FROM spoken_messages WHERE message_id = ?').get(messageId);
 				if (!spokenMessage) { return interaction.reply({ content: 'This message is too old to be translated.', flags: MessageFlags.Ephemeral }); }
-				if (interaction.user.id === spokenMessage.speaker_user_id) { return interaction.reply({ content: `You wrote the message: ${spokenMessage.original_content}`, flags: MessageFlags.Ephemeral }); }
+				if (interaction.user.id === spokenMessage.speaker_user_id) { return interaction.reply({ content: `You wrote the message: "${spokenMessage.original_content}"`, flags: MessageFlags.Ephemeral }); }
 
 				// --- Initial "Translate Message" Button ---
 				if (action === 'translate' && subAction === 'init') {
+					const alreadyAttempted = db.prepare('SELECT 1 FROM translation_attempts WHERE message_id = ? AND translator_user_id = ?').get(messageId, interaction.user.id);
+					if (alreadyAttempted) {
+						return interaction.reply({ content: 'You have already made your attempt to translate this message.', flags: MessageFlags.Ephemeral });
+					}
+
 					const language = db.prepare('SELECT name, avatar_url, scramble_type FROM languages WHERE language_id = ?').get(spokenMessage.language_id);
 					const scrambledContent = scrambleMessage(spokenMessage.original_content, language.scramble_type);
 
@@ -391,7 +364,7 @@ module.exports = {
 						.setColor(0x95A5A6)
 						.setTitle(`Translate message in ${language.name}`)
 						.setThumbnail(language.avatar_url)
-						.setDescription(`The message appears to be scrambled nonsense:\n>>> ${scrambledContent}\n\nChoose a method to interpret its meaning.`);
+						.setDescription(`The message appears to be scrambled nonsense:\n>>> ${scrambledContent}\n\nChoose a method to interpret its meaning. You only get one attempt!`);
 
 					const row = new ActionRowBuilder().addComponents(
 						new ButtonBuilder().setCustomId(`speak_translate_direct_${messageId}`).setLabel(`Read The Message [Req. ${language.name}]`).setStyle(ButtonStyle.Primary).setEmoji('📖'),
@@ -409,15 +382,19 @@ module.exports = {
 
 				const updateFluency = (points) => {
 					const result = db.prepare(`
-					INSERT INTO character_languages (user_id, language_id, fluency_points) VALUES (?, ?, ?)
-					ON CONFLICT(user_id, language_id) DO UPDATE SET
-						fluency_points = MIN(100, fluency_points + excluded.fluency_points)
-					RETURNING fluency_points
-				`).get(interaction.user.id, spokenMessage.language_id, points);
+						INSERT INTO character_languages (user_id, language_id, fluency_points) VALUES (?, ?, ?)
+						ON CONFLICT(user_id, language_id) DO UPDATE SET
+							fluency_points = MIN(100, fluency_points + excluded.fluency_points)
+						RETURNING fluency_points
+					`).get(interaction.user.id, spokenMessage.language_id, points);
 					return result.fluency_points;
 				};
 
 				if (action === 'translate') {
+					// Log the attempt before processing the outcome
+					db.prepare('INSERT OR IGNORE INTO translation_attempts (message_id, translator_user_id, attempt_method) VALUES (?, ?, ?)')
+						.run(messageId, interaction.user.id, subAction);
+
 					switch (subAction) {
 					case 'direct': {
 						const fluency = db.prepare('SELECT fluency_points FROM character_languages WHERE user_id = ? AND language_id = ?').get(interaction.user.id, spokenMessage.language_id);
@@ -432,7 +409,7 @@ module.exports = {
 							const embed = new EmbedBuilder()
 								.setColor(0xE74C3C)
 								.setTitle('📖 Direct Translation: Failed')
-								.setDescription('You do not know this language well enough to read it directly. Try another method!');
+								.setDescription('You do not know this language well enough to read it directly. Your one attempt has been used!');
 							await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 						}
 						break;
@@ -457,7 +434,7 @@ module.exports = {
 						const embed = new EmbedBuilder()
 							.setColor(0x9B59B6)
 							.setTitle('🍀 Interpretation by Fortune')
-							.setDescription(`You try your luck at guessing the meaning...\n>>> ${revealedContent}`)
+							.setDescription(`You try guessing the meaning through sheer luck...\n>>> ${revealedContent}`)
 							.setFooter({ text: `Roll: ${roll.toFixed(0)} | +1 Fluency Point` });
 						await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 						break;
@@ -490,53 +467,14 @@ module.exports = {
 						break;
 					}
 					case 'wits': {
-						const words = spokenMessage.original_content.split(' ');
-						const slice = words.length > 10 ? words.slice(0, 10) : words;
-						const shuffled = [...slice].sort(() => Math.random() - 0.5).join(' ');
-
-						const modal = new ModalBuilder()
-							.setCustomId(`speak_modal_wits_${messageId}`)
-							.setTitle('Unscramble the Message');
-
-						modal.addComponents(new ActionRowBuilder().addComponents(
-							new TextInputBuilder()
-								.setCustomId('unscrambled_text')
-								.setLabel(shuffled)
-								.setPlaceholder('Type the unscrambled words here...')
-								.setStyle(TextInputStyle.Short)
-								.setRequired(true),
-						));
-						await interaction.showModal(modal);
+						// Temporarily disable the wits game while it's being reworked.
+						await interaction.reply({
+							content: 'The Wits minigame is currently being reworked to be more engaging. Your attempt has been logged as a Wits attempt, granting +1 Fluency Point!',
+							flags: MessageFlags.Ephemeral,
+						});
+						updateFluency(1);
 						break;
 					}
-					}
-				}
-				else if (action === 'modal' && subAction === 'wits') {
-					const originalSlice = spokenMessage.original_content.split(' ').slice(0, 10).join(' ');
-					const userInput = interaction.fields.getTextInputValue('unscrambled_text');
-
-					if (userInput.toLowerCase().trim() === originalSlice.toLowerCase().trim()) {
-						const points = 3 + Math.floor(translatorCharacter.stat_wits / 8);
-						const newFluency = updateFluency(points);
-
-						const embed = new EmbedBuilder()
-							.setColor(0x2ECC71)
-							.setTitle('🧠 Interpretation by Wits: Success!')
-							.setDescription(`You successfully decoded the message!\n>>> ${spokenMessage.original_content}`)
-							.setFooter({ text: `+${points} Fluency Points` });
-
-						if (newFluency >= 100) {
-							const language = db.prepare('SELECT name FROM languages WHERE language_id = ?').get(spokenMessage.language_id);
-							embed.addFields({ name: '🎉 Language Learned!', value: `You have become fluent in **${language.name}**!` });
-						}
-						await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
-					}
-					else {
-						const embed = new EmbedBuilder()
-							.setColor(0xE74C3C)
-							.setTitle('🧠 Interpretation by Wits: Failed')
-							.setDescription('That doesn\'t seem right. The meaning is lost on you.');
-						await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 					}
 				}
 				return;

@@ -83,6 +83,14 @@ module.exports = {
 		const focusedOption = interaction.options.getFocused(true);
 		const focusedValue = focusedOption.value.toLowerCase();
 		const targetUser = interaction.options.getUser('user');
+		console.log((!targetUser && (subcommand === 'givelanguage' || subcommand === 'removelanguage')) == true);
+		console.log(!targetUser == true);
+		console.log(((subcommand === 'givelanguage' || subcommand === 'removelanguage')) == true);
+		console.log((subcommand === 'givelanguage') == true);
+		console.log((subcommand === 'removelanguage') == true);
+		// if (!targetUser && (subcommand === 'givelanguage' || subcommand === 'removelanguage')) {
+		// 	return interaction.respond([]);
+		// }
 
 		try {
 			if (subcommand === 'additem' && focusedOption.name === 'item') {
@@ -101,14 +109,11 @@ module.exports = {
 			else if (subcommand === 'givelanguage' && focusedOption.name === 'language') {
 				// Show languages the user does NOT already know fluently
 				const languages = db.prepare(`
-					SELECT l.language_id, l.name FROM languages l
-					WHERE l.name LIKE ? AND NOT EXISTS (
-						SELECT 1 FROM character_languages cl 
-						WHERE cl.user_id = ? AND cl.language_id = l.language_id AND cl.fluency_points = 100
-					)
-					ORDER BY l.name ASC
+					SELECT language_id, name FROM languages
+					WHERE name LIKE ?
+					ORDER BY name ASC
 					LIMIT 25
-				`).all(`%${focusedValue}%`, targetUser.id);
+				`).all(`%${focusedValue}%`);
 
 				await interaction.respond(
 					languages.map(lang => ({ name: lang.name, value: lang.language_id.toString() })),
