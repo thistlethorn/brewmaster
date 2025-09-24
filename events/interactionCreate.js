@@ -391,6 +391,10 @@ module.exports = {
 				};
 
 				if (action === 'translate') {
+					const alreadyAttempted = db.prepare('SELECT 1 FROM translation_attempts WHERE message_id = ? AND translator_user_id = ?').get(messageId, interaction.user.id);
+					if (alreadyAttempted) {
+						return interaction.reply({ content: 'You have already made your attempt to translate this message.', flags: MessageFlags.Ephemeral });
+					}
 					// Log the attempt before processing the outcome
 					db.prepare('INSERT OR IGNORE INTO translation_attempts (message_id, translator_user_id, attempt_method) VALUES (?, ?, ?)')
 						.run(messageId, interaction.user.id, subAction);
