@@ -1150,15 +1150,16 @@ const setupTables = db.transaction(() => {
     `).run();
 
 	db.prepare(`
-        CREATE TABLE IF NOT EXISTS translation_attempts (
-            message_id TEXT NOT NULL,
-            translator_user_id TEXT NOT NULL,
-            attempt_method TEXT NOT NULL,
-            attempt_time TEXT DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (message_id, translator_user_id),
-            FOREIGN KEY(message_id) REFERENCES spoken_messages(message_id) ON DELETE CASCADE
-        )
-    `).run();
+		CREATE TABLE IF NOT EXISTS translation_attempts (
+			message_id TEXT NOT NULL,
+			translator_user_id TEXT NOT NULL,
+			attempt_method TEXT NOT NULL,
+			success_ratio REAL NOT NULL DEFAULT 0.0,
+			attempt_time TEXT DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (message_id, translator_user_id),
+			FOREIGN KEY(message_id) REFERENCES spoken_messages(message_id) ON DELETE CASCADE
+		)
+	`).run();
 
 	db.prepare(`
         CREATE TABLE IF NOT EXISTS character_location (
@@ -1433,6 +1434,20 @@ const setupTables = db.transaction(() => {
 	}
 	catch (error) {
 		console.error('[DB Migration] Failed to update guild_list schema for guild_image:', error);
+		throw error;
+	}
+
+	console.log('[DB Migration] Checking schema for translation_attempts.success_ratio...');
+	try {
+		const translationColumns = new Set(db.pragma('table_info(translation_attempts)').map(c => c.name));
+		if (!translationColumns.has('success_ratio')) {
+			db.prepare('ALTER TABLE translation_attempts ADD COLUMN success_ratio REAL NOT NULL DEFAULT 0.0').run();
+			console.log('[DB Migration] Added column: translation_attempts.success_ratio');
+		}
+		console.log('[DB Migration] translation_attempts schema check complete.');
+	}
+	catch (error) {
+		console.error('[DB Migration] Failed to update translation_attempts schema:', error);
 		throw error;
 	}
 

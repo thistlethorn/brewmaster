@@ -346,24 +346,19 @@ module.exports = {
 				const parts = interaction.customId.split('_');
 				const [, action, subAction] = parts;
 
-				let messageId;
-				// From buttons like speak_translate_direct_MSGID
-				if (action === 'translate') {
-					messageId = parts[3];
-				}
-				// From modal speak_wits_submit_MSGID_...
-				else if (action === 'wits' && subAction === 'submit') {
-					messageId = parts[3];
-				}
-				else {
-					return interaction.reply({ content: 'There has been an error processing your speak_ interaction.', flags: MessageFlags.Ephemeral });
-				}
+				const messageId = parts[parts.length - 1];
 
 				const spokenMessage = db.prepare('SELECT * FROM spoken_messages WHERE message_id = ?').get(messageId);
-				if (!spokenMessage) { return interaction.reply({ content: 'This message is too old to be translated.', flags: MessageFlags.Ephemeral }); }
-				if (interaction.user.id === spokenMessage.speaker_user_id) { return interaction.reply({ content: `You wrote the message: "${spokenMessage.original_content}"`, flags: MessageFlags.Ephemeral }); }
+				if (!spokenMessage) {
+					return interaction.reply({ content: 'This message is too old to be translated.', flags: MessageFlags.Ephemeral });
+				}
+				if (interaction.user.id === spokenMessage.speaker_user_id) {
+					return interaction.reply({ content: `You wrote the message: "${spokenMessage.original_content}"`, flags: MessageFlags.Ephemeral });
+				}
 				const translatorCharacter = db.prepare('SELECT * FROM characters WHERE user_id = ?').get(interaction.user.id);
-				if (!translatorCharacter) { return interaction.reply({ content: 'You need a character to attempt a translation.', flags: MessageFlags.Ephemeral }); }
+				if (!translatorCharacter) {
+					return interaction.reply({ content: 'You need a character to attempt a translation.', flags: MessageFlags.Ephemeral });
+				}
 				const language = db.prepare('SELECT name, avatar_url, scramble_type FROM languages WHERE language_id = ?').get(spokenMessage.language_id);
 
 				const updateFluency = (points) => {
@@ -378,15 +373,11 @@ module.exports = {
 
 				// --- MODAL SUBMISSION HANDLER ---
 				if (interaction.isModalSubmit() && action === 'wits' && subAction === 'submit') {
-					const alreadyAttempted = db.prepare('SELECT 1 FROM translation_attempts WHERE message_id = ? AND translator_user_id = ?').get(messageId, interaction.user.id);
-					if (alreadyAttempted) { return interaction.update({ content: 'You have already made your attempt to translate this message.', components: [], embeds: [] }); }
-					db.prepare('INSERT OR IGNORE INTO translation_attempts (message_id, translator_user_id, attempt_method) VALUES (?, ?, ?)').run(messageId, interaction.user.id, 'wits');
-
-					const [, , , , encodedSnippet] = parts;
+					const encodedSnippet = parts[4];
 					const originalSnippet = Buffer.from(encodedSnippet, 'base64').toString('utf8');
 					const userGuess = interaction.fields.getTextInputValue('wits_guess_input');
-					const originalWords = originalSnippet.toLowerCase().split(' ');
-					const guessWords = userGuess.toLowerCase().split(' ');
+					const originalWords = originalSnippet.toLowerCase().split(' ').filter(w => w);
+					const guessWords = userGuess.toLowerCase().split(' ').filter(w => w);
 					let correctWords = 0;
 					for (let i = 0; i < originalWords.length; i++) {
 						if (originalWords[i] === guessWords[i]) correctWords++;
@@ -395,78 +386,88 @@ module.exports = {
 					const points = successRatio === 1 ? 3 : (successRatio > 0.5 ? 2 : 1);
 					updateFluency(points);
 
-					const revealedContent = scrambleMessage(spokenMessage.original_content, language.scramble_type, { decode: true, successRatio });
+					db.prepare('INSERT OR IGNORE INTO translation_attempts (message_id, translator_user_id, attempt_method, success_ratio) VALUES (?, ?, ?, ?)').run(messageId, interaction.user.id, 'wits', successRatio);
 
-					const embed = new EmbedBuilder()
+					const successEmbed = new EmbedBuilder()
 						.setColor(0x3498DB)
-						.setTitle('🧠 Interpretation by Wits')
-						.setDescription(`You focus your mind and attempt to decode the message...\n>>> ${revealedContent}`)
-						.setFooter({ text: `Correctness: ${Math.round(successRatio * 100)}% | +${points} Fluency Points` });
-					return interaction.update({ embeds: [embed], components: [] });
+						.setTitle('🧠 Interpretation Attempt Logged')
+						.setDescription(`You focus your mind and attempt to decode the message snippet.\n\nYour attempt has been recorded. Click below to view your interpretation based on a **${Math.round(successRatio * 100)}%** success rate.`)
+						.setFooter({ text: `+${points} Fluency Points` });
+
+					const row = new ActionRowBuilder().addComponents(
+						new ButtonBuilder().setCustomId(`speak_translate_show_${messageId}`).setLabel('Show My Translation').setStyle(ButtonStyle.Success).setEmoji('📜'),
+					);
+					return interaction.update({ embeds: [successEmbed], components: [row] });
 				}
 
 				// --- BUTTON HANDLERS ---
-				if (interaction.isButton() && action === 'translate' && subAction === 'init') {
-					const alreadyAttempted = db.prepare('SELECT 1 FROM translation_attempts WHERE message_id = ? AND translator_user_id = ?').get(messageId, interaction.user.id);
-					if (alreadyAttempted) { return interaction.reply({ content: 'You have already made your attempt to translate this message.', flags: MessageFlags.Ephemeral }); }
-
-					const scrambledContent = scrambleMessage(spokenMessage.original_content, language.scramble_type);
-					const translationEmbed = new EmbedBuilder()
-						.setColor(0x95A5A6)
-						.setTitle(`Translate message in ${language.name}`)
-						.setThumbnail(language.avatar_url)
-						.setDescription(`The message appears to be scrambled nonsense:\n>>> ${scrambledContent}\n\nChoose a method to interpret its meaning. You only get one attempt!`);
-					const row = new ActionRowBuilder().addComponents(
-						new ButtonBuilder().setCustomId(`speak_translate_direct_${messageId}`).setLabel(`Read The Message [Req. ${language.name}]`).setStyle(ButtonStyle.Primary).setEmoji('📖'),
-						new ButtonBuilder().setCustomId(`speak_translate_fortune_${messageId}`).setLabel('Interpret by Luck [FORTUNE]').setStyle(ButtonStyle.Secondary).setEmoji('🍀'),
-						new ButtonBuilder().setCustomId(`speak_translate_charm_${messageId}`).setLabel('Interpret by Experience [CHARM]').setStyle(ButtonStyle.Secondary).setEmoji('😊'),
-						new ButtonBuilder().setCustomId(`speak_translate_wits_${messageId}`).setLabel('Interpret by Skill [WITS]').setStyle(ButtonStyle.Secondary).setEmoji('🧠'),
-					);
-					return interaction.reply({ embeds: [translationEmbed], components: [row], flags: MessageFlags.Ephemeral });
-				}
-
 				if (interaction.isButton() && action === 'translate') {
-					const alreadyAttempted = db.prepare('SELECT 1 FROM translation_attempts WHERE message_id = ? AND translator_user_id = ?').get(messageId, interaction.user.id);
-					if (alreadyAttempted) { return interaction.reply({ content: 'You have already made your attempt to translate this message.', flags: MessageFlags.Ephemeral }); }
-					if (subAction !== 'wits') {
-						db.prepare('INSERT OR IGNORE INTO translation_attempts (message_id, translator_user_id, attempt_method) VALUES (?, ?, ?)').run(messageId, interaction.user.id, subAction);
+					const existingAttempt = db.prepare('SELECT * FROM translation_attempts WHERE message_id = ? AND translator_user_id = ?').get(messageId, interaction.user.id);
+
+					// Handle showing a previously completed translation
+					if (subAction === 'show') {
+						if (!existingAttempt) return interaction.reply({ content: 'You have not attempted to translate this message yet.', flags: MessageFlags.Ephemeral });
+
+						const revealedContent = scrambleMessage(spokenMessage.original_content, language.scramble_type, { decode: true, successRatio: existingAttempt.success_ratio });
+						return interaction.reply({ content: `Your interpretation of the message:\n>>> ${revealedContent}`, flags: MessageFlags.Ephemeral });
 					}
+
+					// Handle initiating a translation
+					if (subAction === 'init') {
+						if (existingAttempt) {
+							const embed = new EmbedBuilder()
+								.setColor(0x1ABC9C)
+								.setTitle('Translation Already Attempted')
+								.setDescription('You have already made an attempt to translate this message. You can view your previous interpretation.');
+							const row = new ActionRowBuilder().addComponents(
+								new ButtonBuilder().setCustomId(`speak_translate_show_${messageId}`).setLabel('Show My Translation').setStyle(ButtonStyle.Success).setEmoji('📜'),
+							);
+							return interaction.reply({ embeds: [embed], components: [row], flags: MessageFlags.Ephemeral });
+						}
+
+						const scrambledContent = scrambleMessage(spokenMessage.original_content, language.scramble_type);
+						const translationEmbed = new EmbedBuilder()
+							.setColor(0x95A5A6)
+							.setTitle(`Translate message in ${language.name}`)
+							.setThumbnail(language.avatar_url)
+							.setDescription(`The message appears to be scrambled nonsense:\n>>> ${scrambledContent}\n\nChoose a method to interpret its meaning. You only get one attempt!`);
+						const row = new ActionRowBuilder().addComponents(
+							new ButtonBuilder().setCustomId(`speak_translate_direct_${messageId}`).setLabel(`Read The Message [Req. ${language.name}]`).setStyle(ButtonStyle.Primary).setEmoji('📖'),
+							new ButtonBuilder().setCustomId(`speak_translate_fortune_${messageId}`).setLabel('Interpret by Luck [FORTUNE]').setStyle(ButtonStyle.Secondary).setEmoji('🍀'),
+							new ButtonBuilder().setCustomId(`speak_translate_charm_${messageId}`).setLabel('Interpret by Experience [CHARM]').setStyle(ButtonStyle.Secondary).setEmoji('😊'),
+							new ButtonBuilder().setCustomId(`speak_translate_wits_${messageId}`).setLabel('Interpret by Skill [WITS]').setStyle(ButtonStyle.Secondary).setEmoji('🧠'),
+						);
+						return interaction.reply({ embeds: [translationEmbed], components: [row], flags: MessageFlags.Ephemeral });
+					}
+
+					if (existingAttempt) {
+						return interaction.update({ content: 'You have already made your attempt to translate this message.', components: [], embeds: [] });
+					}
+
+					// This is where the translation attempt is processed
+					let successRatio = 0.0;
+					let fluencyPoints = 0;
+					const attemptMethod = subAction;
 
 					switch (subAction) {
 					case 'direct': {
 						const fluency = db.prepare('SELECT fluency_points FROM character_languages WHERE user_id = ? AND language_id = ?').get(interaction.user.id, spokenMessage.language_id);
-						const embed = new EmbedBuilder();
-						if (fluency && fluency.fluency_points >= 100) {
-							embed.setColor(0x2ECC71).setTitle('📖 Direct Translation: Success!').setDescription(`You read the message clearly:\n>>> ${spokenMessage.original_content}`);
-						}
-						else {
-							embed.setColor(0xE74C3C).setTitle('📖 Direct Translation: Failed').setDescription('You do not know this language well enough to read it directly. Your one attempt has been used!');
-						}
-						return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+						if (fluency && fluency.fluency_points >= 100) successRatio = 1.0;
+						break;
 					}
 					case 'fortune': {
 						const roll = (Math.random() * 100) + (translatorCharacter.stat_fortune / 2);
-						const successRatio = roll >= 95 ? 1.0 : roll >= 70 ? 0.6 : roll >= 40 ? 0.3 : 0;
-						updateFluency(1);
-						const revealedContent = scrambleMessage(spokenMessage.original_content, language.scramble_type, { decode: true, successRatio });
-						const embed = new EmbedBuilder().setColor(0x9B59B6).setTitle('🍀 Interpretation by Fortune').setDescription(`You try guessing the meaning through sheer luck...\n>>> ${revealedContent}`).setFooter({ text: `Roll: ${roll.toFixed(0)} | +1 Fluency Point` });
-						return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+						successRatio = roll >= 95 ? 1.0 : roll >= 70 ? 0.6 : roll >= 40 ? 0.3 : 0;
+						fluencyPoints = 1;
+						break;
 					}
 					case 'charm': {
 						const successChance = 0.25 + (translatorCharacter.stat_charm * 0.015);
-						const embed = new EmbedBuilder();
 						if (Math.random() < successChance) {
-							const points = 5 + Math.floor(translatorCharacter.stat_charm / 4);
-							const newFluency = updateFluency(points);
-							embed.setColor(0x2ECC71).setTitle('😊 Interpretation by Charm: Success!').setDescription(`You grasp the intent through context and social cues.\n>>> ${spokenMessage.original_content}`).setFooter({ text: `+${points} Fluency Points` });
-							if (newFluency >= 100) {
-								embed.addFields({ name: '🎉 Language Learned!', value: `You have become fluent in **${language.name}**!` });
-							}
+							successRatio = 1.0;
+							fluencyPoints = 5 + Math.floor(translatorCharacter.stat_charm / 4);
 						}
-						else {
-							embed.setColor(0xE74C3C).setTitle('😊 Interpretation by Charm: Failed').setDescription('You try to grasp the meaning through social cues but fail to understand.');
-						}
-						return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+						break;
 					}
 					case 'wits': {
 						const originalContent = spokenMessage.original_content;
@@ -474,40 +475,48 @@ module.exports = {
 						const originalSnippet = words.slice(0, 8).join(' ').slice(0, 42);
 
 						if (originalSnippet.trim().length < 3) {
-							db.prepare('INSERT OR IGNORE INTO translation_attempts (message_id, translator_user_id, attempt_method) VALUES (?, ?, ?)').run(messageId, interaction.user.id, 'wits');
 							updateFluency(1);
-							return interaction.reply({ content: 'This message is too short to be decoded with Wits. Your attempt has been logged, granting +1 Fluency Point!', flags: MessageFlags.Ephemeral });
+							db.prepare('INSERT OR IGNORE INTO translation_attempts (message_id, translator_user_id, attempt_method, success_ratio) VALUES (?, ?, ?, ?)').run(messageId, interaction.user.id, 'wits', 0.0);
+							return interaction.update({ content: 'This message is too short to be decoded with Wits. Your attempt has been logged as a failure, granting +1 Fluency Point!', components: [], embeds: [] });
 						}
 
 						const obscureSnippet = (snippet) => {
-							const vowels = 'aeiouAEIOU';
-							const commonConsonants = 'rstlneRSTLNE';
 							const resultArr = snippet.split('');
 							for (let i = 0; i < resultArr.length; i++) {
 								const char = resultArr[i];
-								if (vowels.includes(char) && Math.random() < 0.4) { resultArr[i] = '_'; }
-								else if (commonConsonants.includes(char) && Math.random() < 0.2) { resultArr[i] = '_'; }
+								if (/[aeiou]/i.test(char) && Math.random() < 0.4) resultArr[i] = '_';
+								else if (/[rstlne]/i.test(char) && Math.random() < 0.2) resultArr[i] = '_';
 							}
-							let result = resultArr.join('');
-							if (result === snippet && snippet.length > 1) {
-								const validIndices = [];
-								for (let i = 0; i < snippet.length; i++) {
-									if (snippet[i].match(/[a-zA-Z]/)) validIndices.push(i);
-								}
-								if (validIndices.length > 0) {
-									const randomIndex = validIndices[Math.floor(Math.random() * validIndices.length)];
-									result = result.substring(0, randomIndex) + '_' + result.substring(randomIndex + 1);
-								}
-							}
-							return result;
+							return resultArr.join('') === snippet && snippet.length > 1 ? snippet.substring(0, snippet.length - 1) + '_' : resultArr.join('');
 						};
 
-						const modal = new ModalBuilder().setCustomId(`speak_wits_submit_${messageId}_${Buffer.from(originalSnippet).toString('base64')}`).setTitle('Decode the Message Snippet');
+						const modal = new ModalBuilder().setCustomId(`speak_wits_submit_${messageId}_${Buffer.from(originalSnippet).toString('base64')}_${messageId}`).setTitle('Decode the Message Snippet');
 						const textInput = new TextInputBuilder().setCustomId('wits_guess_input').setLabel(obscureSnippet(originalSnippet)).setStyle(TextInputStyle.Short).setPlaceholder('Type the completed phrase here...').setRequired(true);
 						modal.addComponents(new ActionRowBuilder().addComponents(textInput));
 						return interaction.showModal(modal);
 					}
 					}
+
+					// Store the result of the attempt
+					db.prepare('INSERT OR IGNORE INTO translation_attempts (message_id, translator_user_id, attempt_method, success_ratio) VALUES (?, ?, ?, ?)').run(messageId, interaction.user.id, attemptMethod, successRatio);
+					if (fluencyPoints > 0) updateFluency(fluencyPoints);
+
+					// Update the original ephemeral message with the result
+					const resultEmbed = new EmbedBuilder();
+					const resultComponents = [];
+
+					if (successRatio > 0.0) {
+						resultEmbed.setColor(0x2ECC71).setTitle('Translation Attempted: Success!').setDescription(`You've managed to grasp some or all of the message's meaning. Your interpretation is ready to view.\n\nFluency Gained: +${fluencyPoints} points.`);
+						const row = new ActionRowBuilder().addComponents(
+							new ButtonBuilder().setCustomId(`speak_translate_show_${messageId}`).setLabel('Show My Translation').setStyle(ButtonStyle.Success).setEmoji('📜'),
+						);
+						resultComponents.push(row);
+					}
+					else {
+						resultEmbed.setColor(0xE74C3C).setTitle('Translation Attempted: Failure').setDescription('You were unable to understand any part of the message. Your one attempt has been used!');
+					}
+
+					return interaction.update({ embeds: [resultEmbed], components: resultComponents });
 				}
 				return;
 			}
