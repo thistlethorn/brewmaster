@@ -609,14 +609,37 @@ function seedPveData() {
 
 function seedLanguageData() {
 	const languages = [
+		// --- CORE LANGUAGES ---
 		{ name: 'Axal (Common)', scramble_type: 'NONE', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
-		{ name: 'Draedic', scramble_type: 'SYMBOL_SUB', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
-		{ name: 'Caeric', scramble_type: 'PIG_LATIN', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
-		{ name: 'Primordial', scramble_type: 'REVERSE', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
-		{ name: 'Ignic', scramble_type: 'SCRAMBLE_VOWELS', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
-		{ name: 'Auric', scramble_type: 'INTERLEAVE', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
-		{ name: 'Aquic', scramble_type: 'WAVY_TEXT', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
-		// Add more languages as needed
+		{ name: 'Draedic', scramble_type: 'DRAEDIC_SELF_SUBSTITUTE', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
+		{ name: 'Caeric', scramble_type: 'CAERIC_SELF_SUBSTITUTE', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
+		{ name: 'Primordial', scramble_type: 'PRIMORDIAL_SELF_SUBSTITUTE', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
+		{ name: 'Bestial', scramble_type: 'BESTIAL_SELF_SUBSTITUTE', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
+		{ name: 'Aberrant', scramble_type: 'ABERRANT_SELF_SUBSTITUTE', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
+		{ name: 'Nocturne', scramble_type: 'NOCTURNE_SELF_SUBSTITUTE', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
+
+		// --- PRIMORDIAL DIALECTS ---
+		{ name: 'Ignic', scramble_type: 'IGNIC_PRIMORDIAL_SUBSTITUTE', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
+		{ name: 'Auric', scramble_type: 'AURIC_PRIMORDIAL_SUBSTITUTE', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
+		{ name: 'Aquic', scramble_type: 'AQUIC_PRIMORDIAL_SUBSTITUTE', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
+		{ name: 'Ferric', scramble_type: 'FERRIC_PRIMORDIAL_SUBSTITUTE', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
+		{ name: 'Sylvic', scramble_type: 'SYLVIC_PRIMORDIAL_SUBSTITUTE', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
+
+		// --- BESTIAL DIALECTS ---
+		{ name: 'Vulpis', scramble_type: 'VULPIS_BESTIAL_SUBSTITUTE', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
+		{ name: 'Felis', scramble_type: 'FELIS_BESTIAL_SUBSTITUTE', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
+		{ name: 'Chelis', scramble_type: 'CHELIS_BESTIAL_SUBSTITUTE', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
+		{ name: 'Canis', scramble_type: 'CANIS_BESTIAL_SUBSTITUTE', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
+		{ name: 'Lapis', scramble_type: 'LAPIS_BESTIAL_SUBSTITUTE', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
+
+		// --- ABBERANT DIALECTS ---
+		{ name: 'Klang', scramble_type: 'KLANG_ABBERANT_SUBSTITUTE', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
+		{ name: 'Spoar', scramble_type: 'SPOAR_ABBERANT_SUBSTITUTE', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
+		{ name: 'Gloop', scramble_type: 'GLOOP_ABBERANT_SUBSTITUTE', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
+
+		// --- NOCTURNE DIALECTS ---
+		{ name: 'Umbral', scramble_type: 'UMBRAL_NOCTURNE_SUBSTITUTE', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
+		{ name: 'Sanguine', scramble_type: 'SANGUINE_NOCTURNE_SUBSTITUTE', avatar_url: 'https://i.imgur.com/ETyVawk.jpeg' },
 	];
 
 	db.transaction(() => {
