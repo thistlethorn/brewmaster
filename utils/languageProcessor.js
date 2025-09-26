@@ -109,7 +109,7 @@ const dictionaries = {
 };
 
 /**
- * Encodes cleartext into a specified fictional language while preserving markdown.
+ * Encodes cleartext into a specified fictional language while preserving markdown and capitalization.
  * Implements a two-pass system for dialects (Parent Language -> Dialect).
  * @param {string} text - The original English text.
  * @param {string} languageType - The scramble_type from the database.
@@ -140,7 +140,6 @@ function encode(text, languageType) {
 
 	// This regex splits the string by markdown delimiters, but keeps them in the array.
 	// It prioritizes code blocks to treat them as a single, untranslatable unit.
-	// Then it looks for other markdown symbols, newlines, and spaces as delimiters.
 	const delimiterRegex = /(```[\s\S]*?```|`[^`]*?`|\s+|[^\w\s*`~|_#>\-+\\]+)/g;
 	const parts = text.split(delimiterRegex).filter(part => part);
 
@@ -155,17 +154,30 @@ function encode(text, languageType) {
 
 	return parts.map(part => {
 		// Test if the part is a word (contains only letters and maybe an apostrophe).
-		// We exclude anything that looks like a markdown delimiter, is a code block,
-		// is purely whitespace, or is punctuation.
 		if (/^[a-zA-Z']+$/.test(part)) {
-			// It's a word, so translate it.
-			let translatedPart = applyDictionary(part, parentDictionary);
+			// It's a word.
+			const originalWord = part;
 
+			// 1. Determine the capitalization style of the original word.
+			// We check length > 1 to treat single-letter words like "A" as Title Case, not ALL CAPS.
+			const isAllCaps = originalWord.length > 1 && originalWord === originalWord.toUpperCase();
+			const isTitleCase = !isAllCaps && originalWord[0] === originalWord[0].toUpperCase();
+
+			// 2. Translate the word using the lowercase-based logic.
+			let translatedWord = applyDictionary(originalWord, parentDictionary);
 			if (dialectDictionary) {
 				// If it's a dialect, apply the second pass.
-				translatedPart = applyDictionary(translatedPart, dialectDictionary);
+				translatedWord = applyDictionary(translatedWord, dialectDictionary);
 			}
-			return translatedPart;
+
+			// 3. Re-apply the original capitalization style.
+			if (isAllCaps) {
+				return translatedWord.toUpperCase();
+			}
+			if (isTitleCase && translatedWord.length > 0) {
+				return translatedWord.charAt(0).toUpperCase() + translatedWord.slice(1);
+			}
+			return translatedWord;
 		}
 
 		// It's not a word (it's markdown, a code block, punctuation, or whitespace), so leave it as is.
