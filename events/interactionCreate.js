@@ -353,7 +353,7 @@ module.exports = {
 					return interaction.reply({ content: 'This message is too old to be translated.', flags: MessageFlags.Ephemeral });
 				}
 				if (interaction.user.id === spokenMessage.speaker_user_id) {
-					return interaction.reply({ content: `You wrote the message: "${spokenMessage.original_content}"`, flags: MessageFlags.Ephemeral });
+					return interaction.reply({ content: `You wrote the message:\n\n${spokenMessage.original_content}`, flags: MessageFlags.Ephemeral });
 				}
 				const translatorCharacter = db.prepare('SELECT * FROM characters WHERE user_id = ?').get(interaction.user.id);
 				if (!translatorCharacter) {
