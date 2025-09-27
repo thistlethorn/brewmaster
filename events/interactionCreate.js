@@ -8,6 +8,7 @@ const config = require('../config.json');
 const db = require('../database');
 const { scrambleMessage } = require('../utils/translateText');
 const BOT_COMMANDS_CHANNEL_ID = config?.discord?.botCommandsId || '1354187940246327316';
+const { splitMessage } = require('../utils/messageUtils');
 
 
 function formatOption(option) {
@@ -18,6 +19,19 @@ function formatOption(option) {
 					option.attachment ? '[Attachment]' :
 						option.value !== undefined ? option.value : 'undefined'
 	})`;
+}
+
+async function sendIteratedChunks(contentToSend, interaction, ephemeral = false) {
+	const chunks = splitMessage(contentToSend, 1950);
+
+	for (let i = 0; i < chunks.length; i++) {
+		const replyMethod = i === 0 ? (interaction.deferred ? 'editReply' : 'reply') : 'followUp';
+		let chunk = chunks[i];
+
+		if (chunks.length > 1) chunk = `*( ${i + 1} / ${chunks.length} )*\n\n${chunk}`;
+
+		await interaction[replyMethod]({ content: chunk, flags: ephemeral ? MessageFlags.Ephemeral : undefined });
+	}
 }
 
 module.exports = {
@@ -409,7 +423,8 @@ module.exports = {
 						if (!existingAttempt) return interaction.reply({ content: 'You have not attempted to translate this message yet.', flags: MessageFlags.Ephemeral });
 
 						const revealedContent = scrambleMessage(spokenMessage.original_content, language.scramble_type, { decode: true, successRatio: existingAttempt.success_ratio });
-						return interaction.reply({ content: `Your interpretation of the message:\n>>> ${revealedContent}`, flags: MessageFlags.Ephemeral });
+						await sendIteratedChunks(revealedContent, interaction, true);
+						return interaction.followUp({ content: `This is your interpretation of the message. Your percent of understanding was \`${existingAttempt.success_ratio}%\`!`, flags: MessageFlags.Ephemeral });
 					}
 
 					// Handle initiating a translation
@@ -425,12 +440,11 @@ module.exports = {
 							return interaction.reply({ embeds: [embed], components: [row], flags: MessageFlags.Ephemeral });
 						}
 
-						const scrambledContent = scrambleMessage(spokenMessage.original_content, language.scramble_type);
 						const translationEmbed = new EmbedBuilder()
 							.setColor(0x95A5A6)
 							.setTitle(`Translate message in ${language.name}`)
 							.setThumbnail(language.avatar_url)
-							.setDescription(`The message appears to be scrambled nonsense:\n>>> ${scrambledContent}\n\nChoose a method to interpret its meaning. You only get one attempt!`);
+							.setDescription('The message appears to be scrambled nonsense!\nChoose a method to interpret its meaning. You only get one attempt!');
 						const row = new ActionRowBuilder().addComponents(
 							new ButtonBuilder().setCustomId(`speak_translate_direct_${messageId}`).setLabel(`Read The Message [Req. ${language.name}]`).setStyle(ButtonStyle.Primary).setEmoji('📖'),
 							new ButtonBuilder().setCustomId(`speak_translate_fortune_${messageId}`).setLabel('Interpret by Luck [FORTUNE]').setStyle(ButtonStyle.Secondary).setEmoji('🍀'),

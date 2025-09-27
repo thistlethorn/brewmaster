@@ -1,6 +1,8 @@
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const db = require('../../database');
 const { scrambleMessage } = require('../../utils/translateText');
+const { splitMessage } = require('../../utils/messageUtils');
+
 
 module.exports = {
 	category: 'charsys',
@@ -52,9 +54,17 @@ module.exports = {
 		collector.on('collect', async message => {
 			try {
 				const messageContent = message.content;
+				// Delete the original message immediately to provide a seamless RP experience
 				await message.delete();
 
 				const language = db.prepare('SELECT name, scramble_type FROM languages WHERE language_id = ?').get(languageId);
+
+				const contentToSend = language.name === 'Axal (Common)'
+					? messageContent
+					: scrambleMessage(messageContent, language.scramble_type);
+
+				// Use our new utility to split the message into safe chunks
+				const chunks = splitMessage(contentToSend, 1950);
 
 				const webhook = await interaction.channel.createWebhook({
 					name: 'Tavernborne Messenger',
@@ -64,46 +74,70 @@ module.exports = {
 					return webhooks.find(wh => wh.owner.id === interaction.client.user.id && wh.name === 'Tavernborne Messenger') || await interaction.channel.createWebhook({ name: 'Tavernborne Messenger' });
 				});
 
-				// Scramble/translate the message if the language is not the common tongue
-				const contentToSend = language.name === 'Axal (Common)'
-					? messageContent
-					: scrambleMessage(messageContent, language.scramble_type);
+				let primaryMessage;
 
-				const webhookMessage = await webhook.send({
-					content: contentToSend,
-					username: character.character_name,
-					avatarURL: character.character_image || interaction.user.displayAvatarURL(),
-					threadId: interaction.channel.isThread() ? interaction.channel.id : null,
-				});
+				for (let i = 0; i < chunks.length; i++) {
+					let chunk = chunks[i];
+					// Add a page indicator if the message is split
+					if (chunks.length > 1) {
+						chunk = `*( ${i + 1} / ${chunks.length} )*\n\n` + chunk;
+					}
 
-				db.prepare(`
-					INSERT INTO spoken_messages (message_id, original_content, language_id, speaker_user_id)
-					VALUES (?, ?, ?, ?)
-				`).run(webhookMessage.id, messageContent, languageId, userId);
+					const sentMessage = await webhook.send({
+						content: chunk,
+						username: character.character_name,
+						avatarURL: character.character_image || interaction.user.displayAvatarURL(),
+						threadId: interaction.channel.isThread() ? interaction.channel.id : null,
+					});
 
-				// Only add the translate button if not speaking the common tongue
-				if (language.name !== 'Axal (Common)') {
-					const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-					const row = new ActionRowBuilder().addComponents(
-						new ButtonBuilder()
-							.setCustomId(`speak_translate_init_${webhookMessage.id}`)
-							.setLabel('Translate Message')
-							.setStyle(ButtonStyle.Secondary)
-							.setEmoji('📜'),
-					);
-					await webhookMessage.channel.send({ components: [row] });
+					if (i === 0) {
+						primaryMessage = sentMessage;
+					}
+				}
+
+				// If a message was successfully sent, log it and add the translate button if needed
+				if (primaryMessage) {
+					// IMPORTANT: Store the FULL original content with the ID of the FIRST message chunk
+					db.prepare(`
+						INSERT INTO spoken_messages (message_id, original_content, language_id, speaker_user_id)
+						VALUES (?, ?, ?, ?)
+					`).run(primaryMessage.id, messageContent, languageId, userId);
+
+					if (language.name !== 'Axal (Common)') {
+						const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+						const row = new ActionRowBuilder().addComponents(
+							new ButtonBuilder()
+								// The button always references the ID of the first chunk
+								.setCustomId(`speak_translate_init_${primaryMessage.id}`)
+								.setLabel('Translate Message')
+								.setStyle(ButtonStyle.Secondary)
+								.setEmoji('📜'),
+						);
+						// Send the button as a separate message after all chunks have been sent
+						await interaction.channel.send({ components: [row] });
+					}
 				}
 
 			}
 			catch (error) {
 				console.error('[Speak Collector Error]', error);
-				await interaction.followUp({ content: 'An error occurred while sending your message.', flags: MessageFlags.Ephemeral });
+				// Check for the specific error to provide a better message
+				if (error.code === 50035 && error.message.includes('2000 or fewer')) {
+					await interaction.followUp({ content: 'An error occurred. It seems one of the message chunks was still too long after splitting. Please try shortening your paragraphs.', flags: MessageFlags.Ephemeral });
+				}
+				else {
+					await interaction.followUp({ content: 'An unexpected error occurred while sending your message.', flags: MessageFlags.Ephemeral });
+				}
 			}
 		});
 
 		collector.on('end', async (collected, reason) => {
 			if (reason === 'time') {
 				await interaction.editReply({ content: 'You did not send a message in time. Your speak command has expired.' });
+			}
+			// This will catch our custom 'toolong' reason and prevent the timeout message from appearing
+			else if (reason === 'toolong') {
+				await interaction.editReply({ content: 'Your speak command has been cancelled as the translated message was too long.' });
 			}
 		});
 	},
