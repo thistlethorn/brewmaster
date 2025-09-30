@@ -138,14 +138,16 @@ function encode(text, languageType) {
 		return text;
 	}
 
-	// This regex splits the string by markdown delimiters, but keeps them in the array.
-	// It prioritizes code blocks to treat them as a single, untranslatable unit.
-	const delimiterRegex = /(```[\s\S]*?```|`[^`]*?`|\s+|[^\w\s*`~|_#>\-+\\]+)/g;
+	const delimiterRegex = /(```[\s\S]*?```|`[^`]*?`|\s+|[^a-zA-Z0-9\s`#>+\\]+)/g;
+
 	const parts = text.split(delimiterRegex).filter(part => part);
 
 	const applyDictionary = (content, dictionary) => {
 		let result = content.toLowerCase();
-		for (const [key, value] of Object.entries(dictionary)) {
+		const sortedKeys = Object.keys(dictionary).sort((a, b) => b.length - a.length);
+
+		for (const key of sortedKeys) {
+			const value = dictionary[key];
 			const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 			result = result.replace(new RegExp(escapedKey, 'g'), value);
 		}
@@ -158,19 +160,14 @@ function encode(text, languageType) {
 			// It's a word.
 			const originalWord = part;
 
-			// 1. Determine the capitalization style of the original word.
-			// We check length > 1 to treat single-letter words like "A" as Title Case, not ALL CAPS.
 			const isAllCaps = originalWord.length > 1 && originalWord === originalWord.toUpperCase();
 			const isTitleCase = !isAllCaps && originalWord[0] === originalWord[0].toUpperCase();
 
-			// 2. Translate the word using the lowercase-based logic.
 			let translatedWord = applyDictionary(originalWord, parentDictionary);
 			if (dialectDictionary) {
-				// If it's a dialect, apply the second pass.
 				translatedWord = applyDictionary(translatedWord, dialectDictionary);
 			}
 
-			// 3. Re-apply the original capitalization style.
 			if (isAllCaps) {
 				return translatedWord.toUpperCase();
 			}
