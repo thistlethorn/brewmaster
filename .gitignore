@@ -26,6 +26,9 @@ package.json
 *.txt
 *.db
 testing/
+pathChecker.js
+jsconfig.json
+docs/
 deploy-commands.js
 rebuild_table.js
 check_fkeys.js
