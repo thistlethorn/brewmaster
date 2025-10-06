@@ -2,6 +2,7 @@ const { Events, EmbedBuilder } = require('discord.js');
 const db = require('@database/database.js');
 const { startVerification } = require('@core_brewmaster/tasks/captchaRequest.js');
 const config = require('@root/config.json');
+const log = require('@utils/logger.js');
 
 
 module.exports = {
@@ -19,7 +20,7 @@ module.exports = {
 			}
 		}
 		catch (error) {
-			console.error(`[guildMemberAdd] Failed to add Unverified role to ${member.user.tag}:`, error);
+			log.error(`[guildMemberAdd] Failed to add Unverified role to ${member.user.tag}:`, error);
 		}
 
 		await startVerification(member);
@@ -74,7 +75,7 @@ module.exports = {
 
 		}
 		catch (error) {
-			console.error('Error sending welcome message:', error);
+			log.error('Error sending welcome message:', error);
 		}
 	},
 };

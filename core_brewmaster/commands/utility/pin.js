@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const db = require('@database/database.js');
+const log = require('@utils/logger.js');
 
 
 module.exports = {
@@ -117,7 +118,7 @@ module.exports = {
 				collector.stop();
 			}
 			catch (error) {
-				console.error('Error pinning message:', error);
+				log.error('Error pinning message:', error);
 				await interaction.channel.send({
 					content: '❌ Failed to `/pin` the message - please try again' });
 				collector.stop('error');

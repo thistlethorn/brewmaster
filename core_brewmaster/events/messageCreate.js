@@ -7,6 +7,8 @@ const { isBot, isInGameroom, isNormalMessage } = require('@core_brewmaster/utils
 const { calculateBumpReward, updateMultiplier } = require('@core_tavernborne/handlers/handleCrownRewards.js');
 const { addXp } = require('@core_tavernborne/handlers/handleAddXpToChar.js');
 const config = require('@root/config.json');
+const log = require('@utils/logger.js');
+
 const MAX_TRIGGER_USES = config.tonyQuote?.maxTriggerUses ?? 20;
 
 function isQualityWelcome(message) {
@@ -96,8 +98,6 @@ module.exports = {
 					return;
 				}
 
-				// console.log('50% chance check passed and global cooldown is clear. Checking for triggers...');
-
 				// 2. Find all possible quotes that could be triggered by the words in the message
 				const tokens = (message.content.toLowerCase().match(/[a-z0-9&]+/gi) || []);
 				const uniqueWords = Array.from(new Set(tokens)).slice(0, 50);
@@ -117,8 +117,6 @@ module.exports = {
 					const last = new Date(q.last_triggered_at);
 					return (now.getTime() - last.getTime()) >= 15 * 60 * 1000;
 				});
-
-				// console.log(`[Tony Quote Trigger] Found ${candidates.length} candidates, ${potentialTriggers.length} valid triggers after cooldown check.`);
 
 				// 3. If we have any valid, off-cooldown quotes, attempt to send one
 				if (potentialTriggers.length > 0) {
@@ -158,7 +156,7 @@ module.exports = {
 								// The quote was removed or went on cooldown in the meantime; abort to roll back and avoid ghost payouts.
 								throw new Error('Chosen quote update failed (not found or on cooldown). Aborting.');
 							}
-							console.log(`[Tony Quote Trigger] Quote ID ${chosenQuote.id} triggered by ${message.author.id} (${message.author.tag}) at ${nowISO}.`);
+							log.info(`[Tony Quote Trigger] Quote ID ${chosenQuote.id} triggered by ${message.author.id} (${message.author.tag}) at ${nowISO}.`);
 
 							// Pay the user
 							db.prepare(`
@@ -171,7 +169,7 @@ module.exports = {
 							const currentTriggers = db.prepare('SELECT times_triggered FROM tony_quotes_active WHERE id = ?').get(chosenQuote.id);
 							if (currentTriggers && currentTriggers.times_triggered >= MAX_TRIGGER_USES) {
 								db.prepare('DELETE FROM tony_quotes_active WHERE id = ?').run(chosenQuote.id);
-								console.log(`[Tony Quote Trigger] Quote ID ${chosenQuote.id} has reached max uses and has been removed.`);
+								log.debug(`[Tony Quote Trigger] Quote ID ${chosenQuote.id} has reached max uses and has been removed.`);
 							}
 						});
 
@@ -188,11 +186,11 @@ module.exports = {
 					catch (dbError) {
 						// Handle the specific race condition error gracefully
 						if (dbError.message.includes('Cooldown was claimed')) {
-							console.log('[Tony Quote Trigger] Race condition averted. Another process sent a quote first.');
+							log.warn('[Tony Quote Trigger] Race condition averted. Another process sent a quote first.');
 						}
 						else {
 							// Handle other potential database errors
-							console.error('[Tony Quote Trigger] Database transaction failed:', dbError);
+							log.error('[Tony Quote Trigger] Database transaction failed:', dbError);
 						}
 					}
 				}
@@ -213,7 +211,6 @@ module.exports = {
 				const activity = db.prepare(`
             SELECT normal_messages FROM user_activity WHERE user_id = ?
         `).get(userId);
-				// console.log(`[messageCreate] [CHATLOG] ${message.author.displayName} sent a normal message, totaling [${activity.normal_messages}] today.`);
 
 				const ACTIVE_CHATTER_ROLE = '1382521995656302632';
 				if (!message.member.roles.cache.has(ACTIVE_CHATTER_ROLE)) {
@@ -248,11 +245,8 @@ module.exports = {
 							inline: false,
 						});
 
-						console.log(`[messageCreate] [CHATLOG] Added ${reward} Crowns [${multiplier}X Multi] to ${message.author.displayName} for getting the Active Chatter Role.`);
-
-
 						await message.channel.send({ embeds: [embed] });
-						console.log(`[messageCreate] [CHATLOG] ${message.author.displayName} has been given the Active Chatter role.`);
+						log.success(`[messageCreate] [CHATLOG] ${message.author.displayName} has successfully been given the Active Chatter role.`);
 						const reason = 'Earned the active chatter bonus (sending 15+ quality messages in a day)!';
 
 						await addXp(userId, config.xpRewards.activeChatter, message, reason);
@@ -262,13 +256,12 @@ module.exports = {
 
 			}
 			catch (error) {
-				console.error('[messageCreate] [Error] Error tracking user activity:', error);
+				log.error('[messageCreate] [Error] Error tracking user activity:', error);
 			}
 		}
 
 		if (message.author.id === '302050872383242240' &&
             message.embeds[0].description?.includes('Bump done!')) {
-			console.log('[messageCreate] Someone has done /bump.');
 
 			let reason = 'bumping the server';
 
@@ -291,12 +284,10 @@ module.exports = {
 					last_bump_time = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 			`).run(userId, currentWeek, currentWeek, currentWeek);
 				reschedule();
-				console.log('[messageCreate] Successfully updated bump_leaderboard with bump information and rescheduled reminder.');
 			}
 			catch (error) {
-				console.error('[messageCreate] [Error] Failed to update bump leaderboard:', error);
+				log.error('[messageCreate] [Error] Failed to update bump leaderboard:', error);
 			}
-			console.log(`[messageCreate] Bump recorded for ${userId} at ${new Date().toISOString()}`);
 
 			// start the embed and grab the top bumpers of the week ordered by the highest bumpers decending
 			const embed = new EmbedBuilder()
@@ -319,7 +310,7 @@ module.exports = {
 
 			// check if the streak database is empty
 			if (!testDB) {
-				console.log('[messageCreate] bump_streak was empty, populating with basic information instead.');
+				log.warn('[messageCreate] bump_streak was empty, populating with basic information instead.');
 				databaseEmptyFlag = true;
 				db.prepare(`
 					INSERT OR IGNORE INTO bump_streak (id, user_id, streak_count)
@@ -497,16 +488,14 @@ module.exports = {
 					inline: false,
 				});
 			}
-			console.log(`[messageCreate] Added ${reward.amount} [${reward.multiplierUsed}X Multi] to ${message.interactionMetadata.user.displayName} for ${streakBreakFlag === 0 ? `keeping the ${reward.streakTier} streak.` : `streak breaking a ${reward.brokenTier}.`}`);
 
 			// update the leaderboard message as defined in the bump_leaderboard table
 			await updateLeaderboard(message.client);
-			console.log('[messageCreate] Leaderboard was successfully updated.');
 
 			// delete the disboard message, and send the embed with the final stylization
 			await message.delete().catch(() => null);
 			await message.channel.send({ embeds: [embed] });
-			console.log('[messageCreate] Deleted the Disboard message, sent the bump message.');
+			log.success('[messageCreate] Bump action, leaderboard update, and crowns rewards processed successfully.');
 
 		}
 
@@ -629,11 +618,10 @@ module.exports = {
 				);
 
 				await message.channel.send({ embeds: [rewardEmbed] });
-				console.log(`[messageCreate] [WELCOME] ${message.author.displayName} earned ${totalPayout} Crowns for welcoming. (Base: ${baseAmount}, Bonus: ${bonusAmount}, Multi: ${multiplier}x)`);
 
 			}
 			catch (error) {
-				console.error('Error processing welcome reward:', error);
+				log.error('Error processing welcome reward:', error);
 			}
 		}
 

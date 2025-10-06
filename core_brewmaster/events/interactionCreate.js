@@ -9,6 +9,7 @@ const db = require('@database/database.js');
 const { scrambleMessage } = require('@core_tavernborne/utils/translateText.js');
 const BOT_COMMANDS_CHANNEL_ID = config?.discord?.botCommandsId || '1354187940246327316';
 const { splitMessage } = require('@utils/messageUtils.js');
+const log = require('@utils/logger.js');
 
 
 function formatOption(option) {
@@ -46,8 +47,7 @@ module.exports = {
 		try {
 			const subcommand = interaction.options?.getSubcommand(false) || null;
 			const subcommandGroup = interaction.options?.getSubcommandGroup(false) || null;
-
-			console.log(
+			log.debug(
 				`[interactionCreate] [LOGS]${interaction.user.displayName ? ' [User: ' + interaction.user.displayName + ']' : ''}${interaction.commandName ?
 					` [Command: /${interaction.commandName}${
 						subcommandGroup ? ` ${subcommandGroup}` : ''
@@ -94,7 +94,7 @@ module.exports = {
 
 				// 2. If the command doesn't exist or doesn't have an autocomplete handler, exit gracefully.
 				if (!command || typeof command.autocomplete !== 'function') {
-					console.error(`No autocomplete handler found for command "${interaction.commandName}".`);
+					log.error(`No autocomplete handler found for command "${interaction.commandName}".`);
 					// Respond with an empty array to satisfy Discord's API.
 					await interaction.respond([]);
 					return;
@@ -105,7 +105,7 @@ module.exports = {
 					await command.autocomplete(interaction);
 				}
 				catch (error) {
-					console.error(`Error in autocomplete for command "${interaction.commandName}":`, error);
+					log.error(`Error in autocomplete for command "${interaction.commandName}":`, error);
 					// If an error occurs, still respond so the interaction doesn't fail.
 					if (!interaction.responded) {
 						await interaction.respond([]);
@@ -121,7 +121,7 @@ module.exports = {
 						return;
 					}
 					catch (error) {
-						console.error('[Error] Shop modal error:', error);
+						log.error('[Error] Shop modal error:', error);
 						if (!interaction.replied && !interaction.deferred) {
 							await interaction.reply({ content: 'There was an error processing your shop action.', flags: MessageFlags.Ephemeral });
 						}
@@ -136,7 +136,7 @@ module.exports = {
 						return;
 					}
 					catch (error) {
-						console.error('[Error] Shop button error:', error);
+						log.error('[Error] Shop button error:', error);
 						if (!interaction.replied && !interaction.deferred) {
 							await interaction.reply({ content: 'There was an error processing your shop action.', flags: MessageFlags.Ephemeral });
 						}
@@ -151,7 +151,7 @@ module.exports = {
 						return;
 					}
 					catch (error) {
-						console.error('[Error] Shop menu error:', error);
+						log.error('[Error] Shop menu error:', error);
 						if (!interaction.replied && !interaction.deferred) {
 							await interaction.reply({ content: 'There was an error processing your shop action.', flags: MessageFlags.Ephemeral });
 						}
@@ -166,7 +166,7 @@ module.exports = {
 						return;
 					}
 					catch (error) {
-						console.error('[Error] Unseal menu error:', error);
+						log.error('[Error] Unseal menu error:', error);
 						if (!interaction.replied && !interaction.deferred) {
 							await interaction.reply({ content: 'There was an error processing your selection.', flags: MessageFlags.Ephemeral });
 						}
@@ -182,7 +182,7 @@ module.exports = {
 				const session = db.prepare('SELECT * FROM captcha_sessions WHERE message_id = ?').get(messageId);
 
 				if (!session) {
-					return interaction.update({ content: 'This verification has expired or is invalid.', components: [], embeds: [], files: [] }).catch((e) => {console.error(e);});
+					return interaction.update({ content: 'This verification has expired or is invalid.', components: [], embeds: [], files: [] }).catch((e) => {log.error(e);});
 				}
 
 				if (session.user_id !== userId) {
@@ -199,14 +199,14 @@ module.exports = {
 							await interaction.member.roles.add(verifiedRole);
 						}
 						else {
-							console.warn('[CAPTCHA] Verified Role ID is invalid or role was not found.');
+							log.warn('[CAPTCHA] Verified Role ID is invalid or role was not found.');
 						}
 
 						if (unverifiedRole) {
 							await interaction.member.roles.remove(unverifiedRole);
 						}
 						else {
-							console.warn('[CAPTCHA] UNverified Role ID is invalid or role was not found.');
+							log.warn('[CAPTCHA] UNverified Role ID is invalid or role was not found.');
 						}
 
 						// Award 1,000 Crowns
@@ -225,7 +225,7 @@ module.exports = {
 
 					}
 					catch (error) {
-						console.error('[CAPTCHA] Success handling error:', error);
+						log.error('[CAPTCHA] Success handling error:', error);
 						await interaction.reply({ content: 'Verification succeeded, but there was an error granting your role. Please contact staff.', flags: MessageFlags.Ephemeral });
 					}
 				}
@@ -249,7 +249,7 @@ module.exports = {
 								.setDescription('You failed to solve the CAPTCHA and have been removed from the Westwind Tavern. You are welcome to try again!')
 								.addFields({ name: 'Re-join Link', value: 'https://dsc.gg/westwindtavern' });
 
-							await interaction.user.send({ embeds: [dmEmbed] }).catch((e) => {console.error(e);});
+							await interaction.user.send({ embeds: [dmEmbed] }).catch((e) => {log.error(e);});
 							await interaction.member.kick('Failed CAPTCHA verification.');
 
 							const failedEmbed = new EmbedBuilder()
@@ -262,7 +262,7 @@ module.exports = {
 
 						}
 						catch (error) {
-							console.error('[CAPTCHA] Final failure handling error:', error);
+							log.error('[CAPTCHA] Final failure handling error:', error);
 							await interaction.update({ content: 'Verification failed. An error occurred while trying to remove you from the server.', components: [] });
 						}
 					}
@@ -305,7 +305,7 @@ module.exports = {
 					});
 				}
 				catch (error) {
-					console.error('[Opt-Out Error] Failed to save user preference:', error);
+					log.error('[Opt-Out Error] Failed to save user preference:', error);
 					await interaction.reply({ content: 'An error occurred while saving your preference.', flags: MessageFlags.Ephemeral });
 				}
 				return;
@@ -318,7 +318,7 @@ module.exports = {
 						return;
 					}
 					catch (error) {
-						console.error('[Error] Character modal error:', error);
+						log.error('[Error] Character modal error:', error);
 						if (!interaction.replied && !interaction.deferred) {
 							await interaction.reply({ content: 'There was an error processing your character details.', flags: MessageFlags.Ephemeral });
 						}
@@ -333,7 +333,7 @@ module.exports = {
 						return;
 					}
 					catch (error) {
-						console.error('[Error] Character button error:', error);
+						log.error('[Error] Character button error:', error);
 						if (!interaction.replied && !interaction.deferred) {
 							await interaction.reply({ content: 'There was an error processing your selection.', flags: MessageFlags.Ephemeral });
 						}
@@ -348,7 +348,7 @@ module.exports = {
 						return;
 					}
 					catch (error) {
-						console.error('[Error] Character menu error:', error);
+						log.error('[Error] Character menu error:', error);
 						if (!interaction.replied && !interaction.deferred) {
 							await interaction.reply({ content: 'There was an error processing your selection.', flags: MessageFlags.Ephemeral });
 						}
@@ -541,7 +541,7 @@ module.exports = {
 						return;
 					}
 					catch (error) {
-						console.error('[Error] Trade modal error:', error);
+						log.error('[Error] Trade modal error:', error);
 						if (!interaction.replied && !interaction.deferred) {
 							await interaction.reply({ content: 'There was an error processing your trade action.', flags: MessageFlags.Ephemeral });
 						}
@@ -561,7 +561,7 @@ module.exports = {
 						return;
 					}
 					catch (error) {
-						console.error('[Error] Trade stringmenu error:', error);
+						log.error('[Error] Trade stringmenu error:', error);
 						if (!interaction.replied && !interaction.deferred) {
 							await interaction.reply({ content: 'There was an error processing your trade action.', flags: MessageFlags.Ephemeral });
 						}
@@ -582,7 +582,7 @@ module.exports = {
 						return;
 					}
 					catch (error) {
-						console.error('[Error] Inventory button error:', error);
+						log.error('[Error] Inventory button error:', error);
 						if (!interaction.replied && !interaction.deferred) {
 							await interaction.reply({ content: 'There was an error processing your inventory action.', flags: MessageFlags.Ephemeral });
 						}
@@ -597,7 +597,7 @@ module.exports = {
 						return;
 					}
 					catch (error) {
-						console.error('[Error] Inventory menu error:', error);
+						log.error('[Error] Inventory menu error:', error);
 						if (!interaction.replied && !interaction.deferred) {
 							await interaction.reply({ content: 'There was an error processing your inventory action.', flags: MessageFlags.Ephemeral });
 						}
@@ -612,7 +612,7 @@ module.exports = {
 			}
 			catch (err) {
 				if (err.code !== 'MODULE_NOT_FOUND') {
-					console.error('[GM] Failed to load handleGameMasterInteraction.js:', err);
+					log.error('[GM] Failed to load handleGameMasterInteraction.js:', err);
 				}
 				// Continue gracefully without GM support.
 			}
@@ -627,7 +627,7 @@ module.exports = {
 						return;
 					}
 					catch (error) {
-						console.error(`[Error] Game Master ${interaction.isButton() ? 'button' : 'modal'} interaction error:`, error);
+						log.error(`[Error] Game Master ${interaction.isButton() ? 'button' : 'modal'} interaction error:`, error);
 						if (!interaction.replied && !interaction.deferred) {
 							const errMsg = interaction.isButton()
 								? 'There was an error processing this game management action.'
@@ -645,11 +645,11 @@ module.exports = {
 				if (gameCommand && typeof gameCommand.modals?.handleModalSubmit === 'function') {
 					try {
 						await gameCommand.modals.handleModalSubmit(interaction);
-						console.log(`[Execute] Successfully handled Gamble Modal, requested by ${interaction.user.displayName}`);
+						log.success(`[Execute] Successfully handled Gamble Modal, requested by ${interaction.user.displayName}`);
 						return;
 					}
 					catch (error) {
-						console.error('[Error] Gamble modal interaction error:', error);
+						log.error('[Error] Gamble modal interaction error:', error);
 						await interaction.reply({ content: 'There was an error processing your bet.', flags: MessageFlags.Ephemeral });
 						return;
 					}
@@ -662,7 +662,7 @@ module.exports = {
 						return;
 					}
 					catch (error) {
-						console.error('[Error] Guild modal error:', error);
+						log.error('[Error] Guild modal error:', error);
 						if (!interaction.replied && !interaction.deferred) {
 							await interaction.reply({ content: 'There was an error processing your guild action.', flags: MessageFlags.Ephemeral });
 						}
@@ -674,11 +674,11 @@ module.exports = {
 				if (guildCommand && typeof guildCommand.buttons?.handleFundraiseCustomModal === 'function') {
 					try {
 						await guildCommand.buttons.handleFundraiseCustomModal(interaction);
-						console.log(`[Execute] Successfully handled Fundraiser Custom Modal, requested by ${interaction.user.displayName}`);
+						log.success(`[Execute] Successfully handled Fundraiser Custom Modal, requested by ${interaction.user.displayName}`);
 						return;
 					}
 					catch (error) {
-						console.error('[Error] Fundraiser modal interaction error:', error);
+						log.error('[Error] Fundraiser modal interaction error:', error);
 						await interaction.reply({ content: 'There was an error processing your custom contribution.', flags: MessageFlags.Ephemeral });
 						return;
 					}
@@ -692,7 +692,7 @@ module.exports = {
 						return;
 					}
 					catch (error) {
-						console.error('[Error] PvE button interaction error:', error);
+						log.error('[Error] PvE button interaction error:', error);
 						// Attempt to inform user if possible
 						if (!interaction.replied && !interaction.deferred) {
 							await interaction.reply({ content: 'An error occurred during combat.', flags: MessageFlags.Ephemeral });
@@ -713,7 +713,7 @@ module.exports = {
 						return;
 					}
 					catch (error) {
-						console.error('[Error] PvE menu interaction error:', error);
+						log.error('[Error] PvE menu interaction error:', error);
 						if (!interaction.replied && !interaction.deferred) {
 							await interaction.reply({ content: 'An error occurred during combat.', flags: MessageFlags.Ephemeral });
 						}
@@ -732,7 +732,7 @@ module.exports = {
 						return;
 					}
 					catch (error) {
-						console.error('[Error] Trade button interaction error:', error);
+						log.error('[Error] Trade button interaction error:', error);
 						if (!interaction.replied && !interaction.deferred) {
 							await interaction.reply({ content: 'An error occurred while processing this trade action.', flags: MessageFlags.Ephemeral });
 						}
@@ -817,13 +817,13 @@ module.exports = {
 								await sendMessageToChannel(interaction.client, BOT_COMMANDS_CHANNEL_ID, rejectionMessage);
 							}
 							catch (error) {
-								console.warn('[Tony Quote Reject] Failed to send channel notice:', error);
+								log.warn('[Tony Quote Reject] Failed to send channel notice:', error);
 							}
 						}
 						return;
 					}
 					catch (error) {
-						console.error('[Error] Failed to handle Tony Quote button interaction:', error);
+						log.error('[Error] Failed to handle Tony Quote button interaction:', error);
 						if (!interaction.replied && !interaction.deferred) {
 							await interaction.reply({ content: 'An error occurred while handling this submission.', flags: MessageFlags.Ephemeral });
 						}
@@ -854,7 +854,7 @@ module.exports = {
 						return interaction.reply({ embeds: [loreEmbed], flags: MessageFlags.Ephemeral });
 					}
 					catch (error) {
-						console.error('[Error] Failed to fetch guild lore:', error);
+						log.error('[Error] Failed to fetch guild lore:', error);
 						return interaction.reply({ content: 'There was an error fetching the guild lore. Please try again later.', flags: MessageFlags.Ephemeral });
 					}
 				}
@@ -941,10 +941,10 @@ module.exports = {
 				else if (interaction.customId === 'motw_enter') {
 					try {
 						await handleMonarchEntry(interaction);
-						console.log(`[Execute] Successfully handled Monarch entry, requested by ${interaction.user.displayName}`);
+						log.success(`[Execute] Successfully handled Monarch entry, requested by ${interaction.user.displayName}`);
 					}
 					catch (error) {
-						console.error('[Error] Monarch entry button interaction error:', error);
+						log.error('[Error] Monarch entry button interaction error:', error);
 					}
 					return;
 				}
@@ -952,11 +952,11 @@ module.exports = {
 					if (gameCommand && typeof gameCommand.buttons?.handleGameButton === 'function') {
 						try {
 							await gameCommand.buttons.handleGameButton(interaction);
-							console.log(`[Execute] Successfully handled Gamble Button, requested by ${interaction.user.displayName}`);
+							log.success(`[Execute] Successfully handled Gamble Button, requested by ${interaction.user.displayName}`);
 							return;
 						}
 						catch (error) {
-							console.error('[Error] Gamble button interaction error:', error);
+							log.error('[Error] Gamble button interaction error:', error);
 							await interaction.reply({ content: 'There was an error processing this game action.', flags: MessageFlags.Ephemeral });
 							return;
 						}
@@ -969,14 +969,14 @@ module.exports = {
 						return;
 					}
 					catch (error) {
-						console.error('[Error] Cancel button interaction error:', error);
+						log.error('[Error] Cancel button interaction error:', error);
 						await interaction.reply({ content: 'There was an error cancelling this action.', flags: MessageFlags.Ephemeral });
 						return;
 					}
 				}
 				else if (interaction.customId.startsWith('guild_') || interaction.customId.startsWith('raid_') || interaction.customId.startsWith('upgrade_') || interaction.customId.startsWith('shield_') || interaction.customId.startsWith('fundraise_') || interaction.customId.startsWith('raidmsg_')) {
 					if (!guildCommand) {
-						console.error('[Error] Guild command not found for button handling');
+						log.error('[Error] Guild command not found for button handling');
 						return;
 					}
 					try {
@@ -1001,11 +1001,11 @@ module.exports = {
 						else if (interaction.customId.startsWith('raidmsg_')) {
 							await guildCommand.buttons.handleRaidMessageButton(interaction);
 						}
-						console.log(`[Execute] Successfully handled a Guild Button (${interaction.customId}), requested by ${interaction.user.displayName}`);
+						log.success(`[Execute] Successfully handled a Guild Button (${interaction.customId}), requested by ${interaction.user.displayName}`);
 						return;
 					}
 					catch (error) {
-						console.error(`[Error] Button interaction error for ${interaction.customId}:`, error);
+						log.error(`[Error] Button interaction error for ${interaction.customId}:`, error);
 						await interaction.reply({ content: 'There was an error processing this button interaction.', flags: MessageFlags.Ephemeral });
 						return;
 					}
@@ -1014,15 +1014,15 @@ module.exports = {
 
 			const command = interaction.client.commands.get(interaction.commandName);
 			if (!command) {
-				console.error(`[Error] No command matching ${interaction.commandName} was found.`);
+				log.error(`[Error] No command matching ${interaction.commandName} was found.`);
 				return;
 			}
 			try {
 				await command.execute(interaction);
-				console.log(`[Execute] Successfully ran /${interaction.commandName}, requested by ${interaction.user.displayName}`);
+				log.success(`[Execute] Successfully ran /${interaction.commandName}, requested by ${interaction.user.displayName}`);
 			}
 			catch (error) {
-				console.error('[Command Execution Error]', error);
+				log.error('[Command Execution Error]', error);
 				const errorMessage = error.code === 'SQLITE_ERROR' ? 'A database error occurred. Please try again later.' : 'There was an error while executing this command!';
 				if (interaction.replied || interaction.deferred) {
 					await interaction.followUp({ content: errorMessage, flags: MessageFlags.Ephemeral });
@@ -1033,7 +1033,7 @@ module.exports = {
 			}
 		}
 		catch (topLevelError) {
-			console.error('[Top Level Interaction Error]', topLevelError);
+			log.error('[Top Level Interaction Error]', topLevelError);
 		}
 	},
 };

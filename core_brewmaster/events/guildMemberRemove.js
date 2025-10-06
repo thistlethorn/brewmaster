@@ -1,6 +1,7 @@
 const { Events, EmbedBuilder } = require('discord.js');
 const db = require('@database/database.js');
 const sendMessageToChannel = require('@utils/sendMessageToChannel.js');
+const log = require('@utils/logger.js');
 
 /**
  * Deletes a guild when its owner leaves the server.
@@ -12,7 +13,7 @@ async function handleOwnerDeparture(client, guild, guildTag) {
 	const guildInfo = db.prepare('SELECT * FROM guild_list WHERE guild_tag = ?').get(guildTag);
 	if (!guildInfo) return;
 
-	console.log(`[GuildMemberRemove] Deleting guild "${guildInfo.guild_name}" [${guildTag}] because its owner has left.`);
+	log.info(`[GuildMemberRemove] Deleting guild "${guildInfo.guild_name}" [${guildTag}] because its owner has left.`);
 
 	// 1. Announce the disbanding
 	const announceEmbed = new EmbedBuilder()
@@ -27,7 +28,7 @@ async function handleOwnerDeparture(client, guild, guildTag) {
 		await sendMessageToChannel(client, ANNOUNCEMENT_CHANNEL_ID, { embeds: [announceEmbed] });
 	}
 	catch (error) {
-		console.error('[GuildMemberRemove] Failed to send disband announcement:', error);
+		log.error('[GuildMemberRemove] Failed to send disband announcement:', error);
 	}
 
 	// 2. Delete Discord Assets
@@ -42,7 +43,7 @@ async function handleOwnerDeparture(client, guild, guildTag) {
 		if (publicChannel) await publicChannel.delete('Guild disbanded: Owner left server.');
 	}
 	catch (error) {
-		console.error(`[GuildMemberRemove] Error deleting Discord assets for [${guildTag}]:`, error.message);
+		log.error(`[GuildMemberRemove] Error deleting Discord assets for [${guildTag}]:`, error.message);
 	}
 
 	// 3. Delete from Database
@@ -50,7 +51,7 @@ async function handleOwnerDeparture(client, guild, guildTag) {
 		db.prepare('DELETE FROM guildmember_tracking WHERE guild_tag = ?').run(guildTag);
 		db.prepare('DELETE FROM guild_list WHERE guild_tag = ?').run(guildTag);
 	})();
-	console.log(`[GuildMemberRemove] Guild [${guildTag}] and all associated data removed from the database.`);
+	log.info(`[GuildMemberRemove] Guild [${guildTag}] and all associated data removed from the database.`);
 }
 
 
@@ -67,7 +68,7 @@ module.exports = {
 			return;
 		}
 
-		console.log(`[GuildMemberRemove] Member ${member.user.tag} (${userId}) has left. They were in guild [${membership.guild_tag}].`);
+		log.info(`[GuildMemberRemove] Member ${member.user.tag} (${userId}) has left. They were in guild [${membership.guild_tag}].`);
 
 		if (membership.owner === 1) {
 			// The owner left. This is the most critical case.
@@ -77,14 +78,14 @@ module.exports = {
 		else {
 			// A regular member or Vice-GM left. We just remove them from the tracking table.
 			db.prepare('DELETE FROM guildmember_tracking WHERE user_id = ?').run(userId);
-			console.log(`[GuildMemberRemove] Removed member ${userId} from guild [${membership.guild_tag}].`);
+			log.info(`[GuildMemberRemove] Removed member ${userId} from guild [${membership.guild_tag}].`);
 
 			// Announce the departure
 			const guildInfo = db.prepare('SELECT guild_name, public_channel_id FROM guild_list WHERE guild_tag = ?').get(membership.guild_tag);
 
 			// If the guild no longer exists (e.g., owner left first), we can't announce anything.
 			if (!guildInfo) {
-				console.log(`[GuildMemberRemove] Guild [${membership.guild_tag}] no longer exists. Cannot send departure announcement.`);
+				log.warn(`[GuildMemberRemove] Guild [${membership.guild_tag}] no longer exists. Cannot send departure announcement.`);
 				return;
 			}
 
@@ -100,7 +101,7 @@ module.exports = {
 				await sendMessageToChannel(member.client, GLOBAL_ANNOUNCEMENT_CHANNEL_ID, { embeds: [globalAnnounceEmbed] });
 			}
 			catch (e) {
-				console.error('[GuildMemberRemove] Could not send global departure notice:', e);
+				log.error('[GuildMemberRemove] Could not send global departure notice:', e);
 			}
 
 
@@ -114,7 +115,7 @@ module.exports = {
 					await sendMessageToChannel(member.client, guildInfo.public_channel_id, { embeds: [guildAnnounceEmbed] });
 				}
 				catch (e) {
-					console.error(`[GuildMemberRemove] Could not send departure notice to guild channel for [${membership.guild_tag}]:`, e);
+					log.error(`[GuildMemberRemove] Could not send departure notice to guild channel for [${membership.guild_tag}]:`, e);
 				}
 			}
 		}
