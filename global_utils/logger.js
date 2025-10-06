@@ -60,6 +60,14 @@ const log = {
 	special: (...args) => {
 		console.log(`${COLORS.blue}%s${COLORS.reset}`, ...args);
 	},
+
+	/**
+     * Logs a basic message (no color).
+     * @param {...any} args The message parts to log.
+     */
+	basic: (...args) => {
+		console.log(...args);
+	},
 };
 
 module.exports = log;

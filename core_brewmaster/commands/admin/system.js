@@ -2,6 +2,7 @@
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits, ChannelType } = require('discord.js');
 const db = require('@database/database.js');
 const config = require('@root/config.json');
+const log = require('@utils/logger.js');
 
 const YOUR_USER_ID = '1126419078140153946';
 const VERIFIED_DM_ROLE_ID = '1400980447919345694';
@@ -171,7 +172,7 @@ async function handleNewGameDm(interaction) {
 		await interaction.followUp({ content: `<@${dmUser.id}>` });
 	}
 	catch (error) {
-		console.error('Error setting up new game for DM:', error);
+		log.error('Error setting up new game for DM:', error);
 		await interaction.editReply({ content: '❌ An error occurred while setting up the game. Any created roles or channels may need to be manually removed.' });
 	}
 }

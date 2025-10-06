@@ -1,4 +1,5 @@
 const { SlashCommandBuilder, Events } = require('discord.js');
+const log = require('@utils/logger.js');
 
 module.exports = {
 	category: 'admin',
@@ -56,7 +57,7 @@ module.exports = {
 
 		}
 		catch (error) {
-			console.error('Error emitting test event:', error);
+			log.error('Error emitting test event:', error);
 			await interaction.reply({
 				content: `❌ Failed to emit event: ${error.message}`,
 			});

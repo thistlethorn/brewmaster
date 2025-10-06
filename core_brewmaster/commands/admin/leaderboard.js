@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const db = require('@database/database.js');
 const updateLeaderboard = require('@core_brewmaster/handlers/handleUpdateLeaderboard.js');
+const log = require('@utils/logger.js');
 
 module.exports = {
 	category: 'admin',
@@ -18,8 +19,6 @@ module.exports = {
 	async execute(interaction) {
 		const mode = interaction.options.getString('commandtype');
 		if (interaction.member.roles.cache.has('1354145856345083914') || interaction.member.id === '1126419078140153946') {
-			console.log('leaderboard.js');
-			console.log('----------------------');
 			if (mode === 'clear') {
 				const messageInfo = db.prepare(`
 					SELECT channel_id, message_id 
@@ -45,23 +44,21 @@ module.exports = {
 							await interaction.deleteReply();
 						}
 						catch (err) {
-							console.error('Failed to delete reply:', err);
+							log.error('Failed to delete reply:', err);
 						}
 					}, 8000);
 				}
 
 			}
 			else if (mode === 'start') {
-				console.log('(/leaderboard START command used. Setting up the basic embed.)');
+				log.debug('(/leaderboard START command used. Setting up the basic embed.)');
 				const embed = new EmbedBuilder()
 					.setTitle('🏆 Weekly Bump Leaderboard 🏆')
 					.setDescription('Top members who helped bump our server!')
 					.setColor(0x5865F2)
 					.setFooter({ text: 'Resets every Sunday at midnight UTC' });
 
-				console.log('(Sending the embed.)');
 				const message = await interaction.channel.send({ embeds: [embed] });
-				console.log('(Preparing and sending to the DB, initializing the DB with channel_id and message_id.)');
 				db.prepare(`
 					INSERT INTO leaderboard_message (channel_id, message_id)
 					VALUES (?, ?)
@@ -70,7 +67,6 @@ module.exports = {
 				`).run(interaction.channel.id, message.id);
 
 
-				console.log('(Calling updateLeaderboard.)');
 				await updateLeaderboard(interaction.client);
 				await interaction.reply({ content: 'Successfully used /leaderboard [start].', flags: MessageFlags.Ephemeral });
 				setTimeout(async () => {
@@ -78,7 +74,7 @@ module.exports = {
 						await interaction.deleteReply();
 					}
 					catch (err) {
-						console.error('Failed to delete reply:', err);
+						log.error('Failed to delete reply:', err);
 					}
 				}, 8000);
 
@@ -86,22 +82,18 @@ module.exports = {
 			}
 		}
 		else {
-			console.log('Failed to run admin command /leaderboard.');
-			console.log('----------------------');
-			console.log('END leaderboard.js');
+			log.error('Failed to run admin command /leaderboard.');
 			await interaction.reply({ content: 'Insufficient permissions to run Administration commands!', flags: MessageFlags.Ephemeral });
 			setTimeout(async () => {
 				try {
 					await interaction.deleteReply();
 				}
 				catch (err) {
-					console.error('Failed to delete reply:', err);
+					log.error('Failed to delete reply:', err);
 				}
 			}, 8000);
 		}
 
-		console.log('----------------------');
-		console.log('END leaderboard.js');
 
 	},
 };

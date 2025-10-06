@@ -2,6 +2,7 @@ const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js'
 const config = require('@root/config.json');
 const db = require('@database/database.js');
 const { reschedule } = require('@core_brewmaster/tasks/bumpReminder.js');
+const log = require('@utils/logger.js');
 
 module.exports = {
 	category: 'admin',
@@ -34,7 +35,7 @@ module.exports = {
                     last_bump_time = excluded.last_bump_time
             `).run(botId, now.toISOString());
 
-			console.log(`[ForceReminder] Manually inserted a synthetic bump time: ${now.toISOString()}`);
+			log.info(`[ForceReminder] Manually inserted a synthetic bump time: ${now.toISOString()}`);
 
 			// Now that the database is correct, we can call reschedule.
 			reschedule();
@@ -57,7 +58,7 @@ module.exports = {
 
 		}
 		catch (error) {
-			console.error('[ForceReminder] An error occurred:', error);
+			log.error('[ForceReminder] An error occurred:', error);
 			await interaction.editReply({
 				content: 'An error occurred while trying to reset the reminder timer. Please check the console.',
 			});

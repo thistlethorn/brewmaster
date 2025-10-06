@@ -2,6 +2,7 @@
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const db = require('@database/database.js');
 const config = require('@root/config.json');
+const log = require('@utils/logger.js');
 
 // Constants from the original giveaway handler for consistency
 const HALL_OF_FAME_CHANNEL = '1365345890591703080';
@@ -95,7 +96,7 @@ module.exports = {
 
 		}
 		catch (error) {
-			console.error('[resendmotw] An error occurred:', error);
+			log.error('[resendmotw] An error occurred:', error);
 			await interaction.editReply({ content: 'An error occurred while trying to resend the announcement. Please check the logs.' });
 		}
 	},

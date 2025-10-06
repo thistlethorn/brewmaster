@@ -2,6 +2,8 @@ const { SlashCommandBuilder, MessageFlags, Collection } = require('discord.js');
 const db = require('@database/database.js');
 const updateLeaderboard = require('@core_brewmaster/handlers/handleUpdateLeaderboard.js');
 const getWeekIdentifier = require('@utils/getWeekIdentifier.js');
+const log = require('@utils/logger.js');
+
 
 module.exports = {
 	category: 'admin',
@@ -84,7 +86,7 @@ module.exports = {
 					await interaction.deleteReply();
 				}
 				catch (err) {
-					console.error('Failed to delete reply:', err);
+					log.error('Failed to delete reply:', err);
 				}
 			}, 8000);
 		}
@@ -98,7 +100,7 @@ module.exports = {
 					await interaction.deleteReply();
 				}
 				catch (err) {
-					console.error('Failed to delete reply:', err);
+					log.error('Failed to delete reply:', err);
 				}
 			}, 8000);
 		}

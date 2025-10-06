@@ -1,6 +1,6 @@
-// eslint-disable-next-line no-unused-vars
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const db = require('@database/database.js');
+const log = require('@utils/logger.js');
 
 
 module.exports = {
@@ -13,14 +13,15 @@ module.exports = {
 		if (!(interaction.member.roles.cache.has('1354145856345083914') || interaction.member.id === '1126419078140153946')) {
 			return interaction.reply({
 				content: 'Insufficient permissions to use /debug.',
-				ephemeral: true });
+				flags: MessageFlags.Ephemeral });
 		}
 		try {
 			db.pragma('wal_checkpoint(FULL)');
 			interaction.reply('Checkpoint DB: Success.');
+			log.special('[Database Checkpointed]');
 		}
 		catch (error) {
-			console.log('Couldn\'t checkpoint the DB: ' + error);
+			log.error('Couldn\'t checkpoint the DB: ' + error);
 		}
 		/*
 		try {
@@ -90,7 +91,7 @@ module.exports = {
 			}
 		}
 		catch (err) {
-			console.error('Error sending debug info:', err);
+			log.error('Error sending debug info:', err);
 			await interaction.followUp({
 				content: 'Error sending some debug information.',
 				flags: MessageFlags.Ephemeral,
