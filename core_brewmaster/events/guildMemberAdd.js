@@ -1,4 +1,4 @@
-const { Events, EmbedBuilder } = require('discord.js');
+const { Events, EmbedBuilder, ButtonBuilder, ActionRowBuilder } = require('discord.js');
 const db = require('@database/database.js');
 const { startVerification } = require('@core_brewmaster/tasks/captchaRequest.js');
 const config = require('@root/config.json');
@@ -26,6 +26,14 @@ module.exports = {
 		await startVerification(member);
 		const welcomeChannelId = '1353631829453836291';
 		const welcomeChannel = member.guild.channels.cache.get(welcomeChannelId);
+
+		const welcomeSquadButton = new ButtonBuilder()
+			.setCustomId('welcome_squad_toggle')
+			.setLabel('Join/Leave the Welcome Squad')
+			.setStyle(ButtonStyle.Secondary)
+			.setEmoji('👋');
+
+		const row = new ActionRowBuilder().addComponents(welcomeSquadButton);
 
 		// Create welcome embed
 		const welcomeEmbed = new EmbedBuilder()
@@ -65,6 +73,7 @@ module.exports = {
 			const welcomeMessage = await welcomeChannel.send({
 				content: `${member}`,
 				embeds: [welcomeEmbed],
+				components: [row],
 			});
 
 			// Store welcome message with timestamp

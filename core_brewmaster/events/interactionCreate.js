@@ -114,6 +114,38 @@ module.exports = {
 				return;
 			}
 
+			if (interaction.customId === 'welcome_squad_toggle') {
+				const WELCOME_SQUAD_ROLE_ID = '1425143327317299311';
+				const member = interaction.member;
+
+				// Use a try-catch block for safety
+				try {
+					if (member.roles.cache.has(WELCOME_SQUAD_ROLE_ID)) {
+
+						await member.roles.remove(WELCOME_SQUAD_ROLE_ID);
+						await interaction.reply({
+							content: '✅ You have left the Welcome Squad. You will no longer be pinged.',
+							flags: MessageFlags.Ephemeral,
+						});
+					}
+					else {
+
+						await member.roles.add(WELCOME_SQUAD_ROLE_ID);
+						await interaction.reply({
+							content: '🎉 Welcome to the squad! You will now be notified to greet new members.',
+							flags: MessageFlags.Ephemeral,
+						});
+					}
+				}
+				catch (error) {
+					log.error('Welcome Squad toggle error:', error);
+					await interaction.reply({
+						content: '❌ There was an error updating your roles. Please contact a staff member.',
+						flags: MessageFlags.Ephemeral,
+					});
+				}
+			}
+
 			if (interaction.isModalSubmit() && interaction.customId.startsWith('shop_')) {
 				if (shopCommand && typeof shopCommand.modals === 'function') {
 					try {
