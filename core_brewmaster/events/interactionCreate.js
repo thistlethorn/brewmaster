@@ -10,6 +10,7 @@ const { scrambleMessage } = require('@core_tavernborne/utils/translateText.js');
 const BOT_COMMANDS_CHANNEL_ID = config?.discord?.botCommandsId || '1354187940246327316';
 const { splitMessage } = require('@utils/messageUtils.js');
 const log = require('@utils/logger.js');
+const WELCOME_PARTY_ROLE_ID = config?.discord?.welcomePartyRoleId || '1425143327317299311';
 
 
 function formatOption(option) {
@@ -114,32 +115,31 @@ module.exports = {
 				return;
 			}
 
-			if (interaction.customId === 'welcome_squad_toggle') {
-				const WELCOME_SQUAD_ROLE_ID = '1425143327317299311';
+			if (interaction.customId === 'welcome_party_toggle') {
 				const member = interaction.member;
 
 				// Use a try-catch block for safety
 				try {
-					if (member.roles.cache.has(WELCOME_SQUAD_ROLE_ID)) {
+					if (member.roles.cache.has(WELCOME_PARTY_ROLE_ID)) {
 
-						await member.roles.remove(WELCOME_SQUAD_ROLE_ID);
-						await interaction.reply({
-							content: '✅ You have left the Welcome Squad. You will no longer be pinged.',
+						await member.roles.remove(WELCOME_PARTY_ROLE_ID);
+						return interaction.reply({
+							content: '✅ You have left the Welcoming Party. You will no longer be pinged.',
 							flags: MessageFlags.Ephemeral,
 						});
 					}
 					else {
 
-						await member.roles.add(WELCOME_SQUAD_ROLE_ID);
-						await interaction.reply({
-							content: '🎉 Welcome to the squad! You will now be notified to greet new members.',
+						await member.roles.add(WELCOME_PARTY_ROLE_ID);
+						return interaction.reply({
+							content: '🎉 Welcome to the Welcoming Party! You will now be notified to greet new members.',
 							flags: MessageFlags.Ephemeral,
 						});
 					}
 				}
 				catch (error) {
-					log.error('Welcome Squad toggle error:', error);
-					await interaction.reply({
+					log.error('Welcome Party toggle error:', error);
+					return interaction.reply({
 						content: '❌ There was an error updating your roles. Please contact a staff member.',
 						flags: MessageFlags.Ephemeral,
 					});

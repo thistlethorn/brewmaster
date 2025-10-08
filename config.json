@@ -1,7 +1,9 @@
 {
-	"clientId": "1369686472709378101",
-	"guildId": "1353623582411984928",
-	"discord": {
+  "clientId": "1369686472709378101",
+  "guildId": "1353623582411984928",
+  "developerId": "1126419078140153946",
+
+  "discord": {
     "guildCategoryId": "1396211786008756254",
     "staffRoleId": "1354145856345083914",
     "verifiedRoleId": "1375486040571117568",
@@ -11,9 +13,10 @@
     "bumpChannelId": "1354187940246327316",
     "bumpRoleId": "1380398838333968436",
     "idleChatterChannelId" : "1353623582411984931",
-    "botCommandsId" : "1354187940246327316"
+    "botCommandsId" : "1354187940246327316",
+    "welcomePartyRoleId" : "1425143327317299311"
   },
-  "developerId": "1126419078140153946",
+
   "tonyQuote" : {
     "triggerSubmissionCost" : 200,
     "idleSubmissionCost" : 100,
@@ -24,6 +27,7 @@
     "maxIdleUses" : 40,
     "maxTriggerUses" : 20
   },
+
   "guild": {
     "vulnerabilityThreshold": 500,
     "raidMaxStolenPercent": 25,
@@ -34,12 +38,15 @@
     "defenderRoleDurationMs": 86400000,
     "maxAmountOfGuildsExisting": 15
   },
+
   "bump": {
     "cooldownMs": 7200000
   },
+
   "gamble" : {
     "jackpotBaseAmount" : 5000
   },
+
   "xpRewards": {
     "dailyClaim": 25,
     "activeChatter": 50,
@@ -50,7 +57,9 @@
     "topBumperWin": 250,
     "welcomeMember": 15
   },
+
   "tavernborne": {
     "characterLogChannelId": "1421921077860368404"
   }
+
 }

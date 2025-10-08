@@ -1,8 +1,9 @@
-const { Events, EmbedBuilder, ButtonBuilder, ActionRowBuilder } = require('discord.js');
+const { Events, EmbedBuilder, ButtonBuilder, ActionRowBuilder, ButtonStyle } = require('discord.js');
 const db = require('@database/database.js');
 const { startVerification } = require('@core_brewmaster/tasks/captchaRequest.js');
 const config = require('@root/config.json');
 const log = require('@utils/logger.js');
+const WELCOME_PARTY_ROLE_ID = config?.discord?.welcomePartyRoleId || '1425143327317299311';
 
 
 module.exports = {
@@ -28,7 +29,7 @@ module.exports = {
 		const welcomeChannel = member.guild.channels.cache.get(welcomeChannelId);
 
 		const welcomeSquadButton = new ButtonBuilder()
-			.setCustomId('welcome_squad_toggle')
+			.setCustomId('welcome_party_toggle')
 			.setLabel('Join/Leave the Welcome Squad')
 			.setStyle(ButtonStyle.Secondary)
 			.setEmoji('👋');
@@ -71,7 +72,7 @@ module.exports = {
 
 		try {
 			const welcomeMessage = await welcomeChannel.send({
-				content: `${member}`,
+				content: `${member} & <@&${WELCOME_PARTY_ROLE_ID}>`,
 				embeds: [welcomeEmbed],
 				components: [row],
 			});
