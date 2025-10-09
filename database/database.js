@@ -1411,7 +1411,7 @@ const setupTables = db.transaction(() => {
 			server_id TEXT NOT NULL,
 			name TEXT NOT NULL,
 			color_hex TEXT,
-			is_hoisted INTEGER DEFAULT 0, -- This was the missing line
+			is_hoisted INTEGER DEFAULT 0,
 			created_at TEXT DEFAULT CURRENT_TIMESTAMP
 		)
 	`).run();

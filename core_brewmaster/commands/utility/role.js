@@ -17,29 +17,40 @@ const TIER3_HOIST_PRICE = 75000;
 
 const TIER2_NAME_PREFIX = '[✓] ';
 const RESERVED_WORDS = ['admin', 'mod', 'staff', 'bot', 'everyone', 'here', 'discord', 'system', 'owner'];
+const ROLES_PER_PAGE = 5;
 
 // Helper to check user balance
 function getUserBalance(userId) {
 	return db.prepare('SELECT crowns FROM user_economy WHERE user_id = ?').get(userId)?.crowns || 0;
 }
 
-// Tier 1: View available pre-made roles
-async function handleView(interaction) {
+// Tier 1: View available pre-made roles (NOW WITH PAGINATION LMAO)
+async function handleView(interaction, pageArg = 1) {
+	const isUpdate = interaction.isButton();
 	const basicRoles = db.prepare('SELECT * FROM basic_vanity_roles ORDER BY price ASC').all();
 
 	if (basicRoles.length === 0) {
-		return interaction.reply({ content: 'The Weaver\'s Boutique currently has no roles in stock. Check back later!', flags: MessageFlags.Ephemeral });
+		const replyOptions = { content: 'The Weaver\'s Boutique currently has no roles in stock. Check back later!', flags: MessageFlags.Ephemeral, embeds: [], components: [] };
+		return isUpdate ? interaction.update(replyOptions) : interaction.reply(replyOptions);
 	}
+
+	// --- PAGINATION LOGIC ---
+	const totalPages = Math.max(1, Math.ceil(basicRoles.length / ROLES_PER_PAGE));
+	const page = Math.min(pageArg, totalPages);
+	const start = (page - 1) * ROLES_PER_PAGE;
+	const end = start + ROLES_PER_PAGE;
+	const rolesOnPage = basicRoles.slice(start, end);
 
 	const embed = new EmbedBuilder()
 		.setColor(0x9B59B6)
 		.setTitle('🧵 The Weaver\'s Boutique - Tavern Collection 🧵')
-		.setDescription('Welcome! Here you can purchase pre-made vanity roles to express your status in the Tavern. Click a button to purchase a role.');
+		.setDescription('Welcome! Here you can purchase pre-made vanity roles to express your status in the Tavern. Click a button to purchase a role.')
+		.setFooter({ text: `Page ${page} / ${totalPages}` });
 
 	const components = [];
-	// Group buttons into rows of 5
+
 	let currentRow = new ActionRowBuilder();
-	for (const role of basicRoles) {
+	for (const role of rolesOnPage) {
 		const roleColor = role.color_hex || '#95a5a6';
 		embed.addFields({
 			name: `${role.name} - 👑 ${role.price.toLocaleString()}`,
@@ -47,6 +58,7 @@ async function handleView(interaction) {
 			inline: false,
 		});
 
+		// If the current row is full, push it and start a new one.
 		if (currentRow.components.length === 5) {
 			components.push(currentRow);
 			currentRow = new ActionRowBuilder();
@@ -59,12 +71,35 @@ async function handleView(interaction) {
 				.setStyle(ButtonStyle.Success),
 		);
 	}
+	// Push the last row if it has any buttons.
 	if (currentRow.components.length > 0) {
 		components.push(currentRow);
 	}
 
+	// Add navigation buttons if there's more than one page
+	if (totalPages > 1) {
+		const navRow = new ActionRowBuilder().addComponents(
+			new ButtonBuilder()
+				.setCustomId(`role_view_prev_${interaction.user.id}_${page}`)
+				.setLabel('◀️ Previous')
+				.setStyle(ButtonStyle.Secondary)
+				.setDisabled(page === 1),
+			new ButtonBuilder()
+				.setCustomId(`role_view_next_${interaction.user.id}_${page}`)
+				.setLabel('Next ▶️')
+				.setStyle(ButtonStyle.Secondary)
+				.setDisabled(page === totalPages),
+		);
+		components.push(navRow);
+	}
 
-	await interaction.reply({ embeds: [embed], components, flags: MessageFlags.Ephemeral });
+	const replyOptions = { embeds: [embed], components, flags: MessageFlags.Ephemeral };
+	if (isUpdate) {
+		await interaction.update(replyOptions);
+	}
+	else {
+		await interaction.reply(replyOptions);
+	}
 }
 
 // Tier 1: Sell a pre-made role
@@ -414,6 +449,21 @@ module.exports = {
 		const userId = interaction.user.id;
 		const errorEmbed = new EmbedBuilder().setColor(0xE74C3C);
 
+		// pagination handler
+		if (action === 'view') {
+			const subAction = parts[2];
+			const targetUserId = parts[3];
+			const currentPage = parseInt(parts[4], 10);
+
+			if (userId !== targetUserId) {
+				return interaction.reply({ content: 'This is not your menu.', flags: MessageFlags.Ephemeral });
+			}
+
+			const newPage = subAction === 'next' ? currentPage + 1 : currentPage - 1;
+			await handleView(interaction, newPage);
+			return;
+		}
+
 		if (action === 'buy') {
 			const roleId = parts[2];
 			if (interaction.member.roles.cache.has(roleId)) {
@@ -482,8 +532,12 @@ module.exports = {
 					const buyerMember = interaction.member;
 					const role = await interaction.guild.roles.fetch(roleId);
 
+					// Transfer role in Discord
+					await sellerMember.roles.remove(role);
+					await buyerMember.roles.add(role);
+
 					db.transaction(() => {
-						// Transfer Crowns
+						// ...THEN Transfer Crowns
 						if (price > 0) {
 							db.prepare('UPDATE user_economy SET crowns = crowns - ? WHERE user_id = ?').run(price, buyerId);
 							db.prepare('INSERT INTO user_economy (user_id, crowns) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET crowns = crowns + ?')
@@ -493,9 +547,6 @@ module.exports = {
 						db.prepare('UPDATE custom_vanity_roles SET owner_id = ? WHERE role_id = ? AND owner_id = ?').run(buyerId, roleId, sellerId);
 					})();
 
-					// Transfer role in Discord
-					await sellerMember.roles.remove(role);
-					await buyerMember.roles.add(role);
 
 					originalEmbed.setFooter({ text: `Offer accepted by ${interaction.user.username}! Ownership transferred.` }).setColor(0x2ECC71);
 					await interaction.update({ embeds: [originalEmbed], components: disabledComponents });
@@ -504,8 +555,6 @@ module.exports = {
 					console.error('Role offer acceptance error:', error);
 					originalEmbed.setFooter({ text: 'Offer failed due to a server error.' }).setColor(0xE74C3C);
 					await interaction.update({ embeds: [originalEmbed], components: disabledComponents });
-					// NOTE: A real implementation should refund the buyer if the transaction fails after payment.
-					// This simple version assumes the transaction is atomic.
 				}
 			}
 		}
