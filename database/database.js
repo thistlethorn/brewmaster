@@ -1393,7 +1393,8 @@ const setupTables = db.transaction(() => {
         )
     `).run();
 
-	// --- NEW TABLES FOR VANITY ROLES ---
+	// NEW TABLES FOR VANITY ROLES
+
 	db.prepare(`
         CREATE TABLE IF NOT EXISTS basic_vanity_roles (
             role_id TEXT PRIMARY KEY,
@@ -1417,182 +1418,182 @@ const setupTables = db.transaction(() => {
 	`).run();
 
 	db.prepare(`
-    CREATE TABLE IF NOT EXISTS blacklisted_role_names (
-        role_name_normalized TEXT PRIMARY KEY,
-        original_casing TEXT NOT NULL,
-        server_id_created_on TEXT NOT NULL,
-        original_creator_id TEXT NOT NULL,
-        blacklisted_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )
-`).run();
+		CREATE TABLE IF NOT EXISTS blacklisted_role_names (
+			role_name_normalized TEXT PRIMARY KEY,
+			original_casing TEXT NOT NULL,
+			server_id_created_on TEXT NOT NULL,
+			original_creator_id TEXT NOT NULL,
+			blacklisted_at TEXT DEFAULT CURRENT_TIMESTAMP
+		)
+	`).run();
 
 
 	console.log('[DB Seeding] Populating basic_vanity_roles if necessary...');
 	try {
 		const rolesToSeed = [
 			{
-				role_id: 'YOUR_SEASONED_ADVENTURER_ROLE_ID',
+				role_id: '1425951998859022459',
 				name: 'Seasoned Adventurer',
 				price: 2500,
 				description: 'A familiar face, welcome in any corner of the Tavern.',
 				color_hex: '#A97142',
 			},
 			{
-				role_id: 'YOUR_DISBOARD_DUELIST_ROLE_ID',
+				role_id: '1425952002071986367',
 				name: 'Disboard Duelist',
 				price: 5000,
 				description: 'For those who climb the leaderboards and champion the Tavern\'s growth.',
 				color_hex: '#E67E22',
 			},
 			{
-				role_id: 'YOUR_GREGS_NEMESIS_ROLE_ID',
+				role_id: '1425952005075239013',
 				name: 'Greg\'s Nemesis',
 				price: 5000,
 				description: 'You\'ve either won big or lost spectacularly at the gambling tables. Either way, Greg knows your name.',
 				color_hex: '#7F8C8D',
 			},
 			{
-				role_id: 'YOUR_LOREKEEPER_ROLE_ID',
+				role_id: '1425952008015188039',
 				name: 'Lorekeeper',
 				price: 7500,
 				description: 'A scholar and storyteller, dedicated to the rich tales spun within the Tavern.',
 				color_hex: '#F1C40F',
 			},
 			{
-				role_id: 'YOUR_SHADOW_LURKER_ROLE_ID',
+				role_id: '1425952010934685696',
 				name: 'Shadow Lurker',
 				price: 7500,
 				description: 'A mysterious figure, observing from the corners of the Tavern.',
 				color_hex: '#2C3E50',
 			},
 			{
-				role_id: 'YOUR_HEARTH_WARMER_ROLE_ID',
+				role_id: '1425952013681954816',
 				name: 'Hearth Warmer',
 				price: 10000,
 				description: 'A pillar of the community, known for their kindness and welcoming spirit.',
 				color_hex: '#C0392B',
 			},
 			{
-				role_id: 'YOUR_CHEAPSKATE_ROLE_ID',
+				role_id: '1425952016202596406',
 				name: 'Cheapskate',
 				price: 1,
 				description: 'You\'ve spent wisely—or not at all. A true master of thrift.',
 				color_hex: '#95A5A6',
 			},
 			{
-				role_id: 'YOUR_DICE_GOBLIN_ROLE_ID',
+				role_id: '1425952018996006954',
 				name: 'Dice Goblin',
 				price: 2000,
 				description: 'Your hoard of shiny math rocks is both impressive and concerning.',
 				color_hex: '#8E44AD',
 			},
 			{
-				role_id: 'YOUR_RULES_LAWYER_ROLE_ID',
+				role_id: '1425952022175289425',
 				name: 'Rules Lawyer',
 				price: 3000,
 				description: 'Armed with errata, footnotes, and the unshakable belief that RAW > RAI.',
 				color_hex: '#16A085',
 			},
 			{
-				role_id: 'YOUR_EDGELORD_ROLE_ID',
+				role_id: '1425952025371480216',
 				name: 'Edgelord',
 				price: 4000,
 				description: 'You brood in the corner, probably with a tragic backstory and a cursed blade.',
 				color_hex: '#34495E',
 			},
 			{
-				role_id: 'YOUR_MINMAXER_ROLE_ID',
+				role_id: '1425952028546437273',
 				name: 'Min-Maxer',
 				price: 6000,
 				description: 'Why play for story when you can break the game\'s math in half?',
 				color_hex: '#D35400',
 			},
 			{
-				role_id: 'YOUR_FOREVER_DM_ROLE_ID',
+				role_id: '1425952032350798124',
 				name: 'Forever DM',
 				price: 8000,
 				description: 'You weave worlds, craft chaos, and cry quietly when no one reads your lore doc.',
 				color_hex: '#2980B9',
 			},
 			{
-				role_id: 'YOUR_WILD_MAGIC_SURVIVOR_ROLE_ID',
+				role_id: '1425952035051798778',
 				name: 'Wild Magic Survivor',
 				price: 9000,
 				description: 'You\'ve stared chaos in the eye and somehow only turned into a potted plant once.',
 				color_hex: '#9B59B6',
 			},
 			{
-				role_id: 'YOUR_CRITICAL_FAILURE_ROLE_ID',
+				role_id: '1425952037668917280',
 				name: 'Critical Failure',
 				price: 500,
 				description: 'You rolled a 1 on “financial decisions,” but we respect the commitment.',
 				color_hex: '#E74C3C',
 			},
 			{
-				role_id: 'YOUR_LOOT_GREMLIN_ROLE_ID',
+				role_id: '1425952040936407050',
 				name: 'Loot Gremlin',
 				price: 3500,
 				description: 'No chest left unopened. No ally left with their fair share of treasure.',
 				color_hex: '#27AE60',
 			},
 			{
-				role_id: 'YOUR_PLANESWALKER_ROLE_ID',
+				role_id: '1425952043847389245',
 				name: 'Planeswalker',
 				price: 12000,
 				description: 'You\'ve seen worlds beyond worlds—and probably forgotten which one you\'re from.',
 				color_hex: '#1ABC9C',
 			},
 			{
-				role_id: 'YOUR_MIMIC_ROLE_ID',
+				role_id: '1425952046938329188',
 				name: 'Mimic',
 				price: 4500,
 				description: 'You blend into conversations until it\'s time to bite.',
 				color_hex: '#6C3483',
 			},
 			{
-				role_id: 'YOUR_DRAGONKIN_ROLE_ID',
+				role_id: '1425952050025599157',
 				name: 'Dragonkin',
 				price: 11000,
 				description: 'Gold glimmers in your veins. The Tavern\'s riches call to you.',
 				color_hex: '#D4AF37',
 			},
 			{
-				role_id: 'YOUR_BARDIC_INSPIRATION_ROLE_ID',
+				role_id: '1425952053032911000',
 				name: 'Bardic Inspiration',
 				price: 4000,
 				description: 'You turn every chat into a performance. The Tavern hums to your rhythm.',
 				color_hex: '#E84393',
 			},
 			{
-				role_id: 'YOUR_TABLETOP_TACTICIAN_ROLE_ID',
+				role_id: '1425952055641510081',
 				name: 'Tabletop Tactician',
 				price: 7000,
 				description: 'You see the battlefield like a chessboard, and every ally is a game piece.',
 				color_hex: '#1F618D',
 			},
 			{
-				role_id: 'YOUR_BEHOLDER_OF_CHAOS_ROLE_ID',
+				role_id: '1425952059030507592',
 				name: 'Beholder of Chaos',
 				price: 9000,
 				description: 'All eyes are on you—and that\'s exactly how you like it.',
 				color_hex: '#884EA0',
 			},
 			{
-				role_id: 'YOUR_MYTHIC_HERO_ROLE_ID',
+				role_id: '1425952062189080667',
 				name: 'Mythic Hero',
 				price: 15000,
 				description: 'Your deeds echo through the realms. Even the dice whisper your name.',
 				color_hex: '#E5E500',
 			},
 			{
-				role_id: 'YOUR_TAVERN_GHOST_ROLE_ID',
+				role_id: '1425952064999002203',
 				name: 'Tavern Ghost',
 				price: 2500,
 				description: 'You linger unseen, typing from the shadows between channels.',
 				color_hex: '#BDC3C7',
 			},
 			{
-				role_id: 'YOUR_CRIT_FISHER_ROLE_ID',
+				role_id: '1425952068106981386',
 				name: 'Crit Fisher',
 				price: 5500,
 				description: 'Every roll is a prayer to the gods of probability.',
@@ -1601,84 +1602,84 @@ const setupTables = db.transaction(() => {
 
 			// ---- MYTHIC & LEGENDARY TIERS ----
 			{
-				role_id: 'YOUR_VOIDTOUCHED_ROLE_ID',
+				role_id: '1425952070862766202',
 				name: 'Voidtouched',
 				price: 20000,
 				description: 'You\'ve seen the stars blink—and they blinked back.',
 				color_hex: '#1B2631',
 			},
 			{
-				role_id: 'YOUR_DUNGEON_DELVER_ROLE_ID',
+				role_id: '1425952073790394530',
 				name: 'Dungeon Delver',
 				price: 30000,
 				description: 'Your boots know every echo of the underdark\'s forgotten halls.',
 				color_hex: '#633D2E',
 			},
 			{
-				role_id: 'YOUR_CHRONOMANCER_ROLE_ID',
+				role_id: '1425952076550115480',
 				name: 'Chronomancer',
 				price: 40000,
 				description: 'You roll your dice before time does. Every moment is yours to replay.',
 				color_hex: '#3498DB',
 			},
 			{
-				role_id: 'YOUR_ARCHIVIST_OF_REALMS_ROLE_ID',
+				role_id: '1425952079087669381',
 				name: 'Archivist of Realms',
 				price: 50000,
 				description: 'You\'ve read books that don\'t exist yet and cited sources from dreams.',
 				color_hex: '#BB8FCE',
 			},
 			{
-				role_id: 'YOUR_CELESTIAL_PATRON_ROLE_ID',
+				role_id: '1425952082099310643',
 				name: 'Celestial Patron',
 				price: 60000,
 				description: 'Somewhere, a constellation bears your name—though it\'s been erased twice.',
 				color_hex: '#F7DC6F',
 			},
 			{
-				role_id: 'YOUR_THE_LAST_REROLL_ROLE_ID',
+				role_id: '1425952084854964234',
 				name: 'The Last Reroll',
 				price: 75000,
 				description: 'When fate said “no,” you rolled again and made it “hell yes.”',
 				color_hex: '#C0392B',
 			},
 			{
-				role_id: 'YOUR_ASTRAL_CARTOGRAPHER_ROLE_ID',
+				role_id: '1425952088017342645',
 				name: 'Astral Cartographer',
 				price: 100000,
 				description: 'You\'ve mapped the places between thoughts, and lost the way back.',
 				color_hex: '#5DADE2',
 			},
 			{
-				role_id: 'YOUR_WHISPER_IN_THE_WEAVE_ROLE_ID',
+				role_id: '1425952091247214653',
 				name: 'Whisper in the Weave',
 				price: 150000,
 				description: 'Your name drifts through spellcraft and rumor alike—never spoken aloud twice.',
 				color_hex: '#76448A',
 			},
 			{
-				role_id: 'YOUR_DREAM_EATER_ROLE_ID',
+				role_id: '1425952094443278426',
 				name: 'Dream Eater',
 				price: 250000,
 				description: 'You dine on possibility and sip from the edge of madness.',
 				color_hex: '#2E4053',
 			},
 			{
-				role_id: 'YOUR_MOONBOUND_WARDEN_ROLE_ID',
+				role_id: '1425952097588744322',
 				name: 'Moonbound Warden',
 				price: 400000,
 				description: 'You guard the quiet between worlds, silver-blooded and eternal.',
 				color_hex: '#AED6F1',
 			},
 			{
-				role_id: 'YOUR_TITANBORN_ROLE_ID',
+				role_id: '1425952100365504522',
 				name: 'Titanborn',
 				price: 650000,
 				description: 'Your shadow cracks the stone. Even gods give you room to stand.',
 				color_hex: '#AAB7B8',
 			},
 			{
-				role_id: 'YOUR_NAMELESS_MYTH_ROLE_ID',
+				role_id: '1425952103037276201',
 				name: 'Nameless Myth',
 				price: 1000000,
 				description: 'They tell stories of you, but no one agrees what you were—or if you ever existed.',
