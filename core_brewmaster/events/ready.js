@@ -1,3 +1,4 @@
+// core_brewmaster/events/ready.js
 const log = require('@utils/logger.js');
 const { Events } = require('discord.js');
 const { setupBumpReminder } = require('@core_brewmaster/tasks/bumpReminder.js');
@@ -9,6 +10,7 @@ const { resumeTempRoleRemovals } = require('@core_tavernborne/tasks/tempRoleMana
 const { setupIdleChatter } = require('@core_tavernborne/tasks/idleChatter.js');
 const { seedDatabase } = require('@database/seedDatabase.js');
 const { resumePendingVerifications } = require('@core_brewmaster/tasks/captchaRequest.js');
+const { refreshVanityRoleInfo } = require('@core_brewmaster/tasks/refreshVanityRoleInfo.js');
 
 module.exports = {
 	name: Events.ClientReady,
@@ -46,6 +48,10 @@ module.exports = {
  		}
 		resumePendingVerifications(client);
 		log.info('[Ready.js] resumePendingVerifications is complete');
+
+		refreshVanityRoleInfo(client);
+		log.info('[Ready.js] refreshVanityRoleInfo is complete');
+
 
 		log.success('[Ready.js] Finished!');
 

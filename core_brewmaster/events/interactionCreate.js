@@ -44,6 +44,7 @@ module.exports = {
 		const marketCommand = interaction.client.commands.get('market');
 		const shopCommand = interaction.client.commands.get('shop');
 		const unsealCommand = interaction.client.commands.get('unseal');
+		const vanityroleCommand = interaction.client.commands.get('vanityrole');
 
 		try {
 			const subcommand = interaction.options?.getSubcommand(false) || null;
@@ -605,7 +606,21 @@ module.exports = {
 					return;
 				}
 			}
-
+			if (interaction.isButton() && interaction.customId.startsWith('vanityrole_')) {
+				if (vanityroleCommand && typeof vanityroleCommand.buttons === 'function') {
+					try {
+						await vanityroleCommand.buttons(interaction);
+						return;
+					}
+					catch (error) {
+						log.error('[Error] Vanity Role button error:', error);
+						if (!interaction.replied && !interaction.deferred) {
+							await interaction.reply({ content: 'There was an error processing your role action.', flags: MessageFlags.Ephemeral });
+						}
+						return;
+					}
+				}
+			}
 
 			if (interaction.isButton() && interaction.customId.startsWith('inventory_')) {
 				if (inventoryCommand && typeof inventoryCommand.buttons === 'function') {

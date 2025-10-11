@@ -66,8 +66,8 @@ async function handleView(interaction, pageArg = 1) {
 
 		currentRow.addComponents(
 			new ButtonBuilder()
-				.setCustomId(`role_buy_${role.role_id}`)
-				.setLabel(`Buy "${role.name}"`)
+				.setCustomId(`vanityrole_buy_${role.role_id}`)
+				.setLabel(`Buy ${role.name}`)
 				.setStyle(ButtonStyle.Success),
 		);
 	}
@@ -80,12 +80,12 @@ async function handleView(interaction, pageArg = 1) {
 	if (totalPages > 1) {
 		const navRow = new ActionRowBuilder().addComponents(
 			new ButtonBuilder()
-				.setCustomId(`role_view_prev_${interaction.user.id}_${page}`)
+				.setCustomId(`vanityrole_view_prev_${interaction.user.id}_${page}`)
 				.setLabel('◀️ Previous')
 				.setStyle(ButtonStyle.Secondary)
 				.setDisabled(page === 1),
 			new ButtonBuilder()
-				.setCustomId(`role_view_next_${interaction.user.id}_${page}`)
+				.setCustomId(`vanityrole_view_next_${interaction.user.id}_${page}`)
 				.setLabel('Next ▶️')
 				.setStyle(ButtonStyle.Secondary)
 				.setDisabled(page === totalPages),
@@ -285,11 +285,11 @@ async function handleOffer(interaction) {
 
 	const row = new ActionRowBuilder().addComponents(
 		new ButtonBuilder()
-			.setCustomId(`role_offer_accept_${sellerId}_${buyer.id}_${customRole.role_id}_${price}`)
+			.setCustomId(`vanityrole_offer_accept_${sellerId}_${buyer.id}_${customRole.role_id}_${price}`)
 			.setLabel('Accept Offer')
 			.setStyle(ButtonStyle.Success),
 		new ButtonBuilder()
-			.setCustomId(`role_offer_decline_${sellerId}_${buyer.id}`)
+			.setCustomId(`vanityrole_offer_decline_${sellerId}_${buyer.id}`)
 			.setLabel('Decline')
 			.setStyle(ButtonStyle.Danger),
 	);
@@ -382,16 +382,57 @@ async function handleModify(interaction) {
 module.exports = {
 	category: 'utility',
 	data: new SlashCommandBuilder()
-		.setName('role')
+		.setName('vanityrole')
 		.setDescription('Buy and manage vanity roles at The Weaver\'s Boutique.')
-		.addSubcommand(sub => sub.setName('view').setDescription('View the collection of pre-made vanity roles available for purchase.'))
-		.addSubcommand(sub => sub.setName('sell').setDescription('Sell a pre-made vanity role you own for a partial refund.').addStringOption(opt => opt.setName('role').setDescription('The role you wish to sell.').setRequired(true).setAutocomplete(true)))
-		.addSubcommand(sub => sub.setName('create').setDescription('Create your own custom-named vanity role for a price.').addStringOption(opt => opt.setName('name').setDescription('The name of your new custom role.').setRequired(true)))
-		.addSubcommand(sub => sub.setName('delete').setDescription('Permanently delete your custom-named vanity role (no refund).'))
-		.addSubcommand(sub => sub.setName('offer').setDescription('Offer to sell your custom role to another user.').addUserOption(opt => opt.setName('user').setDescription('The user you want to sell the role to.').setRequired(true)).addIntegerOption(opt => opt.setName('crowns').setDescription('The price in Crowns (can be 0 for a gift).').setRequired(true).setMinValue(0)))
-		.addSubcommandGroup(group => group.setName('modify').setDescription('Modify your custom-named role with premium services.')
-			.addSubcommand(sub => sub.setName('color').setDescription(`Change the color of your custom role (Cost: ${TIER3_COLOR_PRICE.toLocaleString()} Crowns).`).addStringOption(opt => opt.setName('hex_code').setDescription('The 6-digit hex color code (e.g., #3498DB).').setRequired(true)))
-			.addSubcommand(sub => sub.setName('hoist').setDescription(`Toggle whether your role is displayed separately (Cost: ${TIER3_HOIST_PRICE.toLocaleString()} Crowns).`))),
+		// Tier 1
+		.addSubcommand(sub => sub
+			.setName('view')
+			.setDescription('View the collection of pre-made vanity roles available for purchase.'))
+		.addSubcommand(sub => sub
+			.setName('sell')
+			.setDescription('Sell a pre-made vanity role you own for a partial refund.')
+			.addStringOption(opt => opt
+				.setName('role')
+				.setDescription('The role you wish to sell.')
+				.setRequired(true)
+				.setAutocomplete(true)))
+		// Tier 2
+		.addSubcommand(sub => sub
+			.setName('create')
+			.setDescription(`Create your own custom-named vanity role for a price. (Cost: ${TIER2_BASE_PRICE.toLocaleString()} Crowns).`)
+			.addStringOption(opt => opt
+				.setName('name')
+				.setDescription('The name of your new custom role.')
+				.setRequired(true)))
+		.addSubcommand(sub => sub
+			.setName('delete')
+			.setDescription('Permanently delete your custom-named vanity role (no refund).'))
+		.addSubcommand(sub => sub
+			.setName('offer')
+			.setDescription('Offer to sell your custom role to another user.')
+			.addUserOption(opt => opt
+				.setName('user')
+				.setDescription('The user you want to sell the role to.')
+				.setRequired(true))
+			.addIntegerOption(opt => opt
+				.setName('crowns')
+				.setDescription('The price in Crowns (can be 0 for a gift).')
+				.setRequired(true)
+				.setMinValue(0)))
+		// Tier 3
+		.addSubcommandGroup(group => group
+			.setName('modify')
+			.setDescription('Modify your custom-named role with premium services.')
+			.addSubcommand(sub => sub
+				.setName('color')
+				.setDescription(`Change the color of your custom role (Cost: ${TIER3_COLOR_PRICE.toLocaleString()} Crowns).`)
+				.addStringOption(opt => opt
+					.setName('hex_code')
+					.setDescription('The 6-digit hex color code (e.g., #3498DB).')
+					.setRequired(true)))
+			.addSubcommand(sub => sub
+				.setName('hoist')
+				.setDescription(`Toggle whether your role is displayed separately (Cost: ${TIER3_HOIST_PRICE.toLocaleString()} Crowns).`))),
 
 	async execute(interaction) {
 		const subcommand = interaction.options.getSubcommand();
@@ -445,7 +486,7 @@ module.exports = {
 		const parts = interaction.customId.split('_');
 		const [command, action] = parts;
 
-		if (command !== 'role') return;
+		if (command !== 'vanityrole') return;
 		const userId = interaction.user.id;
 		const errorEmbed = new EmbedBuilder().setColor(0xE74C3C);
 
