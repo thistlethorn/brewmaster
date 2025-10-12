@@ -625,6 +625,22 @@ module.exports = {
 			}
 		}
 
+		if (message.reference && message.reference.messageId) {
+			try {
+				const activeTale = db.prepare(`
+                    SELECT end_timestamp FROM daily_tales_messages
+                    WHERE message_id = ?
+                `).get(message.reference.messageId);
+
+				if (activeTale && Date.now() < (activeTale.end_timestamp * 1000)) {
+					await message.react('⭐');
+				}
+			}
+			catch (error) {
+				log.error('[DailyTales Reply Listener] Error reacting to message:', error);
+			}
+		}
+
 
 	},
 };

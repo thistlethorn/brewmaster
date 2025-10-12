@@ -17,6 +17,18 @@
     "welcomePartyRoleId" : "1425143327317299311"
   },
 
+  "dailyTales": {
+    "postChannelId": "1353623582411984931",
+    "archiveChannelId": "1427013896518107197",
+    "approvalChannelId": "1427013118218735688",
+    "pingRoleId": "1427011381562966108",
+    "starCrewRoleId": "1427015011292811275",
+    "cronSchedule": "0 15 * * *",
+    "activeDurationHours": 6,
+    "questionStarReward": 1500,
+    "answerWinReward": 5000
+  },
+
   "tonyQuote" : {
     "triggerSubmissionCost" : 200,
     "idleSubmissionCost" : 100,

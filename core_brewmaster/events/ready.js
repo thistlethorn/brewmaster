@@ -11,6 +11,7 @@ const { setupIdleChatter } = require('@core_tavernborne/tasks/idleChatter.js');
 const { seedDatabase } = require('@database/seedDatabase.js');
 const { resumePendingVerifications } = require('@core_brewmaster/tasks/captchaRequest.js');
 const { refreshVanityRoleInfo } = require('@core_brewmaster/tasks/refreshVanityRoleInfo.js');
+const { setupDailyTales, resumeDailyTales } = require('@core_brewmaster/tasks/dailyTales.js');
 
 module.exports = {
 	name: Events.ClientReady,
@@ -52,6 +53,10 @@ module.exports = {
 		refreshVanityRoleInfo(client);
 		log.info('[Ready.js] refreshVanityRoleInfo is complete');
 
+		setupDailyTales(client);
+		log.info('[Ready.js] setupDailyTales is complete');
+		resumeDailyTales(client);
+		log.info('[Ready.js] resumeDailyTales is complete');
 
 		log.success('[Ready.js] Finished!');
 

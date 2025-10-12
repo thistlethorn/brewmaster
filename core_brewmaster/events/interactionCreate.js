@@ -11,6 +11,7 @@ const BOT_COMMANDS_CHANNEL_ID = config?.discord?.botCommandsId || '1354187940246
 const { splitMessage } = require('@utils/messageUtils.js');
 const log = require('@utils/logger.js');
 const WELCOME_PARTY_ROLE_ID = config?.discord?.welcomePartyRoleId || '1425143327317299311';
+const { handleDailyTalesInteraction } = require('@core_brewmaster/handlers/handleDailyTales.js');
 
 
 function formatOption(option) {
@@ -111,6 +112,19 @@ module.exports = {
 					// If an error occurs, still respond so the interaction doesn't fail.
 					if (!interaction.responded) {
 						await interaction.respond([]);
+					}
+				}
+				return;
+			}
+
+			if (interaction.customId?.startsWith('dailytales_')) {
+				try {
+					await handleDailyTalesInteraction(interaction);
+				}
+				catch (error) {
+					log.error('[Error] Daily Tales interaction error:', error);
+					if (!interaction.replied && !interaction.deferred) {
+						await interaction.reply({ content: 'An error occurred while processing this action.', flags: MessageFlags.Ephemeral });
 					}
 				}
 				return;

@@ -1428,6 +1428,136 @@ const setupTables = db.transaction(() => {
 		)
 	`).run();
 
+	// "Tavern Daily Tales" system
+	db.prepare(`
+        CREATE TABLE IF NOT EXISTS daily_tales_submissions (
+            submission_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            question_text TEXT NOT NULL,
+            submitter_id TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected', 'used')),
+            timestamp INTEGER NOT NULL,
+            star_count INTEGER NOT NULL DEFAULT 0
+        )
+    `).run();
+
+	db.prepare(`
+        CREATE TABLE IF NOT EXISTS daily_tales_messages (
+            message_id TEXT PRIMARY KEY,
+            channel_id TEXT NOT NULL,
+            submission_id INTEGER NOT NULL,
+            end_timestamp INTEGER NOT NULL,
+            FOREIGN KEY(submission_id) REFERENCES daily_tales_submissions(submission_id) ON DELETE CASCADE
+        )
+    `).run();
+
+	db.prepare(`
+        CREATE TABLE IF NOT EXISTS daily_tales_question_stars (
+            message_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            PRIMARY KEY (message_id, user_id)
+        )
+    `).run();
+
+	db.prepare(`
+        CREATE TABLE IF NOT EXISTS daily_tales_followup_opt (
+            user_id TEXT PRIMARY KEY,
+            opted_in INTEGER NOT NULL CHECK(opted_in IN (0, 1))
+        )
+    `).run();
+
+	console.log('[DB Seeding] Populating daily_tales_submissions with starter questions...');
+	try {
+		// Check if table is empty
+		const count = db.prepare('SELECT COUNT(*) as count FROM daily_tales_submissions').get();
+
+		if (count.count === 0) {
+			console.log('[DB Seeding] Table is empty, inserting starter questions...');
+
+			const starterQuestions = [
+				{
+					question_text: 'What\'s the most creative use of a cantrip you\'ve ever seen in a game?',
+					submitter_id: config.developerId,
+					status: 'approved',
+					timestamp: Math.floor(Date.now() / 1000),
+				},
+				{
+					question_text: 'Describe your character\'s most embarrassing moment in combat.',
+					submitter_id: config.developerId,
+					status: 'approved',
+					timestamp: Math.floor(Date.now() / 1000),
+				},
+				{
+					question_text: 'What\'s the best in-character argument you\'ve witnessed at the table?',
+					submitter_id: config.developerId,
+					status: 'approved',
+					timestamp: Math.floor(Date.now() / 1000),
+				},
+				{
+					question_text: 'If your character had to open a business, what would it be and why?',
+					submitter_id: config.developerId,
+					status: 'approved',
+					timestamp: Math.floor(Date.now() / 1000),
+				},
+				{
+					question_text: 'What\'s the funniest natural 1 moment you\'ve experienced?',
+					submitter_id: config.developerId,
+					status: 'approved',
+					timestamp: Math.floor(Date.now() / 1000),
+				},
+				{
+					question_text: 'Describe a time when your DM surprised you with an unexpected plot twist.',
+					submitter_id: config.developerId,
+					status: 'approved',
+					timestamp: Math.floor(Date.now() / 1000),
+				},
+				{
+					question_text: 'What\'s your character\'s go-to tavern order and what does it say about them?',
+					submitter_id: config.developerId,
+					status: 'approved',
+					timestamp: Math.floor(Date.now() / 1000),
+				},
+				{
+					question_text: 'Share a moment when roleplay completely derailed the DM\'s planned session.',
+					submitter_id: config.developerId,
+					status: 'approved',
+					timestamp: Math.floor(Date.now() / 1000),
+				},
+				{
+					question_text: 'What\'s the most memorable NPC your party has encountered?',
+					submitter_id: config.developerId,
+					status: 'approved',
+					timestamp: Math.floor(Date.now() / 1000),
+				},
+				{
+					question_text: 'Describe your character\'s relationship with one uncommon piece of equipment they carry.',
+					submitter_id: config.developerId,
+					status: 'approved',
+					timestamp: Math.floor(Date.now() / 1000),
+				},
+			];
+
+			const insertStmt = db.prepare(`
+				INSERT INTO daily_tales_submissions (question_text, submitter_id, status, timestamp)
+				VALUES (@question_text, @submitter_id, @status, @timestamp)
+			`);
+
+			const insertMany = db.transaction((questions) => {
+				for (const question of questions) {
+					insertStmt.run(question);
+				}
+			});
+
+			insertMany(starterQuestions);
+			console.log(`[DB Seeding] Successfully inserted ${starterQuestions.length} starter questions.`);
+		}
+		else {
+			console.log(`[DB Seeding] Table already has ${count.count} questions, skipping seed.`);
+		}
+	}
+	catch (error) {
+		console.error('[DB Seeding] Failed to seed daily_tales_submissions:', error);
+		throw error;
+	}
 
 	console.log('[DB Seeding] Populating basic_vanity_roles if necessary...');
 	try {
