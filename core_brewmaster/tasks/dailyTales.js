@@ -40,7 +40,7 @@ async function postDailyTale(client) {
 
 		const embed = new EmbedBuilder()
 			.setColor(0x5865F2)
-			.setTitle('📜 Tavern Daily Tales 📜')
+			.setTitle('📜 Daily Tavern Topic 📜')
 			.setDescription(`**${question.question_text}**`)
 			.setFooter({ text: `⭐ 0 Stars | This question is active for the next ${activeDurationHours} hours.` });
 
