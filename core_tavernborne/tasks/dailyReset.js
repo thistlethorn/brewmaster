@@ -4,6 +4,15 @@ const { updateMultiplier } = require('@core_tavernborne/handlers/handleCrownRewa
 const { createMonarchGiveaway } = require('@core_tavernborne/handlers/handleMonarchGiveaway.js');
 
 
+/**
+ * Sets up a daily reset task that runs at 00:00 UTC to perform maintenance across all guilds.
+ *
+ * Performs database resets (clears user activity counts and guild daily dues), removes the
+ * Active Chatter role from members and updates their multipliers, and triggers the Monarch
+ * giveaway on the first day of each month or a specific override date.
+ *
+ * @param {import('discord.js').Client} client - Discord client whose guilds will be processed.
+ */
 async function setupDailyReset(client) {
 	// Runs at 00:00 UTC every day
 	scheduleJob('0 0 * * *', async () => {

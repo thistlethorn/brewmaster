@@ -34,6 +34,13 @@ module.exports = {
 	},
 };
 
+/**
+ * Create and initialize a new game for a specified DM: assigns DM roles, creates a unique key role and category with initial channels, persists session and channel records to the database, posts a management "wizard" message with control buttons, and notifies the invoking interaction.
+ *
+ * This operation requires the command interaction to be executed in a guild and to include a `user` option identifying the DM. On success the interaction reply is edited to confirm creation; on failure the reply is edited with an error message.
+ *
+ * @param {import('discord.js').CommandInteraction} interaction - The slash command interaction that invoked the setup; must include a `user` option (the DM to set up) and be run in a guild context.
+ */
 async function handleNewGameDm(interaction) {
 	await interaction.deferReply();
 

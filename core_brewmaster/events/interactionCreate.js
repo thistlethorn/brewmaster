@@ -14,6 +14,18 @@ const WELCOME_PARTY_ROLE_ID = config?.discord?.welcomePartyRoleId || '1425143327
 const { handleDailyTalesInteraction } = require('@core_brewmaster/handlers/handleDailyTales.js');
 
 
+/**
+ * Format an interaction option into a concise, human-readable string.
+ *
+ * @param {Object} option - Interaction option object.
+ * @param {string} option.name - The option's name.
+ * @param {Object} [option.user] - If present, the user object; displays as `@username`.
+ * @param {Object} [option.role] - If present and `user` is absent, the role object; displays as `@rolename`.
+ * @param {Object} [option.channel] - If present and neither `user` nor `role` are present, the channel object; displays as `#channelname`.
+ * @param {Object} [option.attachment] - If present and no user/role/channel, displays as `"[Attachment]"`.
+ * @param {*} [option.value] - Fallback primitive value used when no user/role/channel/attachment is present.
+ * @returns {string} A string in the form `name:(display)` where `display` is `@username`, `@rolename`, `#channelname`, `"[Attachment]"`, or the option value.
+ */
 function formatOption(option) {
 	return `${option.name}:(${
 		option.user ? `@${option.user.username}` :
@@ -24,6 +36,17 @@ function formatOption(option) {
 	})`;
 }
 
+/**
+ * Sends a long text to a Discord interaction by splitting it into message-sized chunks and sending them sequentially.
+ *
+ * Each chunk is sent as the initial reply (using editReply if the interaction was deferred, otherwise reply),
+ * then subsequent chunks are sent as follow-ups. When multiple chunks are sent, each chunk is prefixed with a
+ * progress indicator "(n / total)". Messages can be marked ephemeral.
+ *
+ * @param {string} contentToSend - The full text to split and send.
+ * @param {import('discord.js').Interaction} interaction - The interaction to reply to.
+ * @param {boolean} [ephemeral=false] - Whether the sent messages should be ephemeral.
+ */
 async function sendIteratedChunks(contentToSend, interaction, ephemeral = false) {
 	const chunks = splitMessage(contentToSend, 1950);
 

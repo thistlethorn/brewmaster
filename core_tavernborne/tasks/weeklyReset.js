@@ -8,6 +8,11 @@ const { addXp } = require('@core_tavernborne/handlers/handleAddXpToChar.js');
 const config = require('@root/config.json');
 
 
+/**
+ * Apply a weekly compound bonus to guild balances based on each guild's tier.
+ *
+ * For guilds with a positive balance, adds a tier-specific percentage bonus (tiers 1–5 => 3%, 6%, 9%, 12%, 15%) rounded down to whole units, updates the database balance, and logs each applied bonus.
+ */
 async function applyGuildCompoundBonus() {
 	try {
 		const guilds = db.prepare(`
@@ -103,6 +108,15 @@ async function changeTB(client, removingPrevious, userId) {
 	}
 }
 
+/**
+ * Migrate the weekly bump leaderboard into the Hall of Fame, reward the top three, and update role/leaderboard state.
+ *
+ * Processes the top three entries from the bump leaderboard by awarding crowns to each user, granting XP to the winner,
+ * forwarding the previous leaderboard message to the Hall of Fame channel (if present), assigning the Top Bumper role to the winner,
+ * and posting a Hall of Fame embed announcing the placements.
+ *
+ * @param {import('discord.js').Client} client - Discord client instance used to fetch channels, users, and send messages.
+ */
 async function migrateLeaderboard(client) {
 	const hallOfFameID = '1365345890591703080';
 
@@ -195,6 +209,18 @@ async function migrateLeaderboard(client) {
 	}
 }
 
+/**
+ * Schedule the weekly reset tasks to run every Sunday at midnight UTC.
+ *
+ * Tasks performed on trigger:
+ * - Remove the previous Top Bumper role from all guilds.
+ * - Migrate the weekly bump leaderboard to the Hall of Fame and award rewards.
+ * - Clear the bump leaderboard database table.
+ * - Update the public leaderboard display.
+ * - Apply weekly compound bonuses to guild balances.
+ *
+ * @param {import('discord.js').Client} client - Discord client used for guild and user operations.
+ */
 function setupWeeklyReset(client) {
 	// Every Sunday at midnight UTC
 	cron.schedule('0 0 * * 1', async () => {

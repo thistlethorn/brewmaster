@@ -7,8 +7,8 @@ const config = require('@root/config.json');
 const { approvalChannelId, pingRoleId } = config.dailyTales;
 
 /**
- * Main router for all /dailytales interactions.
- * @param {import('discord.js').Interaction} interaction
+ * Route a Daily Tales interaction to the appropriate handler based on its type.
+ * @param {import('discord.js').Interaction} interaction - The interaction to route; supported types are button presses and modal submissions.
  */
 async function handleDailyTalesInteraction(interaction) {
 	if (interaction.isButton()) {
@@ -19,6 +19,18 @@ async function handleDailyTalesInteraction(interaction) {
 	}
 }
 
+/**
+ * Handle Daily Tales button interactions and perform the corresponding action.
+ *
+ * Processes the interaction's customId and executes the matching behavior:
+ * - "submit": shows a modal for submitting a TTRPG question.
+ * - "toggle_ping": toggles the user's Daily Tales ping role and confirms the change.
+ * - "star_question_{id}": records a star for the referenced submission, updates the submission's star count and the message embed footer, and prevents duplicate stars.
+ * - "approve_{id}" / "reject_{id}": (admin only) updates the submission status, updates the message embed color and footer, and disables the action buttons.
+ * - "prompt_{action}_{targetId}": enforces target-user ownership and handles prompt actions ("show", "close", "always", "never") including persisting follow-up preference when applicable.
+ *
+ * @param {import('discord.js').ButtonInteraction} interaction - The button interaction to handle.
+ */
 async function handleButton(interaction) {
 	const [, action, ...rest] = interaction.customId.split('_');
 	const userId = interaction.user.id;
@@ -114,6 +126,14 @@ async function handleButton(interaction) {
 	}
 }
 
+/**
+ * Handle modal submissions from the Daily Tales interaction flow.
+ *
+ * When the modal's action is `submit`, saves the submitted question to the database, posts an approval embed
+ * with Approve/Reject buttons to the configured approval channel, replies to the submitter confirming receipt,
+ * and then follows up based on the user's category prompt preference (opted-in, opted-out, or prompted).
+ * @param {import('discord.js').ModalSubmitInteraction} interaction - The modal interaction received from Discord.
+ */
 async function handleModal(interaction) {
 	const [, action] = interaction.customId.split('_');
 	const userId = interaction.user.id;

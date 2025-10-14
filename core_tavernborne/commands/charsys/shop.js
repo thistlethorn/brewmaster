@@ -193,12 +193,13 @@ function buildBuyConfirmationUI(vendor, item, price, economy) {
 }
 
 /**
- * Builds the UI for the item buying list.
- * @param {object} vendor The vendor data.
- * @param {object} character The character data.
- * @param {Array<object>} itemsForSale The items the vendor is selling.
- * @param {object} economy The player's economy data.
- * @returns {{embeds: EmbedBuilder[], components: ActionRowBuilder[], content: string}}
+ * Build the UI for selecting an item to purchase from a vendor.
+ *
+ * @param {object} vendor - Vendor record (includes at least `vendor_id` and `name`).
+ * @param {object} character - Character record (includes at least `user_id`).
+ * @param {Array<object>} itemsForSale - List of item records available for purchase; each should include `item_id`, `name`, and `buy_price`.
+ * @param {object} economy - Character economy snapshot (used to display the player's current balance; expects `crowns`).
+ * @returns {{embeds: EmbedBuilder[], components: ActionRowBuilder[], content: string}} An object containing Discord embed(s), component row(s) for the select menu and navigation buttons, and an optional message content string.
  */
 function buildBuyListUI(vendor, character, itemsForSale, economy) {
 	const interactionData = db.prepare('SELECT discount_modifier FROM character_npc_interactions WHERE user_id = ? AND vendor_id = ?').get(character.user_id, vendor.vendor_id);
@@ -236,6 +237,12 @@ function buildBuyListUI(vendor, character, itemsForSale, economy) {
 	return { content: '', embeds: [embed], components: [row1, row2] };
 }
 
+/**
+ * Build select-menu options describing vendors and their inferred specialties.
+ *
+ * @param {Array<Object>} vendorData - Array of vendor records; each object must include `name` and `vendor_id`.
+ * @returns {Array<Object>} An array of option objects (up to 25) with `label` set to the vendor name, `description` describing the inferred specialty, and `value` set to the vendor's id as a string.
+ */
 function shopOptionsSelection(vendorData) {
 	const vendorSpecialtyMap = {
 		'Blacksmith': 'Weapons & Armor',
@@ -302,13 +309,13 @@ function buildVendorSelectionUI(vendors, userId) {
 }
 
 /**
- * Builds the UI for selling a specific item.
- * @param {object} vendor The vendor data.
- * @param {object} item The item data (with name, description, etc.).
- * @param {number} availableQuantity The quantity the user can sell.
- * @param {number} price The price per item.
- * @returns {{embeds: EmbedBuilder[], components: ActionRowBuilder[]}}
- */
+ * Build the confirmation UI shown when a user attempts to sell a specific item to a vendor.
+ *
+ * @param {object} vendor - Vendor record (must include vendor_id and user_id used in component IDs).
+ * @param {object} item - Item record (name, description, rarity, item_type, effects_json, and other display fields).
+ * @param {number} availableQuantity - Quantity of this item the user currently has available to sell.
+ * @param {number} price - Sell price per single item in Crowns.
+ * @returns {{embeds: EmbedBuilder[], components: ActionRowBuilder[]}} An object containing the embed(s) and action rows (buttons) to render the sell confirmation UI.
 function buildSellConfirmationUI(vendor, item, availableQuantity, price) {
 
 	const color = rarityColors[item.rarity.toUpperCase()] ?? 0x836953;

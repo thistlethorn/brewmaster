@@ -3,10 +3,12 @@ const rolesToSeed = require('@core_brewmaster/utils/vanityRoleInfo.js');
 const log = require('@utils/logger.js');
 
 /**
- * Synchronizes the vanity roles in all guilds with the configuration file.
- * This function checks each role's name and color and updates them if they don't match.
- * It's designed to be run on bot startup to ensure consistency.
- * @param {import('discord.js').Client} client The Discord client instance.
+ * Ensure configured vanity role names and colors are applied to matching roles in all cached guilds.
+ *
+ * For each vanity role in the configuration, finds the role in each cached guild and updates its name
+ * and/or color when they differ from the configuration. Individual role update errors are isolated
+ * to each role so processing continues for other roles and guilds.
+ * @param {import('discord.js').Client} client - The Discord client instance whose cached guilds will be checked.
  */
 async function refreshVanityRoleInfo(client) {
 	log.info('[Vanity Roles] Starting vanity role synchronization...');

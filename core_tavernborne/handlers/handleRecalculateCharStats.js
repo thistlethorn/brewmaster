@@ -14,10 +14,9 @@ const CRIT_RATING_CONSTANT = 250;
 
 
 /**
- * Recalculates a character's derived stats based on their base stats, equipment, and status effects.
- * This function is the core of the game's stat system.
- * @param {string} userId The ID of the user whose character needs recalculating.
- * @returns {void}
+ * Recalculate a character's derived combat and resource stats from base stats, equipment, and status effects.
+ * @param {string} userId - ID of the user whose character should be recalculated.
+ * @throws {Error} If the character is not found, if the database update affects no rows, or if the update fails.
  */
 function recalculateStats(userId) {
 	// Note: The async/await keywords are not needed here because better-sqlite3 is synchronous.

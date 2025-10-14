@@ -11,6 +11,15 @@ const log = require('@utils/logger.js');
 
 const MAX_TRIGGER_USES = config.tonyQuote?.maxTriggerUses ?? 20;
 
+/**
+ * Determine whether a message in the welcome channel qualifies as a quality welcome.
+ *
+ * Evaluates content length, rejects external URLs or invite links, and checks for
+ * presence of a welcome-related keyword or a channel mention.
+ *
+ * @param {import('discord.js').Message} message - The Discord message to evaluate.
+ * @returns {boolean} `true` if the message meets length constraints, contains no external links or invites, and includes a welcome keyword or channel mention; `false` otherwise.
+ */
 function isQualityWelcome(message) {
 	const content = message.content.toLowerCase();
 	const minLength = 3;

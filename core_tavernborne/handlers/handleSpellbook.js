@@ -62,6 +62,13 @@ function buildViewUI(userId, page = 1) {
 	return { embeds: [embed], components };
 }
 
+/**
+ * Handle spellbook-related interactions (buttons and select menus) to navigate the spellbook UI, present scroll selection, and process learning spells from scrolls.
+ *
+ * This function validates that an interaction targets the intended user (except for 'back' and 'open' actions), updates or edits the reply with paginated spellbook views, shows a selectable list of usable spell scrolls, and performs the transactional flow that consumes a scroll and adds the learned spell to the user's spellbook, returning user-facing success or error feedback.
+ *
+ * @param {import('discord.js').Interaction} interaction - The Discord interaction triggered by a user (button or string select menu) for the spellbook UI.
+ */
 async function handleSpellbookInteraction(interaction) {
 	const [, , action, ...rest] = interaction.customId.split('_');
 	const userId = interaction.user.id;

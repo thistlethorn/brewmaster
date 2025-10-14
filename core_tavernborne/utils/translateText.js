@@ -101,11 +101,11 @@ function encode(text, languageType) {
 }
 
 /**
- * "Decodes" a message by revealing parts of the original text based on a success ratio.
- * This is used for the Wits/Fortune/Charm translation attempts.
+ * Reveal portions of a message according to a success probability.
+ *
  * @param {string} originalContent - The original, unscrambled message.
- * @param {number} successRatio - A float between 0.0 and 1.0 representing success.
- * @returns {string} The partially revealed message.
+ * @param {number} successRatio - Number between 0.0 and 1.0 specifying the chance each word is revealed.
+ * @returns {string} The message with individual words either revealed or replaced by placeholder tokens; fully revealed when successRatio >= 1.0 and fully masked when successRatio <= 0.0.
  */
 function decodeByWits(originalContent, successRatio) {
 	if (successRatio >= 1.0) return originalContent;

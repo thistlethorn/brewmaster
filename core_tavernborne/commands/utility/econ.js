@@ -137,6 +137,15 @@ module.exports = {
 	},
 };
 
+/**
+ * Distributes a fixed amount of Crowns to every non-bot member of the guild.
+ *
+ * Performs a transactional bulk update that increments each member's crowns and edits the original
+ * interaction reply with a success embed showing affected users, amount per user, and reason,
+ * or a failure embed if the transaction fails.
+ *
+ * @param {import('discord.js').CommandInteraction} interaction - The command interaction that initiated the payout.
+ */
 async function handleDevAddAll(interaction) {
 	await interaction.deferReply();
 
@@ -195,6 +204,15 @@ async function handleDevAddAll(interaction) {
 	}
 }
 
+/**
+ * Add Crowns to a specified user's economy record and send a confirmation embed to the interaction.
+ *
+ * The reply embed shows the target member, amount added, original balance, new balance, and the provided reason.
+ *
+ * @param {import('discord.js').CommandInteraction} interaction - The command interaction to reply to.
+ * @param {import('discord.js').User|import('discord.js').GuildMember} user - The member to receive Crowns.
+ * @param {number} amount - The number of Crowns to add to the user's balance.
+ */
 async function handleDevAdd(interaction, user, amount) {
 	const userId = user.id;
 	const userEcon = db.prepare('SELECT * FROM user_economy WHERE user_id = ?').get(userId);
@@ -343,6 +361,16 @@ function calculateDayBonus(streak) {
 	return totalBonus;
 }
 
+/**
+ * Process a user's daily economy claim: compute streak/prestige, calculate bonuses and payout,
+ * atomically apply the claim to the database, grant XP, and reply with a claim summary embed.
+ *
+ * This function enforces the 24-hour cooldown (replying ephemerally if the claim is still on cooldown),
+ * increments or resets the user's daily streak and prestige when thresholds are met, updates the user's
+ * Crown balance, and optionally schedules or offers a notification opt-in for the next daily.
+ *
+ * @param {import('discord.js').CommandInteraction} interaction - The interaction representing the user's `/econ daily` command invocation.
+ */
 async function handleDaily(interaction) {
 	const userId = interaction.user.id;
 	const now = new Date();

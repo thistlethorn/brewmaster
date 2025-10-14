@@ -217,6 +217,16 @@ async function handleLeave(interaction) {
 		return interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
 	}
 }
+/**
+ * Sends a guild invitation to a specified user by posting an invite embed and Accept/Decline buttons.
+ *
+ * Validates that the command invoker belongs to a guild and that the target user is not already in a guild;
+ * on validation failure the interaction is replied to with an ephemeral error embed. On success, replies with
+ * a public message that mentions the target user and contains an invite embed populated with guild details
+ * and interactive Accept/Decline buttons.
+ *
+ * @param {import('discord.js').CommandInteraction} interaction - The interaction that invoked the command; must include a 'user' option for the invite target.
+ */
 async function handleInvite(interaction) {
 	const userId = interaction.user.id;
 	const targetUser = interaction.options.getUser('user');
@@ -1222,6 +1232,16 @@ function shuffleArray(array) {
 }
 
 
+/**
+ * Initiates daily dues collection for the invoking guild and processes each member's contribution.
+ *
+ * Verifies the invoker is the guild owner or vice-guildmaster, enforces a once-per-day collection window, announces the collection
+ * in the guild's public channel, and iterates guild members to deduct 1% of their crowns. Each contribution is subjected to a
+ * randomized investment outcome (common / rare / ultra-rare), user balances and the guild vault are updated transactionally,
+ * and a running log message in the guild channel is updated to reflect progress and final totals.
+ *
+ * @param {import('discord.js').CommandInteraction} interaction - The command interaction invoking dues collection.
+ */
 async function handleDues(interaction) {
 	const userId = interaction.user.id;
 
@@ -1664,6 +1684,11 @@ async function handleFullInfo(interaction) {
 }
 
 
+/**
+ * Build the main menu embed and action rows for a guild identified by its tag.
+ * @param {string} guildTag - The guild's tag (identifier) to load.
+ * @returns {object|null} The message payload containing a single embed and two action rows for guild interaction, or `null` if the guild was not found.
+ */
 async function buildMainMenuEmbed(guildTag) {
 	const guild = db.prepare(`
 		SELECT gl.guild_name, gl.guild_tag, gl.is_open, gl.guild_image, COALESCE(gt.tier, 1) as tier
@@ -2075,6 +2100,13 @@ async function handleBequeath(interaction) {
 		});
 	}
 }
+/**
+ * Update guild settings for the invoking user's guild.
+ *
+ * Validates authority, applies the requested setting change (for example: attitude, name, tag, visibility, channel, motto, hook, lore, role, promotions/demotions, member title, emoji/sticker updates, guild image, or raid message settings), and replies to the interaction with either a success or error embed. Some settings trigger interactive flows (modals, confirmation buttons, or multi-step collectors).
+ * @param {import('discord.js').CommandInteraction} interaction - The command interaction issued by the user.
+ * @param {string} settingType - The setting to change; one of: 'attitude', 'name', 'tag', 'visibility', 'channel', 'motto', 'hook', 'lore', 'role', 'promote', 'demote', 'member_title', 'emoji', 'sticker', 'image', 'raid_messages'.
+ */
 async function handleSettings(interaction, settingType) {
 	const userId = interaction.user.id;
 	const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Setting Update Failed');

@@ -2,6 +2,11 @@ const { EmbedBuilder } = require('discord.js');
 const db = require('@database/database.js');
 const log = require('@utils/logger.js');
 
+/**
+ * Update the configured Discord message to reflect the current weekly bump leaderboard.
+ *
+ * Queries the database for the top 10 bumpers and the stored leaderboard message location, then edits that message with an embed showing the leaderboard or a prompt if no bumps exist. If no leaderboard message is configured, the function exits without performing updates.
+ */
 async function updateLeaderboard(client) {
 	const topBumpers = db.prepare(`
         SELECT user_id, bumps 
