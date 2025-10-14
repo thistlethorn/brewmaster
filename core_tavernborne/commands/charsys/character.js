@@ -63,10 +63,15 @@ LAWFUL EVIL     |   TRUE EVIL      | CHAOTIC EVIL
 `;
 
 /**
- * Calculates the correct stat modifier for an attack based on its damage type.
- * @param {string} damageType The type of damage (e.g., 'Slashing', 'Bludgeoning').
- * @param {object} stats The character's full stat block.
- * @returns {number} The calculated integer modifier for the damage roll.
+ * Determine which ability modifier applies to an attack given its damage type.
+ *
+ * Maps damage types to stats: 'Slashing' uses the higher of Might or Finesse,
+ * 'Piercing' uses Finesse, 'Arcane' uses Wits, and 'Bludgeoning' uses Might.
+ * The modifier is derived from the corresponding stat score.
+ *
+ * @param {string} damageType - Damage type name ('Slashing', 'Piercing', 'Arcane', 'Bludgeoning', etc.).
+ * @param {object} stats - Character stat object containing `stat_might`, `stat_finesse`, and `stat_wits`.
+ * @returns {number} The integer ability modifier used for the damage roll.
  */
 function getDamageModifier(damageType, stats) {
 	const mightMod = Math.floor((stats.stat_might - 5) / 2);
@@ -114,8 +119,8 @@ function charSessionCleanup() {
 }
 
 /**
- * Handles the initial /character create command.
- * @param {import('discord.js').ChatInputCommandInteraction} interaction
+ * Initiates a new character creation flow: validates the user has no existing character, creates a creation session, and prompts for the character name via a modal.
+ * @param {import('discord.js').ChatInputCommandInteraction} interaction - The command interaction that triggered the creation flow.
  */
 async function handleCreate(interaction) {
 	const userId = interaction.user.id;
@@ -164,8 +169,12 @@ function generateXpBar(currentXp, requiredXp) {
 }
 
 /**
- * Handles the /character view command.
- * @param {import('discord.js').ChatInputCommandInteraction} interaction
+ * Builds and sends a character sheet embed for a target user and presents edit actions when the viewer is the character owner.
+ * 
+ * Constructs a consolidated character overview (resources, stats, combat values, equipment, dungeon history, affiliations, and progression)
+ * and replies or updates the provided interaction with the embed and appropriate action components.
+ * 
+ * @param {import('discord.js').ChatInputCommandInteraction | import('discord.js').ButtonInteraction | import('discord.js').SelectMenuInteraction} interaction - The incoming interaction (slash command, button, or menu) to respond to.
  */
 async function handleView(interaction) {
 	let targetUser;
@@ -409,8 +418,11 @@ async function handleView(interaction) {
 }
 
 /**
- * Handles the /character equip command.
- * @param {import('discord.js').ChatInputCommandInteraction} interaction
+ * Equip a specified item from the caller's inventory into a target equipment slot.
+ *
+ * Validates the caller has a character, that the chosen item exists in their inventory and is valid for the requested slot, enforces item requirements (stat thresholds, archetype, alignment), and applies two-handed/offhand constraints. On success, updates the inventory equipped slot atomically, recalculates the character's derived stats, and replies to the interaction with a confirmation; on failure, replies with an ephemeral error message describing the problem.
+ *
+ * @param {import('discord.js').ChatInputCommandInteraction} interaction - The command interaction containing the item ID and target slot.
  */
 async function handleEquip(interaction) {
 	const userId = interaction.user.id;
@@ -546,8 +558,12 @@ async function handleEquip(interaction) {
 }
 
 /**
- * Handles the /character unequip command.
- * @param {import('discord.js').ChatInputCommandInteraction} interaction
+ * Unequips the item currently equipped in the specified character slot for the invoking user.
+ *
+ * Validates the slot and that the user has a character and an item equipped; clears the equipped slot,
+ * recalculates the user's stats, and replies with a success or error message (ephemeral).
+ *
+ * @param {import('discord.js').ChatInputCommandInteraction} interaction - The command interaction; expects a string option `slot` containing one of: `weapon`, `offhand`, `helmet`, `chestplate`, `leggings`, `boots`, `ring1`, `ring2`, `amulet`.
  */
 async function handleUnequip(interaction) {
 	const userId = interaction.user.id;
@@ -587,10 +603,17 @@ async function handleUnequip(interaction) {
 }
 
 /**
- * Grants a character their starting languages based on species and subspecies.
- * @param {string} userId The user's ID.
- * @param {number} speciesId The chosen species ID.
- * @param {number|null} subspeciesId The chosen subspecies ID, if any.
+ * Grant a character their initial languages based on chosen species and subspecies.
+ *
+ * Grants the universal common language and then additional languages according to species rules:
+ * - Humanfolk: common plus two random languages.
+ * - Primordialfolk (with subspecies): Primordial plus the elemental language implied by the subspecies (Ignan → Ignic, Auran → Auric, Aquan → Aquic).
+ * - Other species without subspecies: the species' language (when defined) plus one random language not already granted.
+ *
+ * Insertions are recorded in the character_languages table with 100 fluency points.
+ * @param {string} userId - The character owner's user ID.
+ * @param {number} speciesId - The chosen species ID.
+ * @param {?number} subspeciesId - The chosen subspecies ID, or null if none.
  */
 function grantStartingLanguages(userId, speciesId, subspeciesId) {
 	const species = db.prepare('SELECT name FROM species WHERE species_id = ?').get(speciesId);
@@ -666,8 +689,10 @@ function grantStartingLanguages(userId, speciesId, subspeciesId) {
 }
 
 /**
- * Handles the /character recover command.
- * @param {import('discord.js').ChatInputCommandInteraction} interaction
+ * Present recovery options for the invoking user's character and initiate a rest workflow.
+ *
+ * Validates that the user has a character, clears any expired recovery statuses, and prevents starting recovery while in combat, defeated, or already recovering. If recovery is allowed and the character is not already at full health and mana, presents an ephemeral embed describing a short rest (partial recovery for a duration based on level tier) and a long rest (full recovery for a duration based on level tier) along with action buttons to start or cancel the rest.
+ * @param {import('discord.js').ChatInputCommandInteraction} interaction - The command interaction from the invoking user.
  */
 async function handleRecover(interaction) {
 	const userId = interaction.user.id;
@@ -799,9 +824,14 @@ const statProficiencies = {
 	},
 };
 /**
- * REFACTORED: Builds the embed for the spend points UI.
- * @param {object} session - The in-memory session object.
- * @returns {EmbedBuilder}
+ * Build the embed used by the stat point allocation UI, summarizing current stats,
+ * projected values from pending allocations, upcoming stat proficiencies, and remaining points.
+ *
+ * @param {object} session - In-memory spend-points session.
+ * @param {object} session.initialStats - Character's base stats (keys like `stat_might`, `stat_finesse`, etc.).
+ * @param {object} session.pointsToAdd - Pending allocations per stat (keys matching stat names).
+ * @param {number} session.unspentPoints - Number of points still available to spend.
+ * @returns {EmbedBuilder} An embed containing per-stat immediate benefits and upcoming proficiencies, a section showing current → projected stat values, and a summary of unspent points. 
  */
 function buildSpendPointsEmbed(session) {
 	const { initialStats, pointsToAdd, unspentPoints } = session;
@@ -871,9 +901,13 @@ function buildSpendPointsEmbed(session) {
 
 
 /**
- * Helper function to create and send the spend points UI.
- * @param {import('discord.js').ChatInputCommandInteraction | import('discord.js').ButtonInteraction} interaction
- * @param {boolean} isUpdate - Whether to use interaction.update() instead of interaction.reply().
+ * Opens a new spend-points session for the user and displays the interactive UI to allocate stat points.
+ *
+ * Creates an in-memory spend-points session for the invoking user, builds the allocation embed and action buttons,
+ * and replies (or updates) the interaction with an ephemeral message. If the user has no character or no unspent
+ * stat points, responds with an ephemeral error message instead.
+ * @param {import('discord.js').ChatInputCommandInteraction | import('discord.js').ButtonInteraction} interaction - The interaction to reply to or update.
+ * @param {boolean} isUpdate - If true, use interaction.update() to edit an existing reply; otherwise use interaction.reply().
  */
 async function startNewSpendPointsSession(interaction, isUpdate = false) {
 	const userId = interaction.user.id;
@@ -934,8 +968,10 @@ async function startNewSpendPointsSession(interaction, isUpdate = false) {
 
 
 /**
- * Handles the /character spendpoints command, now with session checking.
- * @param {import('discord.js').ChatInputCommandInteraction} interaction
+ * Initiates or resumes the invoking user's stat allocation (spend-points) session.
+ *
+ * If the user already has an active session, prompts them to either start a new session (discarding the old one) or cancel; otherwise starts a fresh spend-points session UI.
+ * @param {import('discord.js').ChatInputCommandInteraction} interaction - The command interaction from the invoking user.
  */
 async function handleSpendPoints(interaction) {
 	const userId = interaction.user.id;
@@ -1846,14 +1882,15 @@ module.exports = {
 };
 
 /**
-* Builds up to maxRows of 5-button rows for selection UIs.
-* @param {Array<{id:number|string,name:string}>} items
-* @param {string} customIdPrefix e.g., 'char_create_origin'
-* @param {string} userId appended as the last segment in customIds
-* @param {object} [emojiMap={}] A map where keys are item names and values are emojis.
-* @param {number} [maxRows=5] hard cap of rows to render (buttons capped at maxRows*5)
-* @returns {import('discord.js').ActionRowBuilder[]}
-*/
+ * Create up to maxRows rows of up to five selection buttons each for use in interactive UIs.
+ *
+ * @param {Array<{id:number|string,name:string}>} items - Items to render as buttons; `id` is used in each button's customId and `name` is used as the button label.
+ * @param {string} customIdPrefix - Prefix for each button's customId (final customId format: `${customIdPrefix}_${item.id}_${userId}`).
+ * @param {string} userId - Appended to each button's customId to scope interactions to a specific user.
+ * @param {object} [emojiMap={}] - Optional map of item name -> emoji to set on corresponding buttons.
+ * @param {number} [maxRows=5] - Maximum number of rows to produce (total buttons capped at maxRows * 5).
+ * @returns {import('discord.js').ActionRowBuilder[]} An array of ActionRowBuilder instances, each containing up to five Button components representing the provided items.
+ */
 function createButtonRows(items, customIdPrefix, userId, emojiMap = {}, maxRows = 5) {
 	const rows = [];
 	let currentRow = new ActionRowBuilder();
@@ -1899,10 +1936,11 @@ async function showOriginSelection(interaction, session) {
 }
 
 /**
- * Displays detailed information about a single, selected Origin.
- * @param {import('discord.js').Interaction} interaction The interaction object.
- * @param {object} session The user's creation session object.
- * @param {string} originId The ID of the origin to display.
+ * Show detailed information for a selected origin during character creation.
+ * Presents an embed with the origin's description, stat bonuses, and base perk, and updates the session to the origin info step.
+ * @param {import('discord.js').Interaction} interaction - The originating Discord interaction to update.
+ * @param {object} session - The user's character creation session object (will be mutated with step and tempOriginId).
+ * @param {string} originId - The database ID of the origin to display.
  */
 async function showOriginInfo(interaction, session, originId) {
 	session.step = 'origin_info';
@@ -1968,9 +2006,9 @@ async function showArchetypeInfo(interaction, session, archetypeId) {
 	await interaction.update({ embeds: [embed], components: [actionRow] });
 }
 /**
- * Displays the list of all available Species for selection.
- * @param {import('discord.js').Interaction} interaction The interaction object.
- * @param {object} session The user's creation session object.
+ * Show the species selection UI for the current character creation session.
+ * @param {import('discord.js').Interaction} interaction - The interaction to update with the species embed and buttons.
+ * @param {object} session - The user's creation session object (will be updated to step `'species'`).
  */
 async function showSpeciesSelection(interaction, session) {
 	session.step = 'species';
@@ -1985,10 +2023,13 @@ async function showSpeciesSelection(interaction, session) {
 }
 
 /**
- * Displays detailed information about a single, selected Species and its subspecies if available.
- * @param {import('discord.js').Interaction} interaction The interaction object.
- * @param {object} session The user's creation session object.
- * @param {string} speciesId The ID of the species to display.
+ * Show a detailed view of a chosen species (and present its subspecies options when available) in the character creation flow.
+ *
+ * Updates the provided creation session to reflect the species-info step and sets the temporary species selection; then renders an embed describing the species, adds subspecies selection buttons when applicable or a confirm button when not, and updates the interaction with the constructed embed and components.
+ *
+ * @param {import('discord.js').Interaction} interaction - The Discord interaction to update with the species information UI.
+ * @param {object} session - The user's creation session object (will be mutated: step and tempSpeciesId are set).
+ * @param {string} speciesId - The identifier of the species to display.
  */
 async function showSpeciesInfo(interaction, session, speciesId) {
 	session.step = 'species_info';
@@ -2036,10 +2077,14 @@ async function showSpeciesInfo(interaction, session, speciesId) {
 }
 
 /**
- * Displays detailed information about a single, selected Subspecies.
- * @param {import('discord.js').Interaction} interaction The interaction object.
- * @param {object} session The user's creation session object.
- * @param {string} subspeciesId The ID of the subspecies to display.
+ * Show details for a chosen subspecies and present UI to confirm or go back.
+ *
+ * Updates the provided creation session (sets the step and tempSubspeciesId) and responds to the interaction with an embed showing
+ * the subspecies name, description, and any additional stat bonuses, plus Confirm Selection and Go Back buttons.
+ *
+ * @param {import('discord.js').Interaction} interaction - The interaction to update with the subspecies embed and action buttons.
+ * @param {object} session - The user's creation session object; this function mutates `session.step` and `session.tempSubspeciesId`.
+ * @param {string} subspeciesId - The subspecies database ID to display.
  */
 async function showSubspeciesInfo(interaction, session, subspeciesId) {
 	session.step = 'subspecies_info';

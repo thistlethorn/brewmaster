@@ -28,9 +28,9 @@ const cleanupIntervalId = setInterval(() => {
 	}
 }, CLEANUP_INTERVAL);
 /**
- * Parses a dice/value string (e.g., '2d6+3', '1d8', '10') and returns a numeric result.
- * @param {string} valueString The dice notation or flat number string.
- * @returns {number} The result of the roll or the parsed number.
+ * Parse a string representing either a flat integer or dice notation and produce its numeric value.
+ * @param {string} valueString - A plain integer string (e.g., "10") or dice notation (e.g., "2d6+3", "1d8").
+ * @returns {number} The computed integer value: the parsed number or the total of the dice roll plus any modifier; returns 0 for empty or invalid input.
  */
 function parseEffectValue(valueString) {
 	if (!valueString) return 0;
@@ -61,10 +61,13 @@ function parseEffectValue(valueString) {
 	return 0;
 }
 /**
- * Creates the main combat UI embed and components based on the player's current action state.
- * @param {object} combatState The current state of the combat encounter.
- * @param {import('discord.js').User} user The user object for the player.
- * @returns {{embeds: EmbedBuilder[], components: ActionRowBuilder[]}}
+ * Build the combat embed and interactive components that represent the current encounter and available player actions.
+ *
+ * The returned embed summarizes the player's status, enemy statuses, and recent combat log. Component layout depends on
+ * combatState.playerState (e.g., MAIN, SELECTING_TARGET, SELECTING_SPELL, SELECTING_SPELL_TARGET, SELECTING_ITEM).
+ * @param {object} combatState - Current encounter state; must include at least: userId, thread (with id), nodeData, character (current_health, max_health, current_mana, max_mana, stat_wits), monsters (array with name, current_health, max_health), combatLog, turn, playerState, and optionally selectedSpellId.
+ * @param {import('discord.js').User} user - Discord user for the embed author and avatar.
+ * @returns {{embeds: import('discord.js').EmbedBuilder[], components: import('discord.js').ActionRowBuilder[]}} An object containing an array with the constructed embed and an array of ActionRow components appropriate for the player's current interaction state.
  */
 function buildCombatUI(combatState, user) {
 	const embed = new EmbedBuilder()
@@ -212,9 +215,9 @@ function buildCombatUI(combatState, user) {
 }
 
 /**
- * Handles the final victory sequence, distributing rewards and loot.
- * @param {import('discord.js').ButtonInteraction} interaction
- * @param {object} combatState The final state of the combat encounter.
+ * Finalizes a victorious encounter: persists final character and progress state, grants rewards (XP and crowns), posts a victory summary to the battle thread, and closes the thread.
+ * @param {import('discord.js').ButtonInteraction} interaction - The interaction that triggered the victory handling (used for context and attribution).
+ * @param {object} combatState - The final combat state used to compute rewards and persist results (contains userId, nodeData, thread, turn, character, etc.).
  */
 async function handleVictory(interaction, combatState) {
 	const { userId, nodeData, thread, turn, character, critsThisFight } = combatState;
@@ -294,9 +297,16 @@ async function handleVictory(interaction, combatState) {
 }
 
 /**
- * Handles the defeat sequence.
- * @param {import('discord.js').ButtonInteraction} interaction
- * @param {object} combatState The final state of the combat encounter.
+ * Process a defeat: apply penalties, grant consolation XP, persist recovery state, and close the battle thread.
+ *
+ * This sets the character to a long recovery state, increments their fall count, reduces crowns by 10%,
+ * sets current health to 1 and mana to 0, computes a final recovery expiry (15 minutes plus a long-rest
+ * penalty of 2 hours per level tier), logs the failed attempt in PvE progress, grants 25% of the node's
+ * repeatable XP as consolation (if defined), deletes the in-memory combat, and sends a defeat embed to the thread
+ * before locking and archiving it.
+ *
+ * @param {import('discord.js').ButtonInteraction} interaction - The interaction that triggered the defeat handling.
+ * @param {object} combatState - The final combat state for the encounter; must include userId, nodeData, thread, character, and turn.
  */
 async function handleDefeat(interaction, combatState) {
 	const { userId, nodeData, thread, character, turn } = combatState;
@@ -377,9 +387,18 @@ async function handleDefeat(interaction, combatState) {
 	}
 }
 /**
- * Handles the successful flee sequence.
- * @param {import('discord.js').ButtonInteraction} interaction
- * @param {object} combatState The final state of the combat encounter.
+ * Finalizes a successful flee: persists character state, records the attempt, grants any consolation XP, posts an escape message, and closes the battle thread.
+ *
+ * Performs a database update to set the character back to IDLE and persist current health/mana, increments monsters-slain for the encounter, and logs the pve attempt. If the node has repeatable rewards, awards a consolation XP amount based on monsters defeated (15% of the node XP per monster). Sends a flee embed to the battle thread, locks and archives the thread, and removes the encounter from the in-memory activeCombats registry. On failure, logs the error and attempts to notify the thread.
+ *
+ * @param {import('discord.js').ButtonInteraction} interaction - The interaction that triggered the flee.
+ * @param {object} combatState - The final state of the combat encounter.
+ * @param {string} combatState.userId - ID of the player who fled.
+ * @param {object} combatState.nodeData - PvE node metadata (includes node_id, name, repeatable_reward_json).
+ * @param {import('discord.js').ThreadChannel} combatState.thread - The thread used for the battle.
+ * @param {object} combatState.character - Character snapshot containing current_health and current_mana.
+ * @param {number} combatState.turn - Number of turns elapsed in the encounter.
+ * @param {Array<object>} combatState.monsters - Array of monster objects; defeated monsters have current_health <= 0.
  */
 async function handleFlee(interaction, combatState) {
 	const { userId, nodeData, thread, character, turn, monsters } = combatState;
@@ -446,8 +465,10 @@ async function handleFlee(interaction, combatState) {
 	}
 }
 /**
- * Handles the /pve list subcommand.
- * @param {import('discord.js').ChatInputCommandInteraction} interaction
+ * Reply with an ephemeral embed listing available PvE adventures and whether the user meets each node's level requirement.
+ *
+ * If the user has no character, replies with an ephemeral message directing them to create one. Nodes are listed ordered by required level and include name, required level, and description.
+ * @param {import('discord.js').ChatInputCommandInteraction} interaction - The command interaction that invoked the list subcommand.
  */
 async function handleList(interaction) {
 	const userId = interaction.user.id;
@@ -483,8 +504,11 @@ async function handleList(interaction) {
 }
 
 /**
- * Handles the /pve engage subcommand.
- * @param {import('discord.js').ChatInputCommandInteraction} interaction
+ * Initiates a PvE encounter by validating the player's character, creating a private battle thread, and initializing the combat state and UI.
+ *
+ * Performs necessary preflight checks (character existence, recovery status, in-combat/health constraints, and level requirement for the chosen node), updates the character's status to `IN_COMBAT`, loads the node's monster composition, stores an in-memory combatState for the new private thread, and sends the initial combat UI to the thread.
+ *
+ * @param {import('discord.js').ChatInputCommandInteraction} interaction - The command interaction that invoked the /pve engage subcommand.
  */
 async function handleEngage(interaction) {
 	const userId = interaction.user.id;
@@ -713,10 +737,18 @@ module.exports = {
 	},
 };
 /**
- * Executes a full combat turn (player action, then monster actions).
- * @param {import('discord.js').Interaction} interaction
- * @param {object} combatState
- * @param {object} playerAction - The action the player took.
+ * Process the player's chosen action and resolve all monster reactions for a single combat turn.
+ *
+ * This updates the provided combatState in-place: appends to combatLog, adjusts character and monster health/mana,
+ * advances turn counters, and persists certain per-character statistics to the database when records are broken.
+ *
+ * @param {import('discord.js').Interaction} interaction - The interaction that initiated the turn; provided for contextual use.
+ * @param {object} combatState - The current encounter state. Expected to contain at least `character`, `monsters`, `combatLog`, `turn`, and related counters; it will be mutated to reflect the results of the turn.
+ * @param {object} playerAction - The action performed by the player. Supported shapes:
+ *   - { type: 'attack', targetIndex: number }
+ *   - { type: 'spell', spellId: string|number, targetIndex: number }
+ *   - { type: 'item', inventoryId: number }
+ *   - { type: 'flee_fail' }
  */
 async function executePlayerTurn(interaction, combatState, playerAction) {
 	const character = combatState.character;
@@ -915,9 +947,10 @@ async function executePlayerTurn(interaction, combatState, playerAction) {
 	combatState.turn++;
 }
 /**
- * Parses a dice string (e.g., '2d6') and returns a random roll.
- * @param {string} diceString The dice notation string.
- * @returns {number} The result of the roll.
+ * Roll dice expressed in `NdM` notation and return the total.
+ * Returns 1 if the input is missing or not a valid `NdM` dice string.
+ * @param {string} diceString - Dice notation in the form `NdM`, where `N` is the number of dice and `M` is the number of sides per die (e.g., "2d6").
+ * @returns {number} The sum of the individual die rolls, or `1` for invalid input.
  */
 function rollDice(diceString) {
 	if (!diceString || !/^\d+d\d+$/.test(diceString)) {
@@ -933,10 +966,10 @@ function rollDice(diceString) {
 }
 
 /**
- * Calculates the correct stat modifier for an attack based on its damage type.
- * @param {string} damageType The type of damage (e.g., 'Slashing', 'Bludgeoning').
- * @param {object} stats The character's full stat block.
- * @returns {number} The calculated integer modifier for the damage roll.
+ * Determine the integer stat modifier to apply to a damage roll based on damage type.
+ * @param {string} damageType - Damage category; common values: 'Slashing', 'Piercing', 'Bludgeoning', 'Arcane'.
+ * @param {object} stats - Character stats object containing numeric properties: `stat_might`, `stat_finesse`, and `stat_wits`.
+ * @returns {number} The integer modifier to add to the damage roll.
  */
 function getDamageModifier(damageType, stats) {
 	// Standard D&D-style modifier calculation: (Stat - 10) / 2

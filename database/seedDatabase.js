@@ -421,6 +421,13 @@ const startingEquipmentData = [
 	{ name: 'Enforcer\'s Cudgel', description: 'A heavy, reliable club used for maintaining order and protecting the innocent.', item_type: 'WEAPON', rarity: 'STARTER', is_stackable: 0, is_tradeable: 0, crown_value: 10, damage_dice: '1d6', damage_type: 'Bludgeoning', handedness: 'one-handed', effects_json: '{"slot": "weapon", "base_stats": {"might": 1}}' },
 ];
 
+/**
+ * Seed species and subspecies data into the database, updating existing records.
+ *
+ * Performs upsert operations for species and subspecies inside a single transaction.
+ * Species entries are inserted or updated; subspecies are inserted or updated with their
+ * resolved species_id. Subspecies that reference a missing species are skipped and a warning is logged.
+ */
 function seedSpeciesData() {
 	db.transaction(() => {
 		const upsertSpecies = db.prepare(`
@@ -468,11 +475,11 @@ function seedSpeciesData() {
 }
 
 /**
- * Seeds all PvE-related data idempotently.
- * This function can be run multiple times without creating duplicate entries.
- * Seed core datasets (Origins, Archetypes) if empty and then run PvE seeding.
- * @returns {Boolean} true on success
- * @throws {Error} when seeding fails
+ * Idempotently seeds all PvE and shop data into the database.
+ *
+ * Performs upserts for items, spells, loot tables, vendors, monsters, and PvE nodes,
+ * then populates junction tables (loot table entries, vendor stock, and node–monster associations)
+ * while resolving and preserving foreign-key relationships so repeated runs do not create duplicates.
  */
 function seedPveData() {
 	db.transaction(() => {
@@ -607,6 +614,11 @@ function seedPveData() {
 	})();
 }
 
+/**
+ * Ensures core languages and dialects are present in the languages table.
+ *
+ * Inserts or updates a curated list of languages (name, scramble_type, avatar_url), using the language name as the unique key.
+ */
 function seedLanguageData() {
 	const languages = [
 		// --- CORE LANGUAGES ---
@@ -657,6 +669,15 @@ function seedLanguageData() {
 	})();
 }
 
+/**
+ * Orchestrates idempotent seeding of core application and game data into the database.
+ *
+ * Runs conditional seeding for origins and archetypes (only if their tables are empty)
+ * and then executes the species, PvE, and language seeding routines in sequence.
+ *
+ * @returns {boolean} `true` if all seeding steps complete successfully.
+ * @throws {Error} If any seeding step fails, an Error is thrown with a descriptive message.
+ */
 function seedDatabase() {
 	// REFACTOR NOTE: The logic for Origins and Archetypes was already idempotent,
 	// checking for an empty table and then inserting. This is acceptable for data

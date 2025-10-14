@@ -35,8 +35,13 @@ const EQUIPMENT_SLOT_ORDER = [
 	'weapon', 'offhand', 'leggings', 'boots',
 ];
 /**
- * Handles the /inventory item_info command.
- * @param {import('discord.js').ChatInputCommandInteraction} interaction
+ * Show detailed information for a specific inventory item to the invoking user.
+ *
+ * Replies ephemerally with an embed that includes the item's status (equipped or in inventory),
+ * basic properties (type, rarity, base value, tradeable/stackable, quantity, and weapon stats when applicable),
+ * and any parsed effects from the item's stored JSON. If the specified inventory item cannot be found,
+ * an ephemeral error message is sent. Failures to parse the effects JSON are logged but do not prevent the reply.
+ * @param {import('discord.js').ChatInputCommandInteraction} interaction - The command interaction; expects an integer option named `item` representing the inventory_id.
  */
 async function handleItemInfo(interaction) {
 	const userId = interaction.user.id;
@@ -115,10 +120,13 @@ async function handleItemInfo(interaction) {
 }
 
 /**
- * REFACTORED: Handles viewing the inventory by category and page.
- * @param {import('discord.js').ChatInputCommandInteraction | import('discord.js').ButtonInteraction | import('discord.js').StringSelectMenuInteraction} interaction
- * @param {string} [categoryArg] - The category to display.
- * @param {number} [pageArg] - The page number within the category.
+ * Display the invoking user's inventory for a given category and page, sending or updating an ephemeral interaction response with an embed and UI controls.
+ *
+ * Selects the user's character, loads and partitions inventory items into categories, determines the current category and page (with bounds checking), and renders a paginated embed listing items for that page. Also builds a category select menu and optional pagination buttons. If no character or no items are present, replies with an appropriate ephemeral message.
+ *
+ * @param {import('discord.js').ChatInputCommandInteraction | import('discord.js').ButtonInteraction | import('discord.js').StringSelectMenuInteraction} interaction - The interaction that triggered the view (slash command, button, or select menu).
+ * @param {string} [categoryArg] - Optional category key to display (one of the module's CATEGORY_ORDER keys); if omitted or invalid, the first available category is used.
+ * @param {number} [pageArg] - Optional 1-based page number to display within the selected category; clamped to available pages.
  */
 async function handleView(interaction, categoryArg, pageArg) {
 	const userId = interaction.user.id;

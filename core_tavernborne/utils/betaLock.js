@@ -14,9 +14,10 @@ const lockedCommands = [
 ];
 
 /**
- * An internal helper function to reliably get a guild member object
- * from various Discord.js sources.
- * @returns {Promise<import('discord.js').GuildMember|null>}
+ * Resolve a GuildMember from an Interaction, Message, or Client context.
+ * @param {import('discord.js').Interaction|import('discord.js').Message|import('discord.js').Client} source - The source to resolve the member from.
+ * @param {string} [userId] - User ID to fetch; when provided, returns that member instead of the invoking member.
+ * @returns {Promise<import('discord.js').GuildMember|null>} The resolved GuildMember, or `null` if the member cannot be resolved.
  */
 async function getMember(source, userId) {
 	// Case 1: Source is an Interaction or Message.
@@ -56,13 +57,12 @@ async function getMember(source, userId) {
 }
 
 /**
- * A universal function to check for beta-testing locks.
- * Returns `true` if access is DENIED, `false` if access is ALLOWED.
+ * Determine whether access should be blocked by the beta-testing lock.
  *
- * @param {Client | Interaction | Message} inputSource The interaction, message, or client instance.
- * @param {string | null} commandFilename The filename of the command, or null to just check if a user is a beta tester.
- * @param {string | null} [userIdForClient] The user's ID. **Required** only when the source is the Client object.
- * @returns {Promise<boolean>} A promise that resolves to true (DENIED) or false (ALLOWED).
+ * @param {Client|Interaction|Message} inputSource - The interaction, message, or client used to resolve the member.
+ * @param {string|null} commandFilename - The command filename to check, or null to only check beta-tester status.
+ * @param {string|null} [userIdForClient] - User ID required when `inputSource` is a Client to fetch that member.
+ * @returns {boolean} `true` if access is DENIED, `false` if ALLOWED.
  */
 async function checkBetatestLock(inputSource, commandFilename = null, userIdForClient = null) {
 	const member = await getMember(inputSource, userIdForClient);

@@ -14,8 +14,11 @@ const {
 const activeJobs = new Map();
 
 /**
- * The main scheduled task that posts a new Daily Tale.
- * @param {import('discord.js').Client} client The Discord client instance.
+ * Post a randomly selected approved Daily Tale to the configured channel and schedule its conclusion.
+ *
+ * Selects one approved submission; if none is available the function exits without posting. When a submission is found,
+ * the function sends a message in the configured post channel (mentioning the ping role) containing an embed and interactive
+ * buttons, persists a record in `daily_tales_messages` and marks the submission as used, then schedules the tale's conclusion.
  */
 async function postDailyTale(client) {
 	try {
@@ -67,10 +70,10 @@ async function postDailyTale(client) {
 }
 
 /**
- * Schedules the conclusion of a Daily Tale.
- * @param {import('discord.js').Client} client
- * @param {string} messageId
- * @param {Date} endTime
+ * Schedule the automatic conclusion for a posted Daily Tale and ensure only one job exists for that message.
+ * @param {import('discord.js').Client} client - Discord client instance used when concluding the tale.
+ * @param {string} messageId - ID of the tale message to conclude.
+ * @param {Date} endTime - Time at which the tale should be concluded.
  */
 function scheduleTaleConclusion(client, messageId, endTime) {
 	if (activeJobs.has(messageId)) {
@@ -81,9 +84,9 @@ function scheduleTaleConclusion(client, messageId, endTime) {
 }
 
 /**
- * Concludes an active Daily Tale, finds a winner, and posts the record.
- * @param {import('discord.js').Client} client
- * @param {string} messageId
+ * Concludes a Daily Tale: determines the winning reply (if any), archives the record to the archive channel, grants rewards and a temporary role to the winner, rewards the question submitter when applicable, disables interactions on the original post, and removes the tale record.
+ * @param {import('discord.js').Client} client - Discord client instance.
+ * @param {string} messageId - ID of the tale message to conclude.
  */
 async function concludeDailyTale(client, messageId) {
 	console.log(`[DailyTales] Concluding tale for message ID: ${messageId}`);

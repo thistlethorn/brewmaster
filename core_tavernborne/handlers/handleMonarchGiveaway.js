@@ -10,6 +10,11 @@ const HALL_OF_FAME_CHANNEL = '1365345890591703080';
 const MONARCH_ROLE = '1363537152658378793';
 const TOP_BUMPER_ROLE = '1382828074789503128';
 
+/**
+ * Creates a Monarch of the Month giveaway in the Hall of Fame channel if one for the current month does not already exist.
+ *
+ * Posts a giveaway message (role ping, embed, and an "Enter Giveaway" button), records the giveaway in the database with start and end times, and schedules the giveaway end.
+ */
 async function createMonarchGiveaway(client) {
 	try {
 		// Get current month identifier
@@ -73,6 +78,12 @@ async function createMonarchGiveaway(client) {
 	}
 }
 
+/**
+ * Process a user's button interaction to enter the Monarch of the Month giveaway.
+ * Validates the giveaway is active and the user hasn't already entered, records the entry,
+ * awards entry XP, updates the giveaway's entry count in the original message embed, and replies to the user.
+ * @param {import('discord.js').ButtonInteraction} interaction - The button interaction originating from the giveaway message.
+ */
 async function handleMonarchEntry(interaction) {
 	const giveawayId = interaction.message.id;
 	const userId = interaction.user.id;
@@ -116,6 +127,14 @@ async function handleMonarchEntry(interaction) {
 	}
 }
 
+/**
+ * Finalizes a Monarch of the Month giveaway: closes the entry UI, selects a winner, awards prizes, updates persistence, and announces the result.
+ *
+ * Disables the original entry button, marks the giveaway completed, selects a winner from entrants (applying grouping/weighting rules),
+ * grants the winner role, crowns, XP, and multiplier updates, gives consolation crowns to other entrants, and posts the announcement in the giveaway channel.
+ *
+ * @param {string} messageId - The ID of the giveaway message used to identify and finalize the giveaway.
+ */
 async function endMonarchGiveaway(client, messageId) {
 	try {
 		const giveaway = db.prepare('SELECT * FROM motw_giveaways WHERE message_id = ? AND completed = 0').get(messageId);
@@ -279,6 +298,16 @@ function selectWinner(entrants) {
 // --- Giveaway Scheduling and Persistence ---
 const activeGiveawayTimeouts = new Map();
 
+/**
+ * Schedule the automatic end of a Monarch giveaway message.
+ *
+ * Schedules a timeout to call endMonarchGiveaway for the specified message at the given end time,
+ * replacing any existing scheduled timeout for that message. If endTime is in the past or now,
+ * the giveaway is ended immediately.
+ *
+ * @param {string} messageId - The ID of the giveaway message to end.
+ * @param {Date} endTime - The time when the giveaway should end.
+ */
 function scheduleGiveawayEnd(client, messageId, endTime) {
 	const now = new Date();
 	const delay = endTime.getTime() - now.getTime();
@@ -301,7 +330,12 @@ function scheduleGiveawayEnd(client, messageId, endTime) {
 	activeGiveawayTimeouts.set(messageId, timeout);
 }
 
-// Call this function once when the bot is ready to handle missed giveaways
+/**
+ * Resume and schedule ending timers for any active Monarch giveaways stored in the database.
+ *
+ * For each giveaway marked as not completed, schedules its end using the stored `end_time`.
+ * @param {import('discord.js').Client} client - Discord client used to schedule giveaway end handlers.
+ */
 async function resumeActiveGiveaways(client) {
 	console.log('[MonarchGiveaway] Checking for active giveaways to resume...');
 	const activeGiveaways = db.prepare(`

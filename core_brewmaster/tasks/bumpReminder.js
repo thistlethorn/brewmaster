@@ -63,6 +63,11 @@ function scheduleNextReminder() {
 	}
 }
 
+/**
+ * Send a bump reminder message to the configured channel, respecting the development disable flag and preventing concurrent sends.
+ *
+ * Attempts to read the `dev_disable_reminders` setting from the database; if reminders are enabled, fetches the configured channel and posts a role-mentioning bump notification. If the client or channel is unavailable the function logs an error and exits. Errors during send are caught and logged; the function never throws. The function uses an internal guard to avoid concurrent executions.
+ */
 async function sendReminder() {
 	if (isSendingReminder) return;
 	isSendingReminder = true;

@@ -19,12 +19,23 @@ const TIER2_NAME_PREFIX = '[✓] ';
 const RESERVED_WORDS = ['admin', 'mod', 'staff', 'bot', 'everyone', 'here', 'discord', 'system', 'owner'];
 const ROLES_PER_PAGE = 5;
 
-// Helper to check user balance
+/**
+ * Retrieve a user's crowns balance.
+ * @param {string} userId - The user's ID.
+ * @returns {number} The user's crowns balance from the economy table, or 0 if no record exists.
+ */
 function getUserBalance(userId) {
 	return db.prepare('SELECT crowns FROM user_economy WHERE user_id = ?').get(userId)?.crowns || 0;
 }
 
-// Tier 1: View available pre-made roles (NOW WITH PAGINATION LMAO)
+/**
+ * Display a paginated list of pre-made vanity roles and present purchase and navigation buttons to the invoking user.
+ *
+ * Responds ephemerally; if the interaction is a button press the original message is updated instead of sending a new reply.
+ *
+ * @param {import('discord.js').Interaction} interaction - The interaction that triggered the view; used to reply or update the message.
+ * @param {number} [pageArg=1] - One-based page number to display; clamped to the available page range.
+ */
 async function handleView(interaction, pageArg = 1) {
 	const isUpdate = interaction.isButton();
 	const basicRoles = db.prepare('SELECT * FROM basic_vanity_roles ORDER BY price ASC').all();
@@ -102,7 +113,12 @@ async function handleView(interaction, pageArg = 1) {
 	}
 }
 
-// Tier 1: Sell a pre-made role
+/**
+ * Sell a pre-made boutique vanity role owned by the invoking user and credit a partial refund to their Crowns balance.
+ *
+ * Validates the user owns the specified role and that the role is a purchasable boutique role, increases the user's crowns by the calculated refund amount, removes the role from the user, and replies with an ephemeral success or error embed describing the outcome.
+ * @param {import('discord.js').CommandInteraction} interaction - The command interaction for the sell subcommand; expects a string option `role` containing the role ID.
+ */
 async function handleSell(interaction) {
 	const roleIdToSell = interaction.options.getString('role');
 	const userId = interaction.user.id;
@@ -142,7 +158,16 @@ async function handleSell(interaction) {
 	}
 }
 
-// Tier 2: Create a custom named role
+/**
+ * Create a globally unique custom vanity role for the invoking user and assign it to them.
+ *
+ * Validates the requested name and the user's funds, computes the dynamic Tier 2 price,
+ * creates a Discord role with the configured prefix, deducts the cost from the user's
+ * economy balance, records ownership and the name in the database blacklist, and assigns
+ * the new role to the user.
+ *
+ * @param {import('discord.js').CommandInteraction} interaction - The command interaction that initiated role creation.
+ */
 async function handleCreate(interaction) {
 	const newName = interaction.options.getString('name');
 	const userId = interaction.user.id;
@@ -213,7 +238,15 @@ async function handleCreate(interaction) {
 	}
 }
 
-// Tier 2: Delete a custom role
+/**
+ * Delete the caller's custom vanity role from the guild and remove its record from the database.
+ *
+ * Checks that the invoking user owns a custom role, verifies the role exists on the server,
+ * deletes the role and its database entry, and replies to the interaction with a success or
+ * error embed. If the server-side role is already missing the database entry is cleaned up.
+ *
+ * @param {import('discord.js').CommandInteraction} interaction - The command interaction that triggered the delete action; must be executed in a guild context.
+ */
 async function handleDelete(interaction) {
 	const userId = interaction.user.id;
 	const errorEmbed = new EmbedBuilder().setColor(0xE74C3C).setTitle('❌ Deletion Failed');
@@ -249,7 +282,14 @@ async function handleDelete(interaction) {
 	}
 }
 
-// Tier 2: Offer a custom role to another user
+/**
+ * Present an offer to transfer the caller's custom vanity role to another user for a specified price.
+ *
+ * Validates that the buyer is not a bot or the seller themself, that the seller owns a custom role, and that the buyer does not already own a custom role.
+ * If validation passes, replies with an embed describing the role and price and includes Accept and Decline buttons for the buyer to respond (offer expires after 5 minutes).
+ *
+ * @param {import('discord.js').CommandInteraction} interaction - The command interaction that initiated the offer.
+ */
 async function handleOffer(interaction) {
 	const sellerId = interaction.user.id;
 	const buyer = interaction.options.getUser('user');
@@ -298,7 +338,13 @@ async function handleOffer(interaction) {
 }
 
 
-// Tier 3: Modify a custom role
+/**
+ * Modify the caller's custom vanity role by changing its color or toggling its hoist status, and deduct the corresponding service fee from the caller's balance.
+ *
+ * Validates that the caller owns a custom role and that the role exists on the server, checks the caller's balance, applies the requested modification, updates the database, and responds with a success or error embed (ephemeral).
+ *
+ * @param {import('discord.js').CommandInteraction} interaction - The command interaction that invoked the modification. Subcommand "color" requires a string option "hex_code" (e.g., `#3498DB`); subcommand "hoist" toggles the current hoist state.
+ * @returns {import('discord.js').InteractionReplyOptions | import('discord.js').Message} The reply sent to the interaction indicating success or failure.
 async function handleModify(interaction) {
 	const subcommand = interaction.options.getSubcommand();
 	const userId = interaction.user.id;

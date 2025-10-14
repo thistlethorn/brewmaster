@@ -12,8 +12,8 @@ const VERIFICATION_TIMEOUT_MS = 10 * 60 * 1000;
 const activeJobs = new Map();
 
 /**
- * Generates a random 5-character alphanumeric string.
- * @returns {string}
+ * Generates a 5-character lowercase alphanumeric string.
+ * @returns {string} A 5-character string containing lowercase letters (a–z) and digits (0–9).
  */
 function generateRandomString() {
 	const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
@@ -25,9 +25,9 @@ function generateRandomString() {
 }
 
 /**
- * Handles the kicking of a user after a timeout.
- * @param {import('discord.js').Client} client The Discord client instance.
- * @param {string} messageId The ID of the CAPTCHA message.
+ * Concludes an expired CAPTCHA session: notifies the user, removes them from the guild, updates the verification message to a timed-out state, deletes the session record, and clears the scheduled job.
+ * @param {import('discord.js').Client} client - The Discord client used to fetch guilds, channels, and members.
+ * @param {string} messageId - The ID of the CAPTCHA message whose session expired.
  */
 async function handleTimeout(client, messageId) {
 	const session = db.prepare('SELECT * FROM captcha_sessions WHERE message_id = ?').get(messageId);

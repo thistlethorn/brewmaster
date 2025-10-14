@@ -2,7 +2,12 @@
 const db = require('@database/database.js');
 const { addXp } = require('@core_tavernborne/handlers/handleAddXpToChar.js');
 
-// Helper for weighted random selection
+/**
+ * Selects and returns a value from a list of weighted choices.
+ * @param {Array<{weight: number, value: any}>} items - Array of choices; each entry must have a numeric `weight` and an associated `value`.
+ * @returns {*} The `value` of the chosen item according to weights.
+ * Note: if weights sum to zero or floating-point rounding prevents selection, the last item's `value` is returned as a fallback.
+ */
 function weightedRandom(items) {
 	const totalWeight = items.reduce((sum, item) => sum + item.weight, 0);
 	let random = Math.random() * totalWeight;
@@ -62,9 +67,9 @@ const dynamicLootConfig = {
 };
 
 /**
- * Rolls for a prize from a voucher or loot crate.
- * @param {string} itemName The name of the item being opened.
- * @returns {Promise<{type: string, value: any, name: string}|null>} The prize, or null if invalid.
+ * Determine a prize for the given voucher or loot crate name.
+ * @param {string} itemName - The voucher or crate item name to roll.
+ * @returns {{type: string, value: any, name: string}|null} The prize object (`type`, `value`, `name`) or `null` if no matching loot pool exists.
  */
 async function rollVoucher(itemName) {
 	// 1. Check for static, unique loot pools first
@@ -106,10 +111,13 @@ async function rollVoucher(itemName) {
 }
 
 /**
- * Helper function to query the database for a random item based on criteria.
- * @param {string} rarity The target rarity (e.g., 'RARE').
- * @param {string|string[]} itemType The target item type(s) (e.g., 'ARMOR' or ['WEAPON', 'ARMOR']).
- * @returns {{type: 'item', value: number, name: string}|null}
+ * Selects a random item matching the given rarity and optional type constraint from the database.
+ *
+ * If no matching items are found, returns a consolation prize of 100 Crowns.
+ *
+ * @param {string} rarity - Target item rarity (e.g., "RARE").
+ * @param {string|string[]} [itemType] - Item type or list of types to restrict the search (e.g., "ARMOR" or ["WEAPON","ARMOR"]).
+ * @returns {{type: 'item', value: number, name: string}|{type: 'crowns', value: number, name: string}} An object representing either the selected item prize (`type: 'item'`) or a fallback crowns prize (`type: 'crowns'`).
  */
 function rollDynamicItem(rarity, itemType) {
 	let query = 'SELECT item_id, name FROM items WHERE rarity = ? AND rarity != \'STARTER\' AND item_type NOT IN (\'VOUCHER\', \'MATERIAL\')';
@@ -141,10 +149,15 @@ function rollDynamicItem(rarity, itemType) {
 
 
 /**
- * Gives the prize to the user and updates the database.
- * @param {string} userId The user who gets the prize.
- * @param {object} prize The prize object from rollVoucher.
- * @param {import('discord.js').Interaction} interaction The interaction source for XP notifications.
+ * Grant a prize to a user by applying crowns, XP, or an item to their account.
+ *
+ * If `prize` is falsy the function returns without action. For `crowns` it upserts
+ * the user's crowns total; for `xp` it awards experience via `addXp` using a reason
+ * derived from the interaction embed title; for `item` it inserts the item into
+ * the user's inventory.
+ * @param {string} userId - ID of the user receiving the prize.
+ * @param {{type: string, value: number|string}} prize - Prize object produced by `rollVoucher`.
+ * @param {import('discord.js').Interaction} interaction - Interaction used for XP notifications and context.
  */
 async function givePrize(userId, prize, interaction) {
 	if (!prize) return;

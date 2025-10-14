@@ -8,12 +8,15 @@ const { checkBetatestLock } = require('@core_tavernborne/utils/betaLock.js');
 // const xpEmoji = tavernborneEmojis.XP;
 
 /**
- * Sends a level-up notification. Can handle an interaction, a message, or just a client instance for DMs.
+ * Deliver a level-up embed to the appropriate destination based on the trigger.
+ *
+ * Sends the embed ephemerally to an Interaction (reply or follow-up), posts it in the same channel for a Message (mentioning the user), or falls back to DMing the user via the provided client. If DM delivery fails, an error is logged.
+ *
  * @param {object} params
- * @param {import('discord.js').Client} params.client The Discord client.
- * @param {string} params.userId The user who leveled up.
- * @param {EmbedBuilder} params.embed The embed to send.
- * @param {import('discord.js').Interaction | import('discord.js').Message | null} [params.source] The interaction or message that triggered the XP gain.
+ * @param {import('discord.js').Client} params.activeClient - Discord client used for fallback DMs.
+ * @param {string} params.userId - ID of the user who leveled up.
+ * @param {import('discord.js').EmbedBuilder} params.embed - Embed announcing the level-up.
+ * @param {import('discord.js').Interaction | import('discord.js').Message | null} [params.source] - The interaction or message that triggered the XP change; if omitted, the function will attempt a DM.
  */
 async function sendLevelUpNotification({ activeClient, userId, embed, source }) {
 	// If there's an interaction, use it to reply ephemerally.
@@ -45,11 +48,13 @@ async function sendLevelUpNotification({ activeClient, userId, embed, source }) 
 
 
 /**
- * Adds XP to a character, handles level-ups, and sends notifications.
- * @param {string} userId The ID of the user whose character is gaining XP.
- * @param {number} amount The amount of XP to add.
- * @param {import('discord.js').Interaction | import('discord.js').Message | import('discord.js').Client} source The interaction, message, or client instance that triggered the XP gain.
- * @returns {Promise<void>}
+ * Add experience points to a user's character, apply level-ups and automatic species bonuses, persist changes, and notify the user and character log.
+ *
+ * @param {string} userId - Discord user ID of the character receiving XP.
+ * @param {number} amount - Amount of XP to add.
+ * @param {import('discord.js').Interaction | import('discord.js').Message | import('discord.js').Client} source - The interaction, message, or client that triggered the XP gain; used to determine where and how to notify the user.
+ * @param {string} reason - Short descriptive text explaining why the XP was awarded (included in the XP log embed).
+ * @param {?string} title - Optional title to display in the XP log embed; when omitted the character's name is used.
  */
 async function addXp(userId, amount, source, reason, title = null) {
 

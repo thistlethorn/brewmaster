@@ -1,10 +1,10 @@
 // utils/messageUtils.js
 
 /**
- * Splits a long string into an array of smaller strings, each under a specified length.
- * It intelligently splits at the last whitespace character to avoid breaking words.
- * @param {string} text The long string to split.
- * @param {number} [maxLength=2000] The maximum length for each chunk.
+ * Split a long string into chunks not exceeding a given length, preferring natural break points.
+ * Prefers the last space before the limit, then a newline, and falls back to a hard cut when necessary.
+ * @param {string} text - The input string to split.
+ * @param {number} [maxLength=2000] - Maximum length of each chunk.
  * @returns {string[]} An array of string chunks.
  */
 function splitMessage(text, maxLength = 2000) {

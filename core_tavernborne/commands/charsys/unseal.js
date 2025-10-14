@@ -6,6 +6,16 @@ const { rarityColors, rarityEmojis } = require('@core_tavernborne/data/constants
 
 const redeemableTypes = ['VOUCHER', 'LOOTCRATE'];
 
+/**
+ * Present an ephemeral selection UI allowing a user to choose a voucher or chest to unseal.
+ *
+ * Queries the invoking user's redeemable inventory and replies (or updates the original interaction)
+ * with an ephemeral embed and a dropdown listing available vouchers/lootcrates. If the user has no
+ * redeemable items, an ephemeral notice is sent instead.
+ *
+ * @param {import('discord.js').Interaction} interaction - The interaction that triggered the command; used to reply or update the interaction with the selection UI.
+ * @returns {any} The result of replying to or updating the interaction. 
+ */
 async function executeUnseal(interaction) {
 	const userId = interaction.user.id;
 	const isUpdate = interaction.isButton();
