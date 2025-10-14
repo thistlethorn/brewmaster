@@ -45,7 +45,7 @@ module.exports = {
 			return interaction.reply({ content: 'You cannot run this command on a bot.', flags: MessageFlags.Ephemeral });
 		}
 
-		await interaction.deferReply({ ephemeral: true });
+		await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
 		const characterInfo = db.prepare(`
             SELECT a.name as archetype_name

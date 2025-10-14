@@ -17,6 +17,6 @@ module.exports = {
 				flags: MessageFlags.Ephemeral,
 			});
 		}
-		await interaction.reply({ content: 'The crafting system is not yet implemented.', ephemeral: true });
+		await interaction.reply({ content: 'The crafting system is not yet implemented.', flags: MessageFlags.Ephemeral });
 	},
 };

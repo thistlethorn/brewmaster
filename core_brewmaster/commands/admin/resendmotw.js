@@ -24,7 +24,7 @@ module.exports = {
 			return interaction.reply({ content: 'This is a developer-only command.', flags: MessageFlags.Ephemeral });
 		}
 
-		await interaction.deferReply({ ephemeral: true });
+		await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
 		const giveawayIdInput = interaction.options.getString('giveaway_message_id');
 		let giveaway;

@@ -1,5 +1,5 @@
 // core_brewmaster/handlers/handleDailyTales.js
-const { ModalBuilder, TextInputBuilder, ActionRowBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { ModalBuilder, TextInputBuilder, ActionRowBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 const db = require('@database/database.js');
 const sendMessageToChannel = require('@utils/sendMessageToChannel.js');
 const config = require('@root/config.json');
@@ -55,11 +55,11 @@ async function handleButton(interaction) {
 		const member = interaction.member;
 		if (member.roles.cache.has(pingRoleId)) {
 			await member.roles.remove(pingRoleId);
-			return interaction.reply({ content: 'You will no longer be pinged for Daily Tales.', ephemeral: true });
+			return interaction.reply({ content: 'You will no longer be pinged for Daily Tales.', flags: MessageFlags.Ephemeral });
 		}
 		else {
 			await member.roles.add(pingRoleId);
-			return interaction.reply({ content: 'You will now be pinged for Daily Tales!', ephemeral: true });
+			return interaction.reply({ content: 'You will now be pinged for Daily Tales!', flags: MessageFlags.Ephemeral });
 		}
 	}
 
@@ -69,7 +69,7 @@ async function handleButton(interaction) {
 
 		const hasStarred = db.prepare('SELECT 1 FROM daily_tales_question_stars WHERE message_id = ? AND user_id = ?').get(messageId, userId);
 		if (hasStarred) {
-			return interaction.reply({ content: 'You have already starred this question.', ephemeral: true });
+			return interaction.reply({ content: 'You have already starred this question.', flags: MessageFlags.Ephemeral });
 		}
 
 		const result = db.prepare('UPDATE daily_tales_submissions SET star_count = star_count + 1 WHERE submission_id = ? RETURNING star_count').get(submissionId);
@@ -79,13 +79,13 @@ async function handleButton(interaction) {
 		embed.setFooter({ text: `⭐ ${result.star_count} Stars | This question is active for the next ${config.dailyTales.activeDurationHours} hours.` });
 
 		await interaction.message.edit({ embeds: [embed] });
-		return interaction.reply({ content: 'Your star has been counted!', ephemeral: true });
+		return interaction.reply({ content: 'Your star has been counted!', flags: MessageFlags.Ephemeral });
 	}
 
 	// Approval Buttons
 	if (action === 'approve' || action === 'reject') {
 		if (!interaction.member.permissions.has('Administrator')) {
-			return interaction.reply({ content: 'You are not authorized for this action.', ephemeral: true });
+			return interaction.reply({ content: 'You are not authorized for this action.', flags: MessageFlags.Ephemeral });
 		}
 		const submissionId = parseInt(rest[0], 10);
 		const newStatus = action === 'approve' ? 'approved' : 'rejected';
@@ -106,7 +106,7 @@ async function handleButton(interaction) {
 	// Category Prompt Buttons
 	if (action === 'prompt') {
 		const targetId = rest[1];
-		if (userId !== targetId) return interaction.reply({ content: 'This is not for you.', ephemeral: true });
+		if (userId !== targetId) return interaction.reply({ content: 'This is not for you.', flags: MessageFlags.Ephemeral });
 
 		if (rest[0] === 'show') {
 			// Logic to show category selection menu would go here. For now, we'll just acknowledge.
@@ -156,7 +156,7 @@ async function handleModal(interaction) {
 		);
 
 		await sendMessageToChannel(interaction.client, approvalChannelId, { embeds: [approvalEmbed], components: [row] });
-		await interaction.reply({ content: 'Your question has been submitted for approval. Thank you!', ephemeral: true });
+		await interaction.reply({ content: 'Your question has been submitted for approval. Thank you!', flags: MessageFlags.Ephemeral });
 
 		// Handle category prompt
 		const optPreference = db.prepare('SELECT opted_in FROM daily_tales_followup_opt WHERE user_id = ?').get(userId);
@@ -166,7 +166,7 @@ async function handleModal(interaction) {
 
 		if (optPreference?.opted_in === 1) {
 			// Logic to immediately show category selection would go here.
-			await interaction.followUp({ content: 'Category selection coming soon!', ephemeral: true });
+			await interaction.followUp({ content: 'Category selection coming soon!', flags: MessageFlags.Ephemeral });
 		}
 		else {
 			const promptEmbed = new EmbedBuilder()
@@ -178,7 +178,7 @@ async function handleModal(interaction) {
 				new ButtonBuilder().setCustomId(`dailytales_prompt_always_${userId}`).setLabel('Always Show Me').setStyle(ButtonStyle.Success),
 				new ButtonBuilder().setCustomId(`dailytales_prompt_never_${userId}`).setLabel('Never Show Me').setStyle(ButtonStyle.Danger),
 			);
-			await interaction.followUp({ embeds: [promptEmbed], components: [promptRow], ephemeral: true });
+			await interaction.followUp({ embeds: [promptEmbed], components: [promptRow], flags: MessageFlags.Ephemeral });
 		}
 	}
 }

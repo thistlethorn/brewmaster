@@ -1,5 +1,3 @@
-// Project standard: Use flags: MessageFlags.Ephemeral for all ephemeral replies in Discord.js v14.
-// Do not use ephemeral: true anywhere in this codebase.
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 const db = require('@database/database.js');
 const sendMessageToChannel = require('@utils/sendMessageToChannel.js');

@@ -1,5 +1,5 @@
 // /commands/utility/roll.js
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 
 // Constants for validation to prevent abuse
 const MAX_DICE_QUANTITY = 100;
@@ -18,13 +18,13 @@ async function executeRoll(interaction, quantity, sides, modifier, reason) {
 	if (quantity > MAX_DICE_QUANTITY) {
 		return interaction.reply({
 			content: `❌ You can't roll more than ${MAX_DICE_QUANTITY} dice at once, pal. Let's not crash the table.`,
-			ephemeral: true,
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 	if (sides > MAX_DICE_SIDES) {
 		return interaction.reply({
 			content: `❌ A die with over ${MAX_DICE_SIDES} sides? That's more like a sphere. Keep it reasonable.`,
-			ephemeral: true,
+			flags: MessageFlags.Ephemeral,
 		});
 	}
 

@@ -1,5 +1,5 @@
 // commands/admin/system.js
-const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits, ChannelType } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits, ChannelType, MessageFlags } = require('discord.js');
 const db = require('@database/database.js');
 const config = require('@root/config.json');
 const log = require('@utils/logger.js');
@@ -24,7 +24,7 @@ module.exports = {
 	async execute(interaction) {
 		// Strict permission check
 		if (interaction.user.id !== YOUR_USER_ID) {
-			return interaction.reply({ content: 'This command is restricted to the bot owner.', ephemeral: true });
+			return interaction.reply({ content: 'This command is restricted to the bot owner.', flags: MessageFlags.Ephemeral });
 		}
 
 		const subcommand = interaction.options.getSubcommand();

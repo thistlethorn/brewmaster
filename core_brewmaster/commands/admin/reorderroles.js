@@ -18,7 +18,7 @@ module.exports = {
 			return interaction.reply({ content: 'This is a developer-only command.', flags: MessageFlags.Ephemeral });
 		}
 
-		await interaction.deferReply({ ephemeral: true });
+		await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
 		try {
 			// 1. Fetch all roles from the server and sort them by their current position (highest first)

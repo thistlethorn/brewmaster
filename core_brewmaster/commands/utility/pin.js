@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const db = require('@database/database.js');
 const log = require('@utils/logger.js');
 
@@ -27,7 +27,7 @@ module.exports = {
 		if (!hasSectionRole && !userGuild) {
 			return interaction.reply({
 				content: '❌ This command is only available to Section DMs, or Guildmasters/Vice-GMs in their guild channel.',
-				ephemeral: true });
+				flags: MessageFlags.Ephemeral });
 		}
 
 		const correctChannel = db.prepare(`
@@ -42,12 +42,12 @@ module.exports = {
 		if (hasSectionRole && !isGameroom) {
 			return interaction.reply({
 				content: '❌ This command can only be used (as a DM) in gameroom channels.',
-				ephemeral: true });
+				flags: MessageFlags.Ephemeral });
 		}
 		else if (userGuild && !correctChannel) {
 			return interaction.reply({
 				content: `❌ This command can only be used (as a Guildmaster) in the registered guildhall channels. Your guildhall channels are <#${userGuild.channel_id}> and <#${userGuild.public_channel_id}>`,
-				ephemeral: true });
+				flags: MessageFlags.Ephemeral });
 		}
 
 		// Create instructions embed

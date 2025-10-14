@@ -1,4 +1,4 @@
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 const db = require('@database/database.js');
 const { getMonthIdentifier, getMonthName } = require('@utils/getMonthIdentifier.js');
 const { updateMultiplier } = require('@core_tavernborne/handlers/handleCrownRewards.js');
@@ -95,12 +95,12 @@ async function handleMonarchEntry(interaction) {
         `).get(giveawayId);
 
 		if (!giveaway) {
-			return interaction.reply({ content: 'This giveaway has already ended or is invalid.', ephemeral: true });
+			return interaction.reply({ content: 'This giveaway has already ended or is invalid.', flags: MessageFlags.Ephemeral });
 		}
 
 		const existingEntry = db.prepare('SELECT 1 FROM motw_entries WHERE giveaway_id = ? AND user_id = ?').get(giveawayId, userId);
 		if (existingEntry) {
-			return interaction.reply({ content: 'You have already entered this giveaway!', ephemeral: true });
+			return interaction.reply({ content: 'You have already entered this giveaway!', flags: MessageFlags.Ephemeral });
 		}
 
 		db.prepare('INSERT INTO motw_entries (giveaway_id, user_id, entry_time) VALUES (?, ?, ?)')
@@ -118,12 +118,12 @@ async function handleMonarchEntry(interaction) {
 		embed.data.fields = embed.data.fields.map(field => field.name === 'Entries' ? { ...field, value: newCount.toString() } : field);
 
 		await interaction.message.edit({ embeds: [embed] });
-		await interaction.reply({ content: 'You have successfully entered the Monarch of the Month giveaway! Good luck!', ephemeral: true });
+		await interaction.reply({ content: 'You have successfully entered the Monarch of the Month giveaway! Good luck!', flags: MessageFlags.Ephemeral });
 
 	}
 	catch (error) {
 		console.error('[MotM] Error handling entry:', error);
-		await interaction.reply({ content: 'There was an error processing your entry.', ephemeral: true });
+		await interaction.reply({ content: 'There was an error processing your entry.', flags: MessageFlags.Ephemeral });
 	}
 }
 
