@@ -26,9 +26,15 @@ package.json
 *.txt
 *.db
 testing/
+pathChecker.js
+jsconfig.json
+docs/
 deploy-commands.js
 rebuild_table.js
 check_fkeys.js
 token.json
 character_system.md
 cleanup.js
+bump_data.db-shm
+bump_data.db-wal
+tavernborne_overview.md

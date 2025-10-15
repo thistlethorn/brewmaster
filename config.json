@@ -1,17 +1,34 @@
 {
-	"clientId": "1369686472709378101",
-	"guildId": "1353623582411984928",
-	"discord": {
+  "clientId": "1369686472709378101",
+  "guildId": "1353623582411984928",
+  "developerId": "1126419078140153946",
+
+  "discord": {
     "guildCategoryId": "1396211786008756254",
     "staffRoleId": "1354145856345083914",
+    "verifiedRoleId": "1375486040571117568",
+    "unverifiedRoleId": "1354149660909899887",
     "botsRoleId": "1362247491101262106",
     "raidDefenderRoleId": "1387473320093548724",
     "bumpChannelId": "1354187940246327316",
     "bumpRoleId": "1380398838333968436",
     "idleChatterChannelId" : "1353623582411984931",
-    "botCommandsId" : "1354187940246327316"
+    "botCommandsId" : "1354187940246327316",
+    "welcomePartyRoleId" : "1425143327317299311"
   },
-  "developerId": "1126419078140153946",
+
+  "dailyTales": {
+    "postChannelId": "1353623582411984931",
+    "archiveChannelId": "1427013896518107197",
+    "approvalChannelId": "1427013118218735688",
+    "pingRoleId": "1427011381562966108",
+    "starCrewRoleId": "1427015011292811275",
+    "cronSchedule": "0 15 * * *",
+    "activeDurationHours": 6,
+    "questionStarReward": 1500,
+    "answerWinReward": 5000
+  },
+
   "tonyQuote" : {
     "triggerSubmissionCost" : 200,
     "idleSubmissionCost" : 100,
@@ -22,6 +39,7 @@
     "maxIdleUses" : 40,
     "maxTriggerUses" : 20
   },
+
   "guild": {
     "vulnerabilityThreshold": 500,
     "raidMaxStolenPercent": 25,
@@ -32,10 +50,28 @@
     "defenderRoleDurationMs": 86400000,
     "maxAmountOfGuildsExisting": 15
   },
+
   "bump": {
     "cooldownMs": 7200000
   },
+
   "gamble" : {
     "jackpotBaseAmount" : 5000
+  },
+
+  "xpRewards": {
+    "dailyClaim": 25,
+    "activeChatter": 50,
+    "bump": 5,
+    "bumpStreakBreak": 75,
+    "motwEntry": 20,
+    "motwWin" : 300,
+    "topBumperWin": 250,
+    "welcomeMember": 15
+  },
+
+  "tavernborne": {
+    "characterLogChannelId": "1421921077860368404"
   }
+
 }
